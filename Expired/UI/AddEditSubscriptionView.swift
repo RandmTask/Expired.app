@@ -4,12 +4,13 @@ import SwiftData
 struct AddEditSubscriptionView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Query private var allItems: [SubscriptionItem]
 
     let item: SubscriptionItem?
 
-    // Core fields
+    // Core
     @State private var name = ""
-    @State private var provider = ""
+    @State private var url = ""
     @State private var nextRenewalDate = Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date()
     @State private var isAutoRenew = true
     @State private var isCancelled = false
@@ -17,265 +18,366 @@ struct AddEditSubscriptionView: View {
     @State private var trialEndDate = Calendar.current.date(byAdding: .day, value: 14, to: Date()) ?? Date()
     @State private var activeUntilDate = Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date()
 
-    // Details
+    // Icon
+    @State private var iconData: Data? = nil
+    @State private var isFetchingIcon = false
+    @State private var faviconFetchTask: Task<Void, Never>? = nil
+
+    // Cost & payment
     @State private var cost: Double? = nil
     @State private var costText = ""
     @State private var currency = "AUD"
     @State private var billingCycle: BillingCycle = .monthly
     @State private var paymentMethod = ""
     @State private var emailUsed = ""
-    @State private var notes = ""
-    @State private var url = ""
+    @State private var phoneNumber = ""
 
-    // Notifications
+    // Reminders & notes
     @State private var notifications: [NotificationRule] = []
+    @State private var notes = ""
 
-    // UI state
-    @State private var showDetails = false
-    @State private var showReminders = false
+    // Suggestion dropdowns
+    @State private var showPaymentSuggestions = false
+    @State private var showEmailSuggestions = false
+    @State private var showPhoneSuggestions = false
 
     private var isEditing: Bool { item != nil }
+
+    // MARK: - Suggestions
+
+    private var paymentSuggestions: [String] {
+        Array(Set(allItems.compactMap { $0.paymentMethod.isEmpty ? nil : $0.paymentMethod }))
+            .filter { $0 != paymentMethod }.sorted()
+    }
+    private var emailSuggestions: [String] {
+        Array(Set(allItems.compactMap { $0.emailUsed.isEmpty ? nil : $0.emailUsed }))
+            .filter { $0 != emailUsed }.sorted()
+    }
+    private var phoneSuggestions: [String] {
+        Array(Set(allItems.compactMap { $0.phoneNumber.isEmpty ? nil : $0.phoneNumber }))
+            .filter { $0 != phoneNumber }.sorted()
+    }
+
+    // MARK: - Body
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 16) {
-                    // MARK: Core section
-                    FormCard {
-                        VStack(spacing: 0) {
-                            FormRow(label: "Name") {
-                                TextField("Netflix, Passport…", text: $name)
-                                    .submitLabel(.next)
-                            }
-
-                            FormDivider()
-
-                            FormRow(label: "Provider") {
-                                TextField("Optional", text: $provider)
-                                    .submitLabel(.next)
-                            }
-
-                            FormDivider()
-
-                            FormRow(label: isTrial ? "Trial Ends" : "Renews") {
-                                DatePicker("", selection: isTrial ? $trialEndDate : $nextRenewalDate, displayedComponents: .date)
-                                    .labelsHidden()
-                            }
-                        }
-                    }
-
-                    // MARK: Status toggles
-                    FormCard {
-                        VStack(spacing: 0) {
-                            Toggle(isOn: $isAutoRenew) {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "arrow.clockwise.circle.fill")
-                                        .foregroundStyle(.green)
-                                    Text("Auto-Renews")
-                                        .font(.system(size: 16))
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 13)
-                            .onChange(of: isAutoRenew) { _, on in
-                                if on { isCancelled = false }
-                            }
-
-                            FormDivider()
-
-                            Toggle(isOn: $isTrial) {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "gift.fill")
-                                        .foregroundStyle(.purple)
-                                    Text("Free Trial")
-                                        .font(.system(size: 16))
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 13)
-                            .onChange(of: isTrial) { _, on in
-                                if on && notifications.isEmpty {
-                                    // Auto-add trial reminders
-                                    notifications = [
-                                        NotificationRule(offsetType: .daysBefore, value: 3),
-                                        NotificationRule(offsetType: .daysBefore, value: 1)
-                                    ]
-                                }
-                            }
-
-                            FormDivider()
-
-                            Toggle(isOn: $isCancelled) {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(.orange)
-                                    Text("Cancelled")
-                                        .font(.system(size: 16))
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 13)
-                            .onChange(of: isCancelled) { _, on in
-                                if on { isAutoRenew = false }
-                            }
-
-                            if isCancelled {
-                                FormDivider()
-                                FormRow(label: "Active Until") {
-                                    DatePicker("", selection: $activeUntilDate, displayedComponents: .date)
-                                        .labelsHidden()
-                                }
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                            }
-                        }
-                        .animation(.spring(duration: 0.25), value: isCancelled)
-                    }
-
-                    // MARK: Details (expandable)
-                    ExpandableCard(title: "Cost & Payment", icon: "creditcard.fill", isExpanded: $showDetails) {
-                        VStack(spacing: 0) {
-                            FormRow(label: "Amount") {
-                                HStack {
-                                    TextField("0.00", text: $costText)
-                                        .keyboardType(.decimalPad)
-                                        .multilineTextAlignment(.trailing)
-                                        .onChange(of: costText) { _, val in
-                                            cost = Double(val)
-                                        }
-
-                                    Picker("", selection: $currency) {
-                                        ForEach(["AUD", "USD", "EUR", "GBP", "CAD", "NZD"], id: \.self) {
-                                            Text($0)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                    .fixedSize()
-                                }
-                            }
-
-                            FormDivider()
-
-                            FormRow(label: "Billing") {
-                                Picker("", selection: $billingCycle) {
-                                    ForEach(BillingCycle.allCases, id: \.self) {
-                                        Text($0.rawValue)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                            }
-
-                            FormDivider()
-
-                            FormRow(label: "Card") {
-                                TextField("Visa ****1234", text: $paymentMethod)
-                                    .multilineTextAlignment(.trailing)
-                            }
-
-                            FormDivider()
-
-                            FormRow(label: "Email") {
-                                TextField("user@example.com", text: $emailUsed)
-                                    .keyboardType(.emailAddress)
-                                    .textInputAutocapitalization(.never)
-                                    .multilineTextAlignment(.trailing)
-                            }
-
-                            FormDivider()
-
-                            FormRow(label: "Website") {
-                                TextField("https://…", text: $url)
-                                    .keyboardType(.URL)
-                                    .textInputAutocapitalization(.never)
-                                    .multilineTextAlignment(.trailing)
-                            }
-                        }
-                    }
-
-                    // MARK: Reminders (expandable)
-                    ExpandableCard(title: "Reminders", icon: "bell.fill", isExpanded: $showReminders) {
-                        RemindersEditorView(notifications: $notifications)
-                    }
-
-                    // MARK: Notes
-                    FormCard {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label("Notes", systemImage: "note.text")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 16)
-                                .padding(.top, 12)
-
-                            TextField("Optional notes…", text: $notes, axis: .vertical)
-                                .lineLimit(3...6)
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 12)
-                        }
-                    }
-
-                    // Delete button when editing
-                    if isEditing {
-                        Button(role: .destructive) {
-                            deleteAndDismiss()
-                        } label: {
-                            HStack {
-                                Spacer()
-                                Label("Delete Subscription", systemImage: "trash")
-                                    .font(.system(size: 16, weight: .semibold))
-                                Spacer()
-                            }
-                        }
-                        .padding(.vertical, 14)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
-                    }
-
+                VStack(alignment: .leading, spacing: 24) {
+                    basicSection
+                    statusSection
+                    costSection
+                    paymentSection
+                    remindersSection
+                    notesSection
+                    if isEditing { deleteSection }
                     Spacer(minLength: 40)
                 }
                 .padding(.horizontal)
-                .padding(.top, 8)
+                .padding(.top, 12)
             }
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .background(groupedBackground.ignoresSafeArea())
             .navigationTitle(isEditing ? "Edit" : "Add Subscription")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isEditing ? "Save" : "Add") {
-                        saveAndDismiss()
-                    }
-                    .fontWeight(.semibold)
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button(isEditing ? "Save" : "Add") { saveAndDismiss() }
+                        .fontWeight(.semibold)
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
-        .onAppear {
-            populateFromItem()
-        }
+        .onAppear { populateFromItem() }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
 
-    // MARK: - Populate from existing item
+    // MARK: - Basic section
+
+    private var basicSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: "Subscription")
+            FormCard {
+                VStack(spacing: 0) {
+                    // Name + icon
+                    HStack(spacing: 12) {
+                        iconView
+                            .padding(.leading, 16)
+                        TextField("Name", text: $name)
+                            .font(.system(size: 16))
+                            .foregroundStyle(.primary)
+                            .submitLabel(.next)
+                            .padding(.vertical, 14)
+                            .padding(.trailing, 16)
+                    }
+
+                    FormDivider()
+
+                    // Website — triggers favicon
+                    HStack {
+                        Text("Website")
+                            .font(.system(size: 16))
+                            .frame(minWidth: 80, alignment: .leading)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        TextField("netflix.com", text: $url)
+                            .foregroundStyle(.primary)
+                            .trailingTextAlignment()
+#if os(iOS)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+#endif
+                            .onChange(of: url) { _, newVal in scheduleFaviconFetch(newVal) }
+                        if isFetchingIcon {
+                            ProgressView().scaleEffect(0.75).padding(.leading, 6)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+
+                    FormDivider()
+
+                    FormRow(label: isTrial ? "Trial Ends" : "Renews") {
+                        DatePicker("", selection: isTrial ? $trialEndDate : $nextRenewalDate,
+                                   displayedComponents: .date)
+                            .labelsHidden()
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        if isFetchingIcon {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.15))
+                .frame(width: 36, height: 36)
+                .overlay { ProgressView().scaleEffect(0.8) }
+        } else if let data = iconData, let img = platformImage(from: data) {
+            Image(platformImage: img)
+                .resizable().scaledToFill()
+                .frame(width: 36, height: 36)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.blue.opacity(0.12))
+                .frame(width: 36, height: 36)
+                .overlay {
+                    Image(systemName: "globe")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.blue.opacity(0.5))
+                }
+        }
+    }
+
+    // MARK: - Status section
+
+    private var statusSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: "Status")
+            FormCard {
+                VStack(spacing: 0) {
+                    // Auto-Renew
+                    Toggle(isOn: $isAutoRenew) {
+                        Label("Auto-Renews", systemImage: "arrow.clockwise.circle.fill")
+                            .foregroundStyle(.primary)
+                            .symbolRenderingMode(.multicolor)
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 13)
+                    .onChange(of: isAutoRenew) { _, on in
+                        if on { isCancelled = false }   // flip the other off
+                    }
+
+                    FormDivider()
+
+                    // Free Trial
+                    Toggle(isOn: $isTrial) {
+                        Label("Free Trial", systemImage: "gift.fill")
+                            .foregroundStyle(.primary)
+                            .symbolRenderingMode(.multicolor)
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 13)
+                    .onChange(of: isTrial) { _, on in
+                        if on && notifications.isEmpty {
+                            notifications = [
+                                NotificationRule(offsetType: .daysBefore, value: 3),
+                                NotificationRule(offsetType: .daysBefore, value: 1)
+                            ]
+                        }
+                    }
+
+                    FormDivider()
+
+                    // Cancelled — flips auto-renew off automatically
+                    Toggle(isOn: $isCancelled) {
+                        Label("Cancelled", systemImage: "xmark.circle.fill")
+                            .foregroundStyle(.primary)
+                            .symbolRenderingMode(.multicolor)
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 13)
+                    .onChange(of: isCancelled) { _, on in
+                        if on { isAutoRenew = false }   // flip the other off
+                    }
+
+                    if isCancelled {
+                        FormDivider()
+                        FormRow(label: "Active Until") {
+                            DatePicker("", selection: $activeUntilDate, displayedComponents: .date)
+                                .labelsHidden()
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+                .animation(.spring(duration: 0.25), value: isCancelled)
+            }
+        }
+    }
+
+    // MARK: - Cost section
+
+    private var costSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: "Cost")
+            FormCard {
+                VStack(spacing: 0) {
+                    FormRow(label: "Amount") {
+                        HStack(spacing: 4) {
+                            TextField("0.00", text: $costText)
+                                .foregroundStyle(.primary)
+                                .trailingTextAlignment()
+#if os(iOS)
+                                .keyboardType(.decimalPad)
+#endif
+                                .onChange(of: costText) { _, val in cost = Double(val) }
+                            Picker("", selection: $currency) {
+                                ForEach(["AUD","USD","EUR","GBP","CAD","NZD"], id: \.self) { Text($0) }
+                            }
+                            .pickerStyle(.menu).fixedSize()
+                        }
+                    }
+                    FormDivider()
+                    FormRow(label: "Billing") {
+                        Picker("", selection: $billingCycle) {
+                            ForEach(BillingCycle.allCases, id: \.self) { Text($0.rawValue) }
+                        }
+                        .pickerStyle(.menu)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Payment section
+
+    private var paymentSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: "Account")
+            FormCard {
+                VStack(spacing: 0) {
+                    SuggestionField(label: "Card", placeholder: "Visa ****1234",
+                                    text: $paymentMethod, suggestions: paymentSuggestions,
+                                    isExpanded: $showPaymentSuggestions)
+                    FormDivider()
+                    SuggestionField(label: "Email", placeholder: "you@example.com",
+                                    text: $emailUsed, suggestions: emailSuggestions,
+                                    isExpanded: $showEmailSuggestions)
+                    FormDivider()
+                    SuggestionField(label: "Phone", placeholder: "+61 400 000 000",
+                                    text: $phoneNumber, suggestions: phoneSuggestions,
+                                    isExpanded: $showPhoneSuggestions)
+                }
+            }
+        }
+    }
+
+    // MARK: - Reminders section
+
+    private var remindersSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: "Reminders")
+            FormCard {
+                RemindersEditorView(notifications: $notifications)
+            }
+        }
+    }
+
+    // MARK: - Notes section
+
+    private var notesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: "Notes")
+            FormCard {
+                TextField("Optional notes…", text: $notes, axis: .vertical)
+                    .foregroundStyle(.primary)
+                    .lineLimit(3...6)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+            }
+        }
+    }
+
+    // MARK: - Delete section
+
+    private var deleteSection: some View {
+        Button(role: .destructive, action: deleteAndDismiss) {
+            HStack {
+                Spacer()
+                Label("Delete Subscription", systemImage: "trash")
+                    .font(.system(size: 16, weight: .semibold))
+                Spacer()
+            }
+        }
+        .padding(.vertical, 14)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    // MARK: - Favicon fetch (debounced)
+
+    private func scheduleFaviconFetch(_ input: String) {
+        faviconFetchTask?.cancel()
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Need at least "x.co" to attempt
+        guard trimmed.count >= 4, trimmed.contains(".") else { return }
+
+        faviconFetchTask = Task {
+            // Small debounce so we don't fire on every keystroke
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run { isFetchingIcon = true }
+            let data = await FaviconFetcher.fetch(from: trimmed)
+            await MainActor.run {
+                if let data { iconData = data }
+                isFetchingIcon = false
+            }
+        }
+    }
+
+    // MARK: - Populate
 
     private func populateFromItem() {
         guard let item else { return }
         name = item.name
-        provider = item.provider
+        url = item.url
         nextRenewalDate = item.nextRenewalDate
         isAutoRenew = item.isAutoRenew
         isCancelled = item.isCancelled
         isTrial = item.isTrial
-        if let trial = item.trialEndDate { trialEndDate = trial }
-        if let until = item.activeUntilDate { activeUntilDate = until }
+        if let t = item.trialEndDate { trialEndDate = t }
+        if let u = item.activeUntilDate { activeUntilDate = u }
         if let c = item.cost { costText = String(c) }
         cost = item.cost
         currency = item.currency
         billingCycle = item.billingCycle
         paymentMethod = item.paymentMethod
         emailUsed = item.emailUsed
+        phoneNumber = item.phoneNumber
         notes = item.notes
-        url = item.url
+        iconData = item.iconData
         notifications = item.notifications
     }
 
@@ -285,10 +387,11 @@ struct AddEditSubscriptionView: View {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         guard !trimmedName.isEmpty else { return }
 
+        let savedItem: SubscriptionItem
         if let existing = item {
-            // Edit existing
             existing.name = trimmedName
-            existing.provider = provider
+            existing.url = url
+            existing.iconData = iconData
             existing.nextRenewalDate = nextRenewalDate
             existing.isAutoRenew = isAutoRenew
             existing.isCancelled = isCancelled
@@ -299,58 +402,151 @@ struct AddEditSubscriptionView: View {
             existing.billingCycle = billingCycle
             existing.paymentMethod = paymentMethod
             existing.emailUsed = emailUsed
+            existing.phoneNumber = phoneNumber
             existing.notes = notes
-            existing.url = url
             existing.notifications = notifications
             existing.updatedAt = Date()
+            savedItem = existing
         } else {
-            // Create new
             let newItem = SubscriptionItem(
                 name: trimmedName,
-                provider: provider,
+                cost: cost,
+                currency: currency,
+                billingCycle: billingCycle,
                 nextRenewalDate: nextRenewalDate,
                 trialEndDate: isTrial ? trialEndDate : nil,
                 isAutoRenew: isAutoRenew,
                 isCancelled: isCancelled,
                 activeUntilDate: isCancelled ? activeUntilDate : nil,
-                cost: cost,
-                currency: currency,
-                billingCycle: billingCycle,
                 paymentMethod: paymentMethod,
                 emailUsed: emailUsed,
+                phoneNumber: phoneNumber,
                 notes: notes,
                 url: url,
                 notifications: notifications
             )
+            newItem.iconData = iconData
             modelContext.insert(newItem)
+            savedItem = newItem
         }
-
+        Task { await NotificationManager.shared.reschedule(for: savedItem) }
         dismiss()
     }
 
     private func deleteAndDismiss() {
         if let item {
+            NotificationManager.shared.removeAll(for: item)
             modelContext.delete(item)
         }
         dismiss()
     }
 }
 
+// MARK: - Section Header
+
+struct SectionHeader: View {
+    let title: String
+    var body: some View {
+        Text(title.uppercased())
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .tracking(0.6)
+            .padding(.horizontal, 4)
+    }
+}
+
+// MARK: - Suggestion Field
+
+struct SuggestionField: View {
+    let label: String
+    let placeholder: String
+    @Binding var text: String
+    let suggestions: [String]
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 16))
+                    .frame(minWidth: 80, alignment: .leading)
+                    .foregroundStyle(.primary)
+                TextField(placeholder, text: $text)
+                    .foregroundStyle(.primary)
+                    .trailingTextAlignment()
+#if os(iOS)
+                    .keyboardType(resolvedKeyboardType)
+                    .textInputAutocapitalization(label == "Email" ? .never : .sentences)
+#endif
+                if !suggestions.isEmpty {
+                    Button {
+                        withAnimation(.spring(duration: 0.2)) { isExpanded.toggle() }
+                    } label: {
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                            .padding(.leading, 4)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            if isExpanded && !suggestions.isEmpty {
+                Divider().padding(.leading, 16)
+                VStack(spacing: 0) {
+                    ForEach(suggestions, id: \.self) { suggestion in
+                        Button {
+                            withAnimation { text = suggestion; isExpanded = false }
+                        } label: {
+                            HStack {
+                                Text(suggestion)
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                Image(systemName: "arrow.up.left")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(Color.blue.opacity(0.04))
+                        }
+                        .buttonStyle(.plain)
+                        if suggestion != suggestions.last {
+                            Divider().padding(.leading, 16)
+                        }
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+#if os(iOS)
+    private var resolvedKeyboardType: UIKeyboardType {
+        switch label {
+        case "Email": return .emailAddress
+        case "Phone": return .phonePad
+        default: return .default
+        }
+    }
+#endif
+}
+
 // MARK: - Form Building Blocks
 
 struct FormCard<Content: View>: View {
     @ViewBuilder let content: Content
-
     var body: some View {
-        content
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        content.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
     }
 }
 
 struct FormRow<Content: View>: View {
     let label: String
     @ViewBuilder let content: Content
-
     var body: some View {
         HStack {
             Text(label)
@@ -358,8 +554,7 @@ struct FormRow<Content: View>: View {
                 .frame(minWidth: 80, alignment: .leading)
                 .foregroundStyle(.primary)
             Spacer()
-            content
-                .foregroundStyle(.secondary)
+            content.foregroundStyle(.primary)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -367,51 +562,7 @@ struct FormRow<Content: View>: View {
 }
 
 struct FormDivider: View {
-    var body: some View {
-        Divider()
-            .padding(.leading, 16)
-    }
-}
-
-struct ExpandableCard<Content: View>: View {
-    let title: String
-    let icon: String
-    @Binding var isExpanded: Bool
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Button {
-                withAnimation(.spring(duration: 0.3)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                HStack {
-                    Image(systemName: icon)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 20)
-                    Text(title)
-                        .font(.system(size: 16))
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-            }
-            .buttonStyle(.plain)
-
-            if isExpanded {
-                Divider().padding(.leading, 16)
-                content
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .clipped()
-    }
+    var body: some View { Divider().padding(.leading, 16) }
 }
 
 // MARK: - Preview
