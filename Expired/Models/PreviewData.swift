@@ -2,86 +2,212 @@ import Foundation
 import SwiftData
 
 @MainActor
-struct PreviewData {
-    static var inMemoryContainer: ModelContainer = {
-        let schema = Schema([SubscriptionItem.self, NotificationRule.self])
-        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
-        let container = try! ModelContainer(for: schema, configurations: [configuration])
+enum PreviewData {
 
-        let samples = sampleSubscriptions
-        for item in samples {
+    // MARK: - Container
+
+    static let container: ModelContainer = {
+        let schema = Schema([SubscriptionItem.self, NotificationRule.self])
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try! ModelContainer(for: schema, configurations: config)
+
+        // Insert sample data
+        let items = [netflix, spotify, audible, gym, passport, netflix, adobe]
+        // Note: each call to these vars creates a new instance for previews
+        for item in makeSamples() {
             container.mainContext.insert(item)
         }
         return container
     }()
 
-    static var sampleSubscriptions: [SubscriptionItem] {
-        let now = Date()
-        let calendar = Calendar.current
+    static func makeSamples() -> [SubscriptionItem] {
+        [
+            // Netflix — active, auto-renew
+            {
+                let item = SubscriptionItem(
+                    name: "Netflix",
+                    provider: "Netflix Inc.",
+                    iconSource: .system,
+                    cost: 22.99,
+                    currency: "AUD",
+                    billingCycle: .monthly,
+                    nextRenewalDate: Calendar.current.date(byAdding: .day, value: 8, to: Date()) ?? Date(),
+                    isAutoRenew: true,
+                    isCancelled: false,
+                    paymentMethod: "Visa ****4242",
+                    emailUsed: "john@example.com",
+                    notifications: [
+                        NotificationRule(offsetType: .daysBefore, value: 3)
+                    ]
+                )
+                return item
+            }(),
 
-        let netflix = SubscriptionItem(
+            // Spotify — free trial ending soon
+            {
+                let item = SubscriptionItem(
+                    name: "Spotify",
+                    provider: "Spotify AB",
+                    iconSource: .system,
+                    cost: 11.99,
+                    currency: "AUD",
+                    billingCycle: .monthly,
+                    nextRenewalDate: Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date(),
+                    trialEndDate: Calendar.current.date(byAdding: .day, value: 3, to: Date()) ?? Date(),
+                    isAutoRenew: true,
+                    isCancelled: false,
+                    paymentMethod: "Amex ****1234",
+                    emailUsed: "john@example.com",
+                    notifications: [
+                        NotificationRule(offsetType: .daysBefore, value: 3),
+                        NotificationRule(offsetType: .daysBefore, value: 1)
+                    ]
+                )
+                return item
+            }(),
+
+            // Audible — active, manual
+            {
+                let item = SubscriptionItem(
+                    name: "Audible",
+                    provider: "Amazon",
+                    iconSource: .system,
+                    cost: 16.45,
+                    currency: "AUD",
+                    billingCycle: .monthly,
+                    nextRenewalDate: Calendar.current.date(byAdding: .day, value: 22, to: Date()) ?? Date(),
+                    isAutoRenew: false,
+                    isCancelled: false,
+                    paymentMethod: "Visa ****4242",
+                    emailUsed: "john@example.com",
+                    notifications: [
+                        NotificationRule(offsetType: .weeksBefore, value: 1)
+                    ]
+                )
+                return item
+            }(),
+
+            // Gym — cancelled but still active
+            {
+                let item = SubscriptionItem(
+                    name: "Local Gym",
+                    provider: "Fitness First",
+                    iconSource: .system,
+                    cost: 49.00,
+                    currency: "AUD",
+                    billingCycle: .monthly,
+                    nextRenewalDate: Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date(),
+                    isAutoRenew: false,
+                    isCancelled: true,
+                    activeUntilDate: Calendar.current.date(byAdding: .day, value: 18, to: Date()) ?? Date(),
+                    paymentMethod: "Amex ****1234",
+                    emailUsed: "john@example.com"
+                )
+                return item
+            }(),
+
+            // iCloud — due soon
+            {
+                let item = SubscriptionItem(
+                    name: "iCloud+",
+                    provider: "Apple",
+                    iconSource: .system,
+                    cost: 4.49,
+                    currency: "AUD",
+                    billingCycle: .monthly,
+                    nextRenewalDate: Calendar.current.date(byAdding: .day, value: 4, to: Date()) ?? Date(),
+                    isAutoRenew: true,
+                    isCancelled: false,
+                    paymentMethod: "Apple Pay",
+                    emailUsed: "john@icloud.com",
+                    notifications: [
+                        NotificationRule(offsetType: .daysBefore, value: 1)
+                    ]
+                )
+                return item
+            }(),
+
+            // Adobe — yearly
+            {
+                let item = SubscriptionItem(
+                    name: "Adobe Creative Cloud",
+                    provider: "Adobe",
+                    iconSource: .system,
+                    cost: 87.49,
+                    currency: "AUD",
+                    billingCycle: .yearly,
+                    nextRenewalDate: Calendar.current.date(byAdding: .month, value: 4, to: Date()) ?? Date(),
+                    isAutoRenew: true,
+                    isCancelled: false,
+                    paymentMethod: "Visa ****4242",
+                    emailUsed: "john@example.com",
+                    notifications: [
+                        NotificationRule(offsetType: .monthsBefore, value: 1),
+                        NotificationRule(offsetType: .weeksBefore, value: 1)
+                    ]
+                )
+                return item
+            }(),
+
+            // Australian Passport — document expiry
+            {
+                let item = SubscriptionItem(
+                    name: "Australian Passport",
+                    provider: "Department of Foreign Affairs",
+                    iconSource: .system,
+                    billingCycle: .yearly,
+                    nextRenewalDate: Calendar.current.date(byAdding: .year, value: 3, to: Date()) ?? Date(),
+                    isAutoRenew: false,
+                    isCancelled: false,
+                    notes: "Passport No: PA1234567",
+                    notifications: [
+                        NotificationRule(offsetType: .monthsBefore, value: 6, isCritical: true),
+                        NotificationRule(offsetType: .monthsBefore, value: 3)
+                    ]
+                )
+                return item
+            }()
+        ]
+    }
+
+    // MARK: - Individual items for row previews
+
+    static var netflix: SubscriptionItem {
+        SubscriptionItem(
             name: "Netflix",
-            provider: "Netflix",
             iconSource: .system,
             cost: 22.99,
-            currency: "USD",
+            currency: "AUD",
             billingCycle: .monthly,
-            nextRenewalDate: calendar.date(byAdding: .day, value: 6, to: now)!,
-            trialEndDate: nil,
-            isAutoRenew: true,
-            isCancelled: false,
-            paymentMethod: "Amex •••• 1234",
-            emailUsed: "me@example.com",
-            notes: "Premium plan"
+            nextRenewalDate: Calendar.current.date(byAdding: .day, value: 8, to: Date()) ?? Date(),
+            isAutoRenew: true
         )
+    }
 
-        let audible = SubscriptionItem(
-            name: "Audible",
-            provider: "Audible",
-            iconSource: .system,
-            cost: 14.95,
-            currency: "USD",
-            billingCycle: .monthly,
-            nextRenewalDate: calendar.date(byAdding: .day, value: 15, to: now)!,
-            trialEndDate: nil,
-            isAutoRenew: false,
-            isCancelled: false,
-            paymentMethod: "Visa •••• 8891",
-            emailUsed: "me@icloud.com"
-        )
-
-        let spotifyTrial = SubscriptionItem(
+    static var spotify: SubscriptionItem {
+        SubscriptionItem(
             name: "Spotify",
-            provider: "Spotify",
             iconSource: .system,
-            cost: 0.0,
-            currency: "USD",
+            cost: 11.99,
+            currency: "AUD",
             billingCycle: .monthly,
-            nextRenewalDate: calendar.date(byAdding: .day, value: 12, to: now)!,
-            trialEndDate: calendar.date(byAdding: .day, value: 3, to: now)!,
-            isAutoRenew: true,
-            isCancelled: false
+            nextRenewalDate: Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date(),
+            trialEndDate: Calendar.current.date(byAdding: .day, value: 3, to: Date()) ?? Date(),
+            isAutoRenew: false
         )
-        spotifyTrial.notifications = [
-            NotificationRule(offsetType: .daysBefore, value: 3),
-            NotificationRule(offsetType: .daysBefore, value: 1)
-        ]
+    }
 
-        let gymCancelled = SubscriptionItem(
-            name: "Gym",
-            provider: "Local Gym",
+    static var gym: SubscriptionItem {
+        SubscriptionItem(
+            name: "Local Gym",
             iconSource: .system,
-            cost: 45.00,
-            currency: "USD",
+            cost: 49.00,
+            currency: "AUD",
             billingCycle: .monthly,
-            nextRenewalDate: calendar.date(byAdding: .day, value: 28, to: now)!,
-            trialEndDate: nil,
+            nextRenewalDate: Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date(),
             isAutoRenew: false,
             isCancelled: true,
-            activeUntilDate: calendar.date(byAdding: .day, value: 20, to: now)!,
-            paymentMethod: "Mastercard •••• 1122"
+            activeUntilDate: Calendar.current.date(byAdding: .day, value: 18, to: Date()) ?? Date()
         )
-
-        return [netflix, audible, spotifyTrial, gymCancelled]
     }
 }

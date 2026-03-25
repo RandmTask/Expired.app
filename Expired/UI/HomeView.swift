@@ -3,136 +3,337 @@ import SwiftData
 
 struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \SubscriptionItem.nextRenewalDate, order: .forward) private var items: [SubscriptionItem]
+    @Query(sort: \SubscriptionItem.nextRenewalDate) private var allItems: [SubscriptionItem]
 
-    @State private var showingAddSheet = false
+    @State private var showingAdd = false
+    @State private var editingItem: SubscriptionItem?
+    @State private var searchText = ""
+    @State private var showSearch = false
 
-    private let dueSoonWindowDays = 7
+    // MARK: - Filtered groups
+
+    private var visibleItems: [SubscriptionItem] {
+        guard !searchText.isEmpty else { return allItems }
+        return allItems.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText) ||
+            $0.provider.localizedCaseInsensitiveContains(searchText) ||
+            $0.emailUsed.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    // Due within 14 days, not cancelled, not trial
+    private var dueSoon: [SubscriptionItem] {
+        visibleItems.filter {
+            !$0.isCancelled &&
+            !$0.isTrial &&
+            $0.daysUntilRenewal >= 0 &&
+            $0.daysUntilRenewal <= 14
+        }
+    }
+
+    private var trialsEnding: [SubscriptionItem] {
+        visibleItems.filter { $0.isTrial }
+            .sorted { ($0.trialEndDate ?? .distantFuture) < ($1.trialEndDate ?? .distantFuture) }
+    }
+
+    private var cancelledActive: [SubscriptionItem] {
+        visibleItems.filter {
+            if case .cancelledButActive = $0.status { return true }
+            return false
+        }
+    }
+
+    private var upcoming: [SubscriptionItem] {
+        visibleItems.filter {
+            !$0.isCancelled &&
+            !$0.isTrial &&
+            $0.daysUntilRenewal > 14
+        }
+    }
+
+    private var expired: [SubscriptionItem] {
+        visibleItems.filter {
+            if case .expired = $0.status { return true }
+            return false
+        }
+    }
+
+    // MARK: - Cost totals
+
+    private var monthlyTotal: Double {
+        allItems.compactMap(\.monthlyCost).reduce(0, +)
+    }
+
+    private var yearlyTotal: Double {
+        monthlyTotal * 12
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
-                    summaryCard
-                    section(title: "Due Soon", items: dueSoonItems)
-                    section(title: "Trials Ending", items: trialItems)
-                    section(title: "Upcoming", items: upcomingItems)
+                LazyVStack(spacing: 24) {
+                    // Summary card
+                    if !allItems.isEmpty {
+                        SummaryCardView(
+                            monthlyTotal: monthlyTotal,
+                            yearlyTotal: yearlyTotal,
+                            activeCount: allItems.filter { if case .expired = $0.status { return false }; return true }.count
+                        )
+                        .padding(.horizontal)
+                    }
+
+                    // Trials ending — highest urgency
+                    if !trialsEnding.isEmpty {
+                        SectionView(title: "Trials Ending", icon: "clock.badge.exclamationmark", accentColor: .purple) {
+                            ForEach(trialsEnding) { item in
+                                itemRow(item)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+
+                    // Due soon
+                    if !dueSoon.isEmpty {
+                        SectionView(title: "Due Soon", icon: "bell.fill", accentColor: .red) {
+                            ForEach(dueSoon) { item in
+                                itemRow(item)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+
+                    // Cancelled but still active
+                    if !cancelledActive.isEmpty {
+                        SectionView(title: "Cancelled but Active", icon: "calendar.badge.minus", accentColor: .orange) {
+                            ForEach(cancelledActive) { item in
+                                itemRow(item)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+
+                    // Upcoming
+                    if !upcoming.isEmpty {
+                        SectionView(title: "Upcoming", icon: "calendar", accentColor: .blue) {
+                            ForEach(upcoming) { item in
+                                itemRow(item)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+
+                    // Expired
+                    if !expired.isEmpty {
+                        SectionView(title: "Expired", icon: "xmark.circle", accentColor: .gray) {
+                            ForEach(expired) { item in
+                                itemRow(item)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+
+                    // Empty state
+                    if allItems.isEmpty {
+                        EmptyStateView {
+                            showingAdd = true
+                        }
+                        .padding(.top, 60)
+                    }
+
+                    Spacer(minLength: 100)
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 40)
+                .padding(.top, 8)
             }
-            .background(backgroundView)
-            .navigationTitle("Expired")
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .navigationTitle("Subscriptions")
+            .navigationBarTitleDisplayMode(.large)
+            .searchable(text: $searchText, isPresented: $showSearch, prompt: "Search subscriptions")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        showingAddSheet = true
+                        showingAdd = true
                     } label: {
-                        Label("Add", systemImage: "plus.circle.fill")
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 22))
+                            .symbolRenderingMode(.hierarchical)
                     }
                 }
             }
-            .sheet(isPresented: $showingAddSheet) {
-                AddEditSubscriptionView()
-                    .presentationDetents([.medium, .large])
+            .sheet(isPresented: $showingAdd) {
+                AddEditSubscriptionView(item: nil)
+            }
+            .sheet(item: $editingItem) { item in
+                AddEditSubscriptionView(item: item)
             }
         }
     }
 
-    private var summaryCard: some View {
-        let monthlyTotal = items.compactMap { $0.monthlyCost }.reduce(0, +)
-        let yearlyTotal = items.compactMap { $0.yearlyCost }.reduce(0, +)
+    // MARK: - Row with swipe actions
 
-        return HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Monthly Total")
-                    .font(.custom("Avenir Next", size: 12))
-                    .foregroundStyle(.secondary)
-                Text(currencyLabel(monthlyTotal))
-                    .font(.custom("Avenir Next", size: 22))
+    @ViewBuilder
+    private func itemRow(_ item: SubscriptionItem) -> some View {
+        SubscriptionRowView(item: item)
+            .onTapGesture {
+                editingItem = item
             }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    deleteItem(item)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
 
-            Spacer()
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Yearly Total")
-                    .font(.custom("Avenir Next", size: 12))
-                    .foregroundStyle(.secondary)
-                Text(currencyLabel(yearlyTotal))
-                    .font(.custom("Avenir Next", size: 22))
+                Button {
+                    toggleCancelled(item)
+                } label: {
+                    Label(
+                        item.isCancelled ? "Reinstate" : "Cancel",
+                        systemImage: item.isCancelled ? "arrow.uturn.left" : "xmark"
+                    )
+                }
+                .tint(item.isCancelled ? .green : .orange)
             }
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .shadow(color: Color.black.opacity(0.08), radius: 16, x: 0, y: 8)
-        )
     }
 
-    private func section(title: String, items: [SubscriptionItem]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(title)
-                    .font(.custom("Avenir Next", size: 20))
-                Spacer()
-                Text("\(items.count)")
-                    .font(.custom("Avenir Next", size: 12))
-                    .foregroundStyle(.secondary)
-            }
+    // MARK: - Actions
 
-            if items.isEmpty {
-                Text("Nothing here yet")
-                    .font(.custom("Avenir Next", size: 14))
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 8)
+    private func deleteItem(_ item: SubscriptionItem) {
+        withAnimation {
+            modelContext.delete(item)
+        }
+    }
+
+    private func toggleCancelled(_ item: SubscriptionItem) {
+        withAnimation {
+            item.isCancelled.toggle()
+            if item.isCancelled {
+                item.activeUntilDate = item.nextRenewalDate
             } else {
-                VStack(spacing: 12) {
-                    ForEach(items) { item in
-                        SubscriptionRowView(item: item)
-                    }
-                }
+                item.activeUntilDate = nil
             }
+            item.updatedAt = Date()
         }
-    }
-
-    private var dueSoonItems: [SubscriptionItem] {
-        let now = Date()
-        let cutoff = Calendar.current.date(byAdding: .day, value: dueSoonWindowDays, to: now) ?? now
-        return items.filter { !$0.isTrial && $0.nextRelevantDate <= cutoff }
-    }
-
-    private var trialItems: [SubscriptionItem] {
-        items.filter { $0.isTrial }
-            .sorted { $0.nextRelevantDate < $1.nextRelevantDate }
-    }
-
-    private var upcomingItems: [SubscriptionItem] {
-        let now = Date()
-        return items.filter { !$0.isTrial && $0.nextRelevantDate > now }
-    }
-
-    private func currencyLabel(_ value: Double) -> String {
-        let formatted = String(format: "%.2f", value)
-        return "USD \(formatted)"
-    }
-
-    private var backgroundView: some View {
-        LinearGradient(
-            colors: [
-                Color(.systemBackground),
-                Color(.systemGray6),
-                Color(.systemGray5)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .ignoresSafeArea()
     }
 }
 
+// MARK: - Section Container
+
+struct SectionView<Content: View>: View {
+    let title: String
+    let icon: String
+    let accentColor: Color
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(accentColor)
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+            }
+            .padding(.horizontal, 4)
+
+            VStack(spacing: 8) {
+                content
+            }
+        }
+    }
+}
+
+// MARK: - Summary Card
+
+struct SummaryCardView: View {
+    let monthlyTotal: Double
+    let yearlyTotal: Double
+    let activeCount: Int
+
+    var body: some View {
+        HStack(spacing: 0) {
+            summaryItem(
+                label: "Monthly",
+                value: monthlyTotal.formatted(.currency(code: "AUD"))
+            )
+
+            Divider()
+                .frame(height: 36)
+
+            summaryItem(
+                label: "Yearly",
+                value: yearlyTotal.formatted(.currency(code: "AUD"))
+            )
+
+            Divider()
+                .frame(height: 36)
+
+            summaryItem(
+                label: "Active",
+                value: "\(activeCount)"
+            )
+        }
+        .padding(.vertical, 16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    @ViewBuilder
+    private func summaryItem(label: String, value: String) -> some View {
+        VStack(spacing: 4) {
+            Text(value)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.primary)
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Empty State
+
+struct EmptyStateView: View {
+    let onAdd: () -> Void
+
+    var body: some View {
+        VStack(spacing: 20) {
+            ZStack {
+                Circle()
+                    .fill(.blue.opacity(0.1))
+                    .frame(width: 80, height: 80)
+                Image(systemName: "creditcard.fill")
+                    .font(.system(size: 34))
+                    .foregroundStyle(.blue.opacity(0.7))
+            }
+
+            VStack(spacing: 8) {
+                Text("No Subscriptions Yet")
+                    .font(.system(size: 20, weight: .semibold))
+                Text("Track your subscriptions,\nfree trials, and documents.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            Button(action: onAdd) {
+                Label("Add Subscription", systemImage: "plus")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .background(.blue, in: Capsule())
+            }
+        }
+        .padding()
+    }
+}
+
+// MARK: - Preview
+
 #Preview {
     HomeView()
-        .modelContainer(PreviewData.inMemoryContainer)
+        .modelContainer(PreviewData.container)
 }

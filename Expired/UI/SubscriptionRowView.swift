@@ -3,110 +3,199 @@ import SwiftUI
 struct SubscriptionRowView: View {
     let item: SubscriptionItem
 
-    private var statusColor: Color {
-        switch item.status {
-        case .autoRenew:
-            return Color.green
-        case .manualRenew:
-            return Color.blue
-        case .cancelledButActive:
-            return Color.orange
-        case .expired:
-            return Color.red
-        }
-    }
-
     var body: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.thinMaterial)
-                Image(systemName: "sparkle")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .frame(width: 44, height: 44)
+        HStack(spacing: 14) {
+            // Icon
+            ItemIconView(item: item, size: 46)
 
-            VStack(alignment: .leading, spacing: 4) {
+            // Name + date
+            VStack(alignment: .leading, spacing: 3) {
                 Text(item.name)
-                    .font(.custom("Avenir Next", size: 18))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.primary)
 
-                Text(dateLabel)
-                    .font(.custom("Avenir Next", size: 13))
+                dateLabel
+                    .font(.system(size: 13))
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            VStack(alignment: .trailing, spacing: 6) {
-                StatusBadge(label: item.status.label, color: statusColor)
-
-                if let cost = item.cost {
-                    Text(costLabel(cost))
-                        .font(.custom("Avenir Next", size: 13))
-                        .foregroundStyle(.secondary)
+            // Right side: cost + badge
+            VStack(alignment: .trailing, spacing: 5) {
+                if let monthly = item.monthlyCost {
+                    Text(monthly, format: .currency(code: item.currency))
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Text("/ mo")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
                 }
+
+                StatusBadge(status: item.status)
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 6)
-        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .contentShape(RoundedRectangle(cornerRadius: 20))
     }
 
-    private var dateLabel: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        let date = item.nextRelevantDate
-        if item.isTrial {
-            return "Trial ends \(formatter.string(from: date))"
+    @ViewBuilder
+    private var dateLabel: some View {
+        switch item.status {
+        case .trial(let endsOn):
+            HStack(spacing: 4) {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .foregroundStyle(.purple)
+                Text("Trial ends \(endsOn, style: .relative)")
+            }
+        case .cancelledButActive(let until):
+            HStack(spacing: 4) {
+                Image(systemName: "calendar.badge.minus")
+                    .foregroundStyle(.orange)
+                Text("Active until \(until.formatted(date: .abbreviated, time: .omitted))")
+            }
+        case .expired:
+            HStack(spacing: 4) {
+                Image(systemName: "xmark.circle")
+                    .foregroundStyle(.red)
+                Text("Expired")
+            }
+        default:
+            HStack(spacing: 4) {
+                Image(systemName: "calendar")
+                Text(item.nextRelevantDate, style: .date)
+            }
         }
-        if item.status == .cancelledButActive {
-            return "Active until \(formatter.string(from: date))"
-        }
-        return "Renews \(formatter.string(from: date))"
-    }
-
-    private func costLabel(_ cost: Double) -> String {
-        let currency = item.currency
-        let formatted = String(format: "%.2f", cost)
-        return "\(currency) \(formatted)"
     }
 }
 
-struct StatusBadge: View {
-    let label: String
-    let color: Color
+// MARK: - Icon View
+
+struct ItemIconView: View {
+    let item: SubscriptionItem
+    let size: CGFloat
 
     var body: some View {
-        Text(label)
-            .font(.custom("Avenir Next", size: 12))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(color.opacity(0.18))
-            )
-            .foregroundStyle(color)
+        Group {
+            if item.iconSource == .customImage || item.iconSource == .favicon,
+               let data = item.iconData,
+               let uiImage = platformImage(from: data) {
+                Image(platformImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: size * 0.22)
+                        .fill(iconGradient)
+                    Image(systemName: item.systemIconName)
+                        .font(.system(size: size * 0.44, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                .frame(width: size, height: size)
+            }
+        }
+    }
+
+    private var iconGradient: LinearGradient {
+        let colors = gradientColors(for: item.name)
+        return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    private func gradientColors(for name: String) -> [Color] {
+        let lower = name.lowercased()
+        if lower.contains("netflix") { return [.red, Color(red: 0.7, green: 0, blue: 0)] }
+        if lower.contains("spotify") { return [Color(red: 0.11, green: 0.73, blue: 0.33), .green] }
+        if lower.contains("apple") || lower.contains("icloud") { return [.gray, Color(white: 0.35)] }
+        if lower.contains("amazon") { return [Color(red: 1, green: 0.6, blue: 0), .orange] }
+        if lower.contains("audible") { return [Color(red: 1, green: 0.47, blue: 0), .orange] }
+        if lower.contains("youtube") { return [.red, Color(red: 0.8, green: 0, blue: 0)] }
+        if lower.contains("disney") { return [Color(red: 0.05, green: 0.1, blue: 0.6), .blue] }
+        if lower.contains("gym") || lower.contains("fitness") { return [.purple, .indigo] }
+        if lower.contains("microsoft") { return [.blue, .cyan] }
+        if lower.contains("adobe") { return [.red, .pink] }
+        if lower.contains("passport") || lower.contains("licence") { return [.indigo, .blue] }
+
+        // Hash-based fallback for consistent colours per name
+        let hash = abs(name.hashValue)
+        let palettes: [[Color]] = [
+            [.blue, .cyan],
+            [.purple, .indigo],
+            [.pink, .orange],
+            [.teal, .green],
+            [.orange, .yellow],
+            [Color(red: 0.3, green: 0.2, blue: 0.8), .purple],
+        ]
+        return palettes[hash % palettes.count]
     }
 }
 
-#Preview {
-    VStack(spacing: 16) {
-        ForEach(PreviewData.sampleSubscriptions) { item in
-            SubscriptionRowView(item: item)
+// MARK: - Status Badge
+
+struct StatusBadge: View {
+    let status: SubscriptionStatus
+
+    var body: some View {
+        Text(status.label)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(badgeColor)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(badgeColor.opacity(0.15), in: Capsule())
+    }
+
+    private var badgeColor: Color {
+        switch status {
+        case .autoRenew: return .green
+        case .manualRenew: return .blue
+        case .cancelledButActive: return .orange
+        case .expired: return .red
+        case .trial: return .purple
         }
     }
+}
+
+// MARK: - Cross-platform image helpers
+
+#if os(iOS)
+import UIKit
+typealias PlatformImage = UIImage
+
+func platformImage(from data: Data) -> UIImage? {
+    UIImage(data: data)
+}
+
+extension Image {
+    init(platformImage: UIImage) {
+        self.init(uiImage: platformImage)
+    }
+}
+#elseif os(macOS)
+import AppKit
+typealias PlatformImage = NSImage
+
+func platformImage(from data: Data) -> NSImage? {
+    NSImage(data: data)
+}
+
+extension Image {
+    init(platformImage: NSImage) {
+        self.init(nsImage: platformImage)
+    }
+}
+#endif
+
+// MARK: - Preview
+
+#Preview {
+    VStack(spacing: 12) {
+        SubscriptionRowView(item: PreviewData.netflix)
+        SubscriptionRowView(item: PreviewData.spotify)
+        SubscriptionRowView(item: PreviewData.gym)
+    }
     .padding()
-    .background(
-        LinearGradient(
-            colors: [Color(.systemBackground), Color(.systemGray6)],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    )
+    .background(Color(.systemGroupedBackground))
 }
