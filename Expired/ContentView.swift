@@ -13,6 +13,9 @@ struct ContentView: View {
             Tab("Insights", systemImage: "chart.bar") {
                 InsightsView()
             }
+            Tab("Archive", systemImage: "archivebox") {
+                ArchiveView()
+            }
             Tab("Settings", systemImage: "gear") {
                 SettingsView()
             }
@@ -26,7 +29,9 @@ struct ContentView: View {
 // MARK: - Timeline View
 
 struct TimelineView: View {
-    @Query(sort: \SubscriptionItem.nextRenewalDate) private var allItems: [SubscriptionItem]
+    @Query(filter: #Predicate<SubscriptionItem> { !$0.isArchived },
+           sort: \SubscriptionItem.nextRenewalDate)
+    private var allItems: [SubscriptionItem]
 
     private var upcoming: [SubscriptionItem] {
         allItems.filter { $0.daysUntilRenewal >= 0 }
@@ -106,7 +111,7 @@ struct TimelineRow: View {
 // MARK: - Insights View
 
 struct InsightsView: View {
-    @Query private var allItems: [SubscriptionItem]
+    @Query(filter: #Predicate<SubscriptionItem> { !$0.isArchived }) private var allItems: [SubscriptionItem]
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
 
     private var activeItems: [SubscriptionItem] {
@@ -249,6 +254,79 @@ struct CostBarRow: View {
     }
 }
 
+// MARK: - Archive View
+
+struct ArchiveView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query(filter: #Predicate<SubscriptionItem> { $0.isArchived },
+           sort: \SubscriptionItem.updatedAt, order: .reverse)
+    private var archivedItems: [SubscriptionItem]
+
+    @State private var editingItem: SubscriptionItem?
+    @State private var searchText = ""
+
+    private var visibleItems: [SubscriptionItem] {
+        guard !searchText.isEmpty else { return archivedItems }
+        return archivedItems.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText) ||
+            $0.provider.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if archivedItems.isEmpty {
+                    ContentUnavailableView(
+                        "No Archived Items",
+                        systemImage: "archivebox",
+                        description: Text("Swipe left on any subscription to archive it.")
+                    )
+                } else if visibleItems.isEmpty {
+                    ContentUnavailableView.search
+                } else {
+                    List {
+                        ForEach(visibleItems) { item in
+                            SubscriptionRowView(item: item)
+                                .onTapGesture { editingItem = item }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        modelContext.delete(item)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
+                                .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                    Button {
+                                        withAnimation {
+                                            item.isArchived = false
+                                            item.updatedAt = Date()
+                                        }
+                                    } label: {
+                                        Label("Restore", systemImage: "arrow.uturn.left")
+                                    }
+                                    .tint(.green)
+                                }
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                        }
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .background(groupedBackground.ignoresSafeArea())
+                }
+            }
+            .navigationTitle("Archive")
+            .largeNavigationTitle()
+#if os(iOS)
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search archive")
+#endif
+            .sheet(item: $editingItem) { AddEditSubscriptionView(item: $0) }
+        }
+    }
+}
+
 // MARK: - Cross-platform helpers (shared across files)
 
 var groupedBackground: Color {
@@ -290,9 +368,14 @@ extension View {
 struct SettingsView: View {
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
+    @AppStorage("appearanceMode") private var appearanceMode = 0
     @State private var showRestartAlert = false
     @State private var showCurrencyPicker = false
     @State private var isSyncing = false
+    @State private var isRefreshingFavicons = false
+    @State private var faviconRefreshProgress: (done: Int, total: Int) = (0, 0)
+    @Query(filter: #Predicate<SubscriptionItem> { $0.isArchived }) private var archivedItems: [SubscriptionItem]
+    @Query private var allItems: [SubscriptionItem]
 
     /// Best-guess currency from the device locale, falling back to USD.
     static var localeCurrencyCode: String {
@@ -308,15 +391,23 @@ struct SettingsView: View {
                         showCurrencyPicker = true
                     } label: {
                         HStack {
-                            Label("Base Currency", systemImage: "dollarsign.circle")
+                            Text("Base Currency")
                                 .foregroundStyle(.primary)
                             Spacer()
                             Text("\(CurrencyInfo.symbol(for: preferredCurrency)) \(preferredCurrency)")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.primary)
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(.tertiary)
                         }
+                    }
+                    .foregroundStyle(.primary)
+                    Picker(selection: $appearanceMode) {
+                        Text("System").tag(0)
+                        Text("Light").tag(1)
+                        Text("Dark").tag(2)
+                    } label: {
+                        Label("Appearance", systemImage: "paintbrush")
                     }
                 } header: {
                     Text("Display")
@@ -359,6 +450,38 @@ struct SettingsView: View {
                 } footer: {
                     Text("When enabled, your data syncs across all devices signed into the same iCloud account. Requires an iCloud account and internet connection. Restart the app after changing this setting.")
                 }
+                Section("Data") {
+                    NavigationLink {
+                        ArchiveView()
+                    } label: {
+                        HStack {
+                            Label("Archive", systemImage: "archivebox")
+                            Spacer()
+                            if !archivedItems.isEmpty {
+                                Text("\(archivedItems.count)")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Button {
+                        refreshAllFavicons()
+                    } label: {
+                        HStack {
+                            Label("Refresh All Icons", systemImage: "arrow.clockwise.circle")
+                                .foregroundStyle(.primary)
+                            if isRefreshingFavicons {
+                                Spacer()
+                                if faviconRefreshProgress.total > 0 {
+                                    Text("\(faviconRefreshProgress.done)/\(faviconRefreshProgress.total)")
+                                        .foregroundStyle(.secondary)
+                                        .font(.system(size: 13))
+                                }
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                    }
+                    .disabled(isRefreshingFavicons)
+                }
             }
             .navigationTitle("Settings")
             .largeNavigationTitle()
@@ -368,6 +491,30 @@ struct SettingsView: View {
             } message: {
                 Text("Please restart the app for the iCloud sync change to take effect.")
             }
+        }
+    }
+
+    private func refreshAllFavicons() {
+        let itemsWithURL = allItems.filter {
+            !$0.url.isEmpty && $0.iconSource != .customImage
+        }
+        guard !itemsWithURL.isEmpty else { return }
+        isRefreshingFavicons = true
+        faviconRefreshProgress = (0, itemsWithURL.count)
+        Task {
+            for item in itemsWithURL {
+                guard !Task.isCancelled else { break }
+                if let data = await FaviconFetcher.fetch(from: item.url) {
+                    await MainActor.run {
+                        item.iconData = data
+                        item.iconSource = .favicon
+                        faviconRefreshProgress.done += 1
+                    }
+                } else {
+                    await MainActor.run { faviconRefreshProgress.done += 1 }
+                }
+            }
+            await MainActor.run { isRefreshingFavicons = false }
         }
     }
 }

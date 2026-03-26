@@ -7,6 +7,8 @@ import CoreData
 struct ExpiredApp: App {
     // Persisted user preference for iCloud sync (default: on)
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
+    // Appearance: 0 = system/auto, 1 = light, 2 = dark
+    @AppStorage("appearanceMode") private var appearanceMode = 0
 
     let container: ModelContainer
 
@@ -233,10 +235,19 @@ struct ExpiredApp: App {
         }
     }
 
+    private var preferredColorScheme: ColorScheme? {
+        switch appearanceMode {
+        case 1: return .light
+        case 2: return .dark
+        default: return nil  // system default
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .modelContainer(container)
+                .preferredColorScheme(preferredColorScheme)
                 .task {
                     await NotificationManager.shared.requestAuthorization()
                 }

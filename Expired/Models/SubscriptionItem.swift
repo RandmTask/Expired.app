@@ -32,6 +32,35 @@ enum BillingCycle: String, Codable, CaseIterable {
     }
 }
 
+/// User-defined category for grouping subscriptions.
+enum SubscriptionCategory: String, Codable, CaseIterable {
+    case streaming  = "Streaming"
+    case music      = "Music"
+    case software   = "Software"
+    case fitness    = "Fitness"
+    case gaming     = "Gaming"
+    case finance    = "Finance"
+    case news       = "News"
+    case shopping   = "Shopping"
+    case utilities  = "Utilities"
+    case other      = "Other"
+
+    var icon: String {
+        switch self {
+        case .streaming:  return "play.tv.fill"
+        case .music:      return "music.note"
+        case .software:   return "app.fill"
+        case .fitness:    return "figure.run"
+        case .gaming:     return "gamecontroller.fill"
+        case .finance:    return "dollarsign.circle.fill"
+        case .news:       return "newspaper.fill"
+        case .shopping:   return "bag.fill"
+        case .utilities:  return "wrench.and.screwdriver.fill"
+        case .other:      return "square.grid.2x2.fill"
+        }
+    }
+}
+
 enum IconSource: String, Codable {
     case system
     case appBundle
@@ -150,6 +179,9 @@ final class SubscriptionItem {
     var url: String = ""
     var documentNumber: String? = nil
     var validFromDate: Date? = nil
+    /// Stored as optional String for CloudKit compatibility with older records.
+    var categoryRaw: String? = nil
+    var isArchived: Bool = false
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -172,6 +204,11 @@ final class SubscriptionItem {
     var billingCycle: BillingCycle {
         get { BillingCycle(rawValue: billingCycleRaw) ?? .monthly }
         set { billingCycleRaw = newValue.rawValue }
+    }
+
+    var category: SubscriptionCategory? {
+        get { categoryRaw.flatMap { SubscriptionCategory(rawValue: $0) } }
+        set { categoryRaw = newValue?.rawValue }
     }
 
     /// Safe accessor — never nil in practice; returns [] when CloudKit delivers nil.
@@ -201,6 +238,7 @@ final class SubscriptionItem {
         url: String = "",
         documentNumber: String? = nil,
         validFromDate: Date? = nil,
+        category: SubscriptionCategory? = nil,
         notifications: [NotificationRule] = []
     ) {
         self.id = id
@@ -226,6 +264,7 @@ final class SubscriptionItem {
         self.url = url
         self.documentNumber = documentNumber
         self.validFromDate = validFromDate
+        self.categoryRaw = category?.rawValue
         self.createdAt = Date()
         self.updatedAt = Date()
         self.notifications = notifications

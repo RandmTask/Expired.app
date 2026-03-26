@@ -77,18 +77,18 @@ struct SubscriptionRowView: View {
     }
 }
 
-// MARK: - Urgency Icon View (icon with optional colour ring)
+// MARK: - Urgency Icon View (icon with adaptive border ring)
 
 struct UrgencyIconView: View {
     let item: SubscriptionItem
     let size: CGFloat
 
-    private var ringColor: Color? {
+    private var ringColor: Color {
         switch item.urgency {
         case .critical: return .red
         case .warning:  return .orange
-        case .expired:  return .red.opacity(0.4)
-        case .normal:   return nil
+        case .expired:  return Color.secondary.opacity(0.5)
+        case .normal:   return .clear
         }
     }
 
@@ -96,11 +96,9 @@ struct UrgencyIconView: View {
         ZStack {
             ItemIconView(item: item, size: size)
 
-            if let color = ringColor {
-                RoundedRectangle(cornerRadius: size * 0.22)
-                    .strokeBorder(color, lineWidth: 2.5)
-                    .frame(width: size, height: size)
-            }
+            RoundedRectangle(cornerRadius: size * 0.22)
+                .strokeBorder(ringColor, lineWidth: 2)
+                .frame(width: size, height: size)
         }
     }
 }

@@ -3,25 +3,50 @@ import SwiftData
 
 struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \SubscriptionItem.nextRenewalDate) private var allItems: [SubscriptionItem]
+    @Query(filter: #Predicate<SubscriptionItem> { !$0.isArchived },
+           sort: \SubscriptionItem.nextRenewalDate)
+    private var allItems: [SubscriptionItem]
 
     private var subscriptionItems: [SubscriptionItem] {
         allItems.filter { $0.itemType == .subscription }
-    }
-
-    private var documentItems: [SubscriptionItem] {
-        allItems.filter { $0.itemType == .document }
-            .sorted { $0.nextRelevantDate < $1.nextRelevantDate }
     }
 
     @State private var showingAdd = false
     @State private var editingItem: SubscriptionItem?
     @State private var searchText = ""
 
+    // Sort & filter
+    enum SortOrder: String, CaseIterable { case renewalDate = "Renewal Date"; case name = "Name"; case cost = "Cost" }
+    enum FilterOption: String, CaseIterable { case all = "All"; case autoRenew = "Auto-Renew"; case trials = "Trials"; case cancelled = "Cancelled"; case expired = "Expired" }
+    @AppStorage("homeSortOrder") private var sortOrderRaw: String = SortOrder.renewalDate.rawValue
+    @AppStorage("homeFilterOption") private var filterOptionRaw: String = FilterOption.all.rawValue
+    private var sortOrder: SortOrder { SortOrder(rawValue: sortOrderRaw) ?? .renewalDate }
+    private var filterOption: FilterOption { FilterOption(rawValue: filterOptionRaw) ?? .all }
+
     // MARK: - Filtered groups
 
+    private var isSearching: Bool { !searchText.isEmpty }
+
+    private func applySort(_ items: [SubscriptionItem]) -> [SubscriptionItem] {
+        switch sortOrder {
+        case .renewalDate: return items.sorted { $0.nextRelevantDate < $1.nextRelevantDate }
+        case .name:        return items.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+        case .cost:        return items.sorted { ($0.monthlyCost ?? 0) > ($1.monthlyCost ?? 0) }
+        }
+    }
+
+    private func applyFilter(_ items: [SubscriptionItem]) -> [SubscriptionItem] {
+        switch filterOption {
+        case .all:        return items
+        case .autoRenew:  return items.filter { $0.isAutoRenew && !$0.isCancelled && !$0.isTrial }
+        case .trials:     return items.filter { $0.isTrial }
+        case .cancelled:  return items.filter { if case .cancelledButActive = $0.status { return true }; return false }
+        case .expired:    return items.filter { if case .expired = $0.status { return true }; return false }
+        }
+    }
+
     private var visibleItems: [SubscriptionItem] {
-        guard !searchText.isEmpty else { return allItems }
+        guard isSearching else { return allItems }
         return allItems.filter {
             $0.name.localizedCaseInsensitiveContains(searchText) ||
             $0.provider.localizedCaseInsensitiveContains(searchText) ||
@@ -30,7 +55,7 @@ struct HomeView: View {
     }
 
     private var visibleSubscriptions: [SubscriptionItem] {
-        visibleItems.filter { $0.itemType == .subscription }
+        applySort(applyFilter(visibleItems.filter { $0.itemType == .subscription }))
     }
 
     private var visibleDocuments: [SubscriptionItem] {
@@ -92,40 +117,11 @@ struct HomeView: View {
     var body: some View {
         NavigationStack {
             ZStack(alignment: .top) {
-                // Mesh gradient hero backdrop
-                heroBackground
-                    .ignoresSafeArea()
+                heroBackground.ignoresSafeArea()
 
                 ScrollView {
                     LazyVStack(spacing: 20) {
-                        // Inline search bar — same horizontal inset as the cards
-                        HStack(spacing: 8) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(.secondary)
-                            TextField("Search", text: $searchText)
-                                .font(.system(size: 15))
-                                .autocorrectionDisabled()
-#if os(iOS)
-                                .textInputAutocapitalization(.never)
-#endif
-                            if !searchText.isEmpty {
-                                Button { searchText = "" } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 14))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                        .padding(.horizontal)
-                        .padding(.top, 4)
-
-                        // Hero summary card
-                        if !allItems.isEmpty {
+                        if !allItems.isEmpty && !isSearching {
                             HeroSummaryCard(
                                 monthlyTotal: monthlyTotal,
                                 yearlyTotal: yearlyTotal,
@@ -137,54 +133,11 @@ struct HomeView: View {
                             )
                             .padding(.horizontal)
                             .padding(.top, 8)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
                         }
 
-                        Group {
-                            // Subscriptions
-                            if !trialsEnding.isEmpty {
-                                GlassSectionView(title: "Trials Ending", icon: "clock.badge.exclamationmark", accentColor: .purple) {
-                                    ForEach(trialsEnding) { itemRow($0) }
-                                }
-                            }
-
-                            if !dueSoon.isEmpty {
-                                GlassSectionView(title: "Due Soon", icon: "bell.fill", accentColor: .red) {
-                                    ForEach(dueSoon) { itemRow($0) }
-                                }
-                            }
-
-                            if !cancelledActive.isEmpty {
-                                GlassSectionView(title: "Cancelled but Active", icon: "calendar.badge.minus", accentColor: .orange) {
-                                    ForEach(cancelledActive) { itemRow($0) }
-                                }
-                            }
-
-                            if !upcoming.isEmpty {
-                                GlassSectionView(title: "Upcoming", icon: "calendar", accentColor: .blue) {
-                                    ForEach(upcoming) { itemRow($0) }
-                                }
-                            }
-
-                            if !expiredSubscriptions.isEmpty {
-                                GlassSectionView(title: "Expired", icon: "xmark.circle", accentColor: .secondary) {
-                                    ForEach(expiredSubscriptions) { itemRow($0) }
-                                }
-                            }
-
-                            // Documents
-                            if !urgentDocuments.isEmpty {
-                                GlassSectionView(title: "Documents — Action Needed", icon: "exclamationmark.triangle.fill", accentColor: .orange) {
-                                    ForEach(urgentDocuments) { itemRow($0) }
-                                }
-                            }
-
-                            if !upcomingDocuments.isEmpty {
-                                GlassSectionView(title: "Documents", icon: "doc.text.fill", accentColor: .indigo) {
-                                    ForEach(upcomingDocuments) { itemRow($0) }
-                                }
-                            }
-                        }
-                        .padding(.horizontal)
+                        contentSections
+                            .padding(.horizontal)
 
                         if allItems.isEmpty {
                             EmptyStateView { showingAdd = true }
@@ -193,19 +146,21 @@ struct HomeView: View {
 
                         Spacer(minLength: 100)
                     }
+                    .animation(.spring(duration: 0.3), value: isSearching)
                     .padding(.top, 8)
                 }
                 .scrollEdgeEffectStyle(.soft, for: .top)
 #if os(iOS)
                 .refreshable {
-                    // CloudKit syncs automatically, but pulling gives the store a moment
-                    // to process any pending remote changes before the view re-queries.
                     try? await Task.sleep(for: .seconds(1))
                 }
 #endif
             }
             .navigationTitle("Expired")
             .largeNavigationTitle()
+#if os(iOS)
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search subscriptions")
+#endif
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button { showingAdd = true } label: {
@@ -213,9 +168,89 @@ struct HomeView: View {
                             .font(.system(size: 16, weight: .semibold))
                     }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    sortFilterMenu
+                }
             }
             .sheet(isPresented: $showingAdd) { AddEditSubscriptionView(item: nil) }
             .sheet(item: $editingItem) { AddEditSubscriptionView(item: $0) }
+        }
+    }
+
+    // MARK: - Sort/Filter menu
+
+    private var sortFilterMenu: some View {
+        Menu {
+            Section("Sort By") {
+                sortMenuItems
+            }
+            Section("Filter") {
+                filterMenuItems
+            }
+        } label: {
+            Image(systemName: filterOption == .all
+                  ? "line.3.horizontal.decrease.circle"
+                  : "line.3.horizontal.decrease.circle.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(filterOption == .all ? Color.primary : Color.blue)
+        }
+    }
+
+    @ViewBuilder private var sortMenuItems: some View {
+        ForEach(SortOrder.allCases, id: \.self) { option in
+            Button(option.rawValue) { sortOrderRaw = option.rawValue }
+                .overlay(alignment: .trailing) {
+                    if sortOrder == option {
+                        Image(systemName: "checkmark").font(.caption)
+                    }
+                }
+        }
+    }
+
+    @ViewBuilder private var filterMenuItems: some View {
+        ForEach(FilterOption.allCases, id: \.self) { option in
+            Button(option.rawValue) { filterOptionRaw = option.rawValue }
+        }
+    }
+
+    // MARK: - Content sections
+
+    @ViewBuilder
+    private var contentSections: some View {
+        if !trialsEnding.isEmpty {
+            GlassSectionView(title: "Trials Ending", icon: "clock.badge.exclamationmark", accentColor: .purple) {
+                ForEach(trialsEnding) { itemRow($0) }
+            }
+        }
+        if !dueSoon.isEmpty {
+            GlassSectionView(title: "Due Soon", icon: "bell.fill", accentColor: .red) {
+                ForEach(dueSoon) { itemRow($0) }
+            }
+        }
+        if !cancelledActive.isEmpty {
+            GlassSectionView(title: "Cancelled but Active", icon: "calendar.badge.minus", accentColor: .orange) {
+                ForEach(cancelledActive) { itemRow($0) }
+            }
+        }
+        if !upcoming.isEmpty {
+            GlassSectionView(title: "Upcoming", icon: "calendar", accentColor: .blue) {
+                ForEach(upcoming) { itemRow($0) }
+            }
+        }
+        if !expiredSubscriptions.isEmpty {
+            GlassSectionView(title: "Expired", icon: "xmark.circle", accentColor: .secondary) {
+                ForEach(expiredSubscriptions) { itemRow($0) }
+            }
+        }
+        if !urgentDocuments.isEmpty {
+            GlassSectionView(title: "Documents — Action Needed", icon: "exclamationmark.triangle.fill", accentColor: .orange) {
+                ForEach(urgentDocuments) { itemRow($0) }
+            }
+        }
+        if !upcomingDocuments.isEmpty {
+            GlassSectionView(title: "Documents", icon: "doc.text.fill", accentColor: .indigo) {
+                ForEach(upcomingDocuments) { itemRow($0) }
+            }
         }
     }
 
@@ -245,6 +280,12 @@ struct HomeView: View {
                 }
                 .tint(item.isCancelled ? .green : .orange)
             }
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                Button { archiveItem(item) } label: {
+                    Label("Archive", systemImage: "archivebox")
+                }
+                .tint(.indigo)
+            }
     }
 
     // MARK: - Actions
@@ -258,6 +299,13 @@ struct HomeView: View {
             item.isCancelled.toggle()
             if item.isCancelled { item.activeUntilDate = item.nextRenewalDate }
             else { item.activeUntilDate = nil }
+            item.updatedAt = Date()
+        }
+    }
+
+    private func archiveItem(_ item: SubscriptionItem) {
+        withAnimation {
+            item.isArchived = true
             item.updatedAt = Date()
         }
     }
@@ -327,7 +375,7 @@ struct GlassSectionView<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Section header pill — solid tinted background for legibility
+            // Section header pill
             HStack(spacing: 5) {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .bold))

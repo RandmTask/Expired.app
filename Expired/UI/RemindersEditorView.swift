@@ -51,8 +51,10 @@ struct RemindersEditorView: View {
             HStack(spacing: 8) {
                 GlassPresetChip(label: "3 months", icon: "bell")   { addRule(.monthsBefore, 3) }
                 GlassPresetChip(label: "6 months", icon: "bell")   { addRule(.monthsBefore, 6) }
-                GlassPresetChip(label: "+ Custom", icon: "slider.horizontal.3", isAccent: true) { addRule(.daysBefore, 7) }
-                Spacer()
+                GlassPresetChip(label: "+ Custom", icon: "slider.horizontal.3") { addRule(.daysBefore, 7) }
+                // Invisible placeholder keeps the last row the same width as the first
+                GlassPresetChip(label: "1 day", icon: "bell") {}
+                    .hidden()
             }
         }
         .padding(.horizontal, 16)
@@ -230,7 +232,6 @@ struct ReminderRuleRow: View {
 struct GlassPresetChip: View {
     let label: String
     var icon: String = "bell"
-    var isAccent: Bool = false
     let action: () -> Void
 
     var body: some View {
@@ -241,15 +242,10 @@ struct GlassPresetChip: View {
                 Text(label)
                     .font(.system(size: 12, weight: .semibold))
             }
-            .foregroundStyle(isAccent ? Color.blue : Color.primary.opacity(0.75))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .glassEffect(
-                isAccent
-                    ? .regular.tint(.blue).interactive()
-                    : .regular.interactive(),
-                in: Capsule()
-            )
+            .foregroundStyle(Color.primary.opacity(0.75))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .glassEffect(.regular.interactive(), in: Capsule())
         }
         .buttonStyle(.plain)
     }

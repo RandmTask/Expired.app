@@ -18,23 +18,28 @@ struct FaviconFetcher {
             return nil
         }
 
-        // Strategy 1: DuckDuckGo favicon service — reliable, no rate limits, returns PNG
+        // Strategy 1: Google favicon service at high resolution (256px)
+        if let data = await tryURL("https://www.google.com/s2/favicons?domain=\(host)&sz=256"), isImage(data) {
+            return data
+        }
+
+        // Strategy 2: icon.horse — high-quality logo fetcher
+        if let data = await tryURL("https://icon.horse/icon/\(host)?size=256"), isImage(data) {
+            return data
+        }
+
+        // Strategy 3: Apple touch icon (often 180×180)
+        if let data = await tryURL("https://\(host)/apple-touch-icon.png"), isImage(data) {
+            return data
+        }
+
+        // Strategy 4: DuckDuckGo favicon service — reliable fallback
         if let data = await tryURL("https://icons.duckduckgo.com/ip3/\(host).ico"), isImage(data) {
             return data
         }
 
-        // Strategy 2: Google favicon service
-        if let data = await tryURL("https://www.google.com/s2/favicons?domain=\(host)&sz=128"), isImage(data) {
-            return data
-        }
-
-        // Strategy 3: Direct favicon.ico at root
+        // Strategy 5: Direct favicon.ico at root
         if let data = await tryURL("https://\(host)/favicon.ico"), isImage(data) {
-            return data
-        }
-
-        // Strategy 4: Apple touch icon
-        if let data = await tryURL("https://\(host)/apple-touch-icon.png"), isImage(data) {
             return data
         }
 
@@ -64,7 +69,6 @@ struct FaviconFetcher {
         let isICO  = b.count >= 4 && b[0] == 0x00 && b[1] == 0x00 && b[2] == 0x01 && b[3] == 0x00
         let isWebP = b.count >= 12 && b[0] == 0x52 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x46
                      && b[8] == 0x57 && b[9] == 0x45 && b[10] == 0x42 && b[11] == 0x50
-        // BMP
         let isBMP  = b.count >= 2 && b[0] == 0x42 && b[1] == 0x4D
         return isPNG || isJPEG || isGIF || isICO || isWebP || isBMP
     }

@@ -1,5 +1,7 @@
 import SwiftUI
 import SwiftData
+import PhotosUI
+import UniformTypeIdentifiers
 
 struct AddEditSubscriptionView: View {
     @Environment(\.modelContext) private var modelContext
@@ -27,6 +29,13 @@ struct AddEditSubscriptionView: View {
     @State private var iconSource: IconSource = .system
     @State private var isFetchingIcon = false
     @State private var faviconFetchTask: Task<Void, Never>? = nil
+    @State private var showIconMenu = false
+    @State private var showPhotoPicker = false
+    @State private var showFilePicker = false
+    @State private var showURLEntry = false
+    @State private var iconURLText = ""
+    @State private var photoPickerItem: PhotosPickerItem? = nil
+    @State private var isDropTargeted = false
 
     // Cost & payment
     @State private var cost: Double? = nil
@@ -40,6 +49,9 @@ struct AddEditSubscriptionView: View {
 
     // Account
     @State private var personName = ""
+
+    // Category
+    @State private var category: SubscriptionCategory? = nil
 
     // Reminders & notes
     @State private var notifications: [NotificationRule] = []
@@ -231,7 +243,7 @@ struct AddEditSubscriptionView: View {
                             }
                         }
                         .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 14)
 
                         FormDivider()
                     }
@@ -262,7 +274,7 @@ struct AddEditSubscriptionView: View {
 #endif
                         }
                         .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 14)
                         FormDivider()
                         // Website field for documents too
                         HStack {
@@ -280,12 +292,54 @@ struct AddEditSubscriptionView: View {
 #endif
                         }
                         .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 14)
                     } else {
                         FormRow(label: isTrial ? "Trial Ends" : "Renews") {
                             DatePicker("", selection: isTrial ? $trialEndDate : $nextRenewalDate,
                                        displayedComponents: .date)
                                 .labelsHidden()
+                        }
+                        FormDivider()
+                        FormRow(label: "Category") {
+                            Menu {
+                                Button {
+                                    category = nil
+                                } label: {
+                                    if category == nil {
+                                        Label("None", systemImage: "checkmark")
+                                    } else {
+                                        Text("None")
+                                    }
+                                }
+                                Divider()
+                                ForEach(SubscriptionCategory.allCases, id: \.self) { cat in
+                                    Button {
+                                        category = cat
+                                    } label: {
+                                        if category == cat {
+                                            Label(cat.rawValue, systemImage: "checkmark")
+                                        } else {
+                                            Label(cat.rawValue, systemImage: cat.icon)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    if let cat = category {
+                                        Image(systemName: cat.icon)
+                                            .font(.system(size: 13))
+                                        Text(cat.rawValue)
+                                    } else {
+                                        Text("None")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .foregroundStyle(category != nil ? .primary : .secondary)
+                            }
+                            .menuStyle(.borderlessButton)
                         }
                     }
                 }
@@ -295,25 +349,189 @@ struct AddEditSubscriptionView: View {
 
     @ViewBuilder
     private var iconView: some View {
+        iconContent
+            .frame(width: 52, height: 52)
+            .overlay(alignment: .bottomTrailing) {
+                // Small edit badge
+                if !isFetchingIcon {
+                    Image(systemName: "pencil.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white, Color.blue)
+                        .offset(x: 4, y: 4)
+                }
+            }
+            .overlay {
+                // Drop highlight
+                if isDropTargeted {
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.blue, lineWidth: 2)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+            // iOS: tap for action menu
+#if os(iOS)
+            .onTapGesture { showIconMenu = true }
+            .confirmationDialog("Set Icon", isPresented: $showIconMenu, titleVisibility: .visible) {
+                Button("Choose Photo") { showPhotoPicker = true }
+                Button("Choose File") { showFilePicker = true }
+                Button("Paste Image") { pasteImageFromClipboard() }
+                Button("Enter URL") { iconURLText = ""; showURLEntry = true }
+                if iconData != nil {
+                    Button("Remove Icon", role: .destructive) { clearIcon() }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+            .photosPicker(isPresented: $showPhotoPicker, selection: $photoPickerItem, matching: .images)
+            .onChange(of: photoPickerItem) { _, item in
+                guard let item else { return }
+                Task {
+                    if let data = try? await item.loadTransferable(type: Data.self) {
+                        await MainActor.run {
+                            iconData = data
+                            iconSource = .customImage
+                            photoPickerItem = nil
+                        }
+                    }
+                }
+            }
+#else
+            // macOS: click for menu
+            .onTapGesture { showIconMenu = true }
+            .contextMenu {
+                Button("Paste Image") { pasteImageFromClipboard() }
+                if iconData != nil {
+                    Button("Remove Icon") { clearIcon() }
+                }
+            }
+            .popover(isPresented: $showIconMenu, arrowEdge: .bottom) {
+                macIconMenuContent
+            }
+#endif
+            .fileImporter(
+                isPresented: $showFilePicker,
+                allowedContentTypes: [.image, .jpeg, .png, .gif, .bmp, .webP],
+                allowsMultipleSelection: false
+            ) { result in
+                guard let url = try? result.get().first,
+                      url.startAccessingSecurityScopedResource() else { return }
+                defer { url.stopAccessingSecurityScopedResource() }
+                if let data = try? Data(contentsOf: url) {
+                    iconData = data
+                    iconSource = .customImage
+                }
+            }
+            .alert("Image URL", isPresented: $showURLEntry) {
+                TextField("https://example.com/logo.png", text: $iconURLText)
+#if os(iOS)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+#endif
+                Button("Fetch") { fetchIconFromURL(iconURLText) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Enter an image URL or App Store app URL")
+            }
+            // Drag and drop (both platforms)
+            .dropDestination(for: Data.self) { items, _ in
+                guard let data = items.first, FaviconFetcher.isImage(data) else { return false }
+                iconData = data
+                iconSource = .customImage
+                isDropTargeted = false
+                return true
+            } isTargeted: { targeted in
+                isDropTargeted = targeted
+            }
+    }
+
+    @ViewBuilder
+    private var iconContent: some View {
         if isFetchingIcon {
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(Color.secondary.opacity(0.15))
-                .frame(width: 36, height: 36)
                 .overlay { ProgressView().scaleEffect(0.8) }
         } else if let data = iconData, let img = platformImage(from: data) {
             Image(platformImage: img)
                 .resizable().scaledToFill()
-                .frame(width: 36, height: 36)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
         } else {
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(itemType == .document ? Color.indigo.opacity(0.12) : Color.blue.opacity(0.12))
-                .frame(width: 36, height: 36)
                 .overlay {
                     Image(systemName: itemType == .document ? "doc.text.fill" : "globe")
-                        .font(.system(size: 16))
+                        .font(.system(size: 22))
                         .foregroundStyle(itemType == .document ? .indigo.opacity(0.7) : .blue.opacity(0.5))
                 }
+        }
+    }
+
+#if os(macOS)
+    private var macIconMenuContent: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button("Choose Image File…") { showIconMenu = false; showFilePicker = true }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            Divider()
+            Button("Enter Image URL…") { showIconMenu = false; showURLEntry = true }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            Divider()
+            Button("Paste Image") { showIconMenu = false; pasteImageFromClipboard() }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            if iconData != nil {
+                Divider()
+                Button("Remove Icon") { showIconMenu = false; clearIcon() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            }
+        }
+        .padding(.vertical, 4)
+        .frame(minWidth: 180)
+    }
+#endif
+
+    private func pasteImageFromClipboard() {
+#if os(iOS)
+        if let image = UIPasteboard.general.image,
+           let data = image.pngData() {
+            iconData = data
+            iconSource = .customImage
+        }
+#else
+        if let image = NSPasteboard.general.readObjects(forClasses: [NSImage.self]) as? [NSImage],
+           let first = image.first,
+           let tiffData = first.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiffData),
+           let data = bitmap.representation(using: .png, properties: [:]) {
+            iconData = data
+            iconSource = .customImage
+        }
+#endif
+    }
+
+    private func clearIcon() {
+        iconData = nil
+        iconSource = .system
+    }
+
+    private func fetchIconFromURL(_ urlString: String) {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isFetchingIcon = true
+        Task {
+            let data = await FaviconFetcher.fetch(from: trimmed)
+            await MainActor.run {
+                if let data {
+                    iconData = data
+                    iconSource = .customImage
+                }
+                isFetchingIcon = false
+            }
         }
     }
 
@@ -475,14 +693,14 @@ struct AddEditSubscriptionView: View {
                 }
             }
             // Payment disclaimer sits outside the card row, below it
-            HStack(alignment: .top, spacing: 6) {
+            HStack(spacing: 5) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 12, weight: .semibold))
-                    .padding(.top, 1)
                 Text("Do **not** enter card numbers — enter description only")
                     .font(.system(size: 13))
             }
             .foregroundStyle(.orange)
+            .frame(maxWidth: .infinity, alignment: .center)
             .padding(.horizontal, 4)
         }
     }
@@ -590,6 +808,7 @@ struct AddEditSubscriptionView: View {
         iconData = item.iconData
         iconSource = item.iconSource
         notifications = item.notificationsList
+        category = item.category
     }
 
     // MARK: - Save
@@ -637,6 +856,7 @@ struct AddEditSubscriptionView: View {
             existing.phoneNumber = trimmedPhone
             existing.notes = trimmedNotes
             existing.notifications = notifications
+            existing.category = isDoc ? nil : category
             existing.updatedAt = Date()
             savedItem = existing
         } else {
@@ -661,6 +881,7 @@ struct AddEditSubscriptionView: View {
                 url: isDoc ? "" : trimmedURL,
                 documentNumber: isDoc ? trimmedDocNum.isEmpty ? nil : trimmedDocNum : nil,
                 validFromDate: isDoc ? validFromDate : nil,
+                category: isDoc ? nil : category,
                 notifications: notifications
             )
             newItem.iconData = iconData
@@ -733,9 +954,8 @@ struct AccountField: View {
                     }
                     .buttonStyle(.plain)
                 } else {
-                    // Saved values exist — show an inline Menu picker
+                    // Saved values exist — show an inline Menu picker (suggestions only)
                     Menu {
-                        // Existing suggestions
                         ForEach(suggestions, id: \.self) { suggestion in
                             Button {
                                 text = suggestion
@@ -745,19 +965,6 @@ struct AccountField: View {
                                 } else {
                                     Text(suggestion)
                                 }
-                            }
-                        }
-                        Divider()
-                        Button {
-                            showAddNew = true
-                        } label: {
-                            Label("Add New…", systemImage: "plus")
-                        }
-                        if !text.isEmpty {
-                            Button(role: .destructive) {
-                                text = ""
-                            } label: {
-                                Label("Clear", systemImage: "xmark.circle")
                             }
                         }
                     } label: {
@@ -773,16 +980,28 @@ struct AccountField: View {
                     .menuStyle(.borderlessButton)
                 }
 
-                // + always opens the add-new sheet
-                Button {
-                    showAddNew = true
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(.blue.opacity(0.8))
-                        .padding(.leading, 6)
+                // Trailing action: × clears when filled (red), + opens sheet when empty
+                if text.isEmpty {
+                    Button {
+                        showAddNew = true
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(.blue.opacity(0.8))
+                            .padding(.leading, 6)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button {
+                        text = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 6)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -886,7 +1105,14 @@ struct AddAccountValueSheet: View {
 #if os(iOS)
                         .keyboardType(keyboardType)
                         .textInputAutocapitalization(fieldType == .email ? .never : .words)
+                        .textContentType(fieldType == .phone ? .telephoneNumber : .none)
 #endif
+                        .onChange(of: value) { _, newVal in
+                            if fieldType == .phone {
+                                let formatted = formatPhoneNumber(newVal)
+                                if formatted != newVal { value = formatted }
+                            }
+                        }
                 }
 
                 // Payment disclaimer shown outside the FormCard, not here
@@ -946,6 +1172,53 @@ struct AddAccountValueSheet: View {
         }
     }
 #endif
+
+    /// Formats a phone number with spaces after country code and in digit groups.
+    /// e.g. "+97155957..." → "+971 55 957 4189"
+    /// Preserves the raw string if it doesn't start with +.
+    private func formatPhoneNumber(_ raw: String) -> String {
+        // Strip everything except digits and leading +
+        let digits = raw.filter { $0.isNumber }
+        let hasPlus = raw.hasPrefix("+")
+
+        guard hasPlus, !digits.isEmpty else { return raw }
+
+        // International format: +[country_code] [local groups]
+        // Try to detect common country code lengths (1, 2, or 3 digits)
+        // We use a simple heuristic: insert space after 1, 2, or 3 digit prefix
+        // based on total length and first digit
+        let prefix: String
+        let local: String
+
+        switch digits.first {
+        case "1":           // USA/Canada: +1 XXX XXX XXXX
+            prefix = String(digits.prefix(1))
+            local  = String(digits.dropFirst(1))
+        case "7":           // Russia: +7 XXX XXX XX XX
+            prefix = String(digits.prefix(1))
+            local  = String(digits.dropFirst(1))
+        case "2", "3", "4", "5", "6", "8", "9"
+            where digits.count > 3:
+            // 2-digit country codes (+61, +44, +49, +971, etc.)
+            // Use 3-digit prefix for known Middle-East/long codes
+            let threeDigit = Int(String(digits.prefix(3))) ?? 0
+            if (200...299).contains(threeDigit) || (350...399).contains(threeDigit) ||
+               (850...900).contains(threeDigit) || (960...999).contains(threeDigit) {
+                prefix = String(digits.prefix(3))
+                local  = String(digits.dropFirst(3))
+            } else {
+                prefix = String(digits.prefix(2))
+                local  = String(digits.dropFirst(2))
+            }
+        default:
+            return raw
+        }
+
+        // Group the local number into chunks of 2-4 digits
+        let grouped = local.chunked(by: [4, 3, 4]).joined(separator: " ")
+        let result = "+\(prefix) \(grouped)".trimmingCharacters(in: .whitespaces)
+        return result.isEmpty ? raw : result
+    }
 }
 
 // MARK: - Status Chip
@@ -999,7 +1272,7 @@ struct FormRow<Content: View>: View {
             content.foregroundStyle(.primary)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
     }
 }
 
@@ -1218,6 +1491,27 @@ struct CurrencyPickerSheet: View {
                 customList = (try? JSONDecoder().decode([String].self, from: customCurrenciesData)) ?? []
             }
         }
+    }
+}
+
+// MARK: - String chunking helper (for phone formatting)
+
+private extension String {
+    /// Splits the string into groups of the given sizes in sequence,
+    /// repeating the last size for any remainder.
+    /// e.g. "1234567890".chunked(by: [4,3,4]) → ["1234","567","890"]
+    func chunked(by sizes: [Int]) -> [String] {
+        var result: [String] = []
+        var idx = startIndex
+        var sizeIndex = 0
+        while idx < endIndex {
+            let size = sizeIndex < sizes.count ? sizes[sizeIndex] : sizes.last!
+            let end = index(idx, offsetBy: size, limitedBy: endIndex) ?? endIndex
+            result.append(String(self[idx..<end]))
+            idx = end
+            sizeIndex += 1
+        }
+        return result
     }
 }
 
