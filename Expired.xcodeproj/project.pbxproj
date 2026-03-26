@@ -6,8 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		7EEA5B7F2F752B8800DF89FC /* CloudKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7EEA5B7E2F752B8800DF89FC /* CloudKit.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		7EEA5B592F7395E200DF89FC /* Expired.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Expired.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7EEA5B7E2F752B8800DF89FC /* CloudKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CloudKit.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.2.sdk/System/Library/Frameworks/CloudKit.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -36,6 +41,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7EEA5B7F2F752B8800DF89FC /* CloudKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -46,6 +52,7 @@
 			isa = PBXGroup;
 			children = (
 				7EEA5B5B2F7395E200DF89FC /* Expired */,
+				7EEA5B7D2F752B8700DF89FC /* Frameworks */,
 				7EEA5B5A2F7395E200DF89FC /* Products */,
 			);
 			sourceTree = "<group>";
@@ -56,6 +63,14 @@
 				7EEA5B592F7395E200DF89FC /* Expired.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		7EEA5B7D2F752B8700DF89FC /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				7EEA5B7E2F752B8800DF89FC /* CloudKit.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */

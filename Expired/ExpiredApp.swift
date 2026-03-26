@@ -10,11 +10,77 @@ struct ExpiredApp: App {
     let container: ModelContainer
 
     init() {
+        // Enable verbose CoreData + CloudKit mirroring logs at runtime.
+        // Equivalent to the -com.apple.CoreData.CloudKitDebug 3 launch argument.
+        UserDefaults.standard.set(3, forKey: "com.apple.CoreData.CloudKitDebug")
+
         // Read the preference before the App property wrappers are initialised
         let syncOn = UserDefaults.standard.object(forKey: "iCloudSyncEnabled") as? Bool ?? true
         container = Self.makeContainer(iCloudSync: syncOn)
-        // Check iCloud account status at launch for diagnostics
-        Task { await Self.logCloudKitAccountStatus() }
+
+        // NSPersistentStoreRemoteChangeNotification fires every time CloudKit
+        // delivers remote changes to the local store. If we never see this log
+        // line it means CloudKit is not pushing any data to this device.
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("NSPersistentStoreRemoteChangeNotification"),
+            object: nil,
+            queue: .main
+        ) { note in
+            print("[CloudKit] ⬇ Remote change received — store is updating from iCloud")
+            if let info = note.userInfo {
+                print("[CloudKit]   history token present: \(info["NSPersistentHistoryToken"] != nil)")
+                print("[CloudKit]   store URL: \(info["NSPersistentStoreURLKey"] as? URL ?? URL(fileURLWithPath: "?"))")
+            }
+        }
+
+        Task {
+            await Self.logCloudKitAccountStatus()
+            await Self.probeCloudKitRecords()
+        }
+    }
+
+    /// Directly queries CloudKit to check if any SubscriptionItem records exist
+    /// in the container. This bypasses SwiftData entirely — if records show up
+    /// here but not in the app, the issue is SwiftData mirroring. If no records
+    /// show up here, the iOS devices aren't writing to the cloud at all.
+    static func probeCloudKitRecords() async {
+        print("[CloudKit] ── Direct container probe ────────────────────")
+        let ckContainer = CKContainer(identifier: "iCloud.com.swiftstudio.Expired")
+        let db = ckContainer.privateCloudDatabase
+
+        // SwiftData stores records under the type name with "CD_" prefix
+        let query = CKQuery(recordType: "CD_SubscriptionItem", predicate: NSPredicate(value: true))
+        do {
+            let (results, _) = try await db.records(matching: query, resultsLimit: 5)
+            let successes = results.compactMap { try? $0.1.get() }
+            if successes.isEmpty {
+                print("[CloudKit] ⚠ No CD_SubscriptionItem records found in private DB")
+                print("[CloudKit]   → Either iOS hasn't synced yet, or schema not deployed")
+                print("[CloudKit]   → Check CloudKit Console: icloud.developer.apple.com")
+            } else {
+                print("[CloudKit] ✓ Found \(successes.count) CD_SubscriptionItem record(s) in private DB")
+                for r in successes {
+                    print("[CloudKit]   • \(r.recordID.recordName): \(r["CD_name"] as? String ?? "(no name)")")
+                }
+            }
+        } catch let error as CKError {
+            switch error.code {
+            case .unknownItem:
+                print("[CloudKit] ⚠ Record type CD_SubscriptionItem doesn't exist in container")
+                print("[CloudKit]   → Schema not yet deployed. Run app on iOS first, or deploy via CloudKit Console")
+            case .notAuthenticated:
+                print("[CloudKit] ✗ Not authenticated — sign into iCloud in System Settings")
+            case .networkUnavailable, .networkFailure:
+                print("[CloudKit] ✗ Network error: \(error.localizedDescription)")
+            case .requestRateLimited:
+                print("[CloudKit] ⚠ Rate limited — wait and try again")
+            default:
+                print("[CloudKit] ✗ CKError \(error.code.rawValue): \(error.localizedDescription)")
+            }
+        } catch {
+            print("[CloudKit] ✗ Probe failed: \(error)")
+        }
+        print("[CloudKit] ────────────────────────────────────────────")
     }
 
     /// Logs iCloud account status to help diagnose sync issues.
@@ -129,8 +195,11 @@ struct ExpiredApp: App {
                 // On macOS, CloudKit processes remote changes on scene phase transitions.
                 // We also respond to manual refresh requests from Settings.
                 .onReceive(NotificationCenter.default.publisher(for: .expiredManualSync)) { _ in
-                    print("[ExpiredApp] Manual sync triggered")
-                    Task { await Self.logCloudKitAccountStatus() }
+                    print("[CloudKit] ── Manual sync triggered ────────────────────")
+                    Task {
+                        await Self.logCloudKitAccountStatus()
+                        await Self.probeCloudKitRecords()
+                    }
                 }
 #endif
         }
