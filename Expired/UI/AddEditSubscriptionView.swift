@@ -473,11 +473,16 @@ struct AddEditSubscriptionView: View {
                 }
             }
             // Payment disclaimer sits outside the card row, below it
-            HStack(spacing: 5) {
+            HStack(alignment: .top, spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Do not enter card numbers — description only (e.g. Visa, PayPal)")
-                    .font(.system(size: 11))
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.top, 1)
+                Group {
+                    Text("Do ") +
+                    Text("not").bold() +
+                    Text(" enter card numbers — enter description only")
+                }
+                .font(.system(size: 13))
             }
             .foregroundStyle(.orange)
             .padding(.horizontal, 4)
@@ -500,23 +505,12 @@ struct AddEditSubscriptionView: View {
     private var notesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Notes")
-            ZStack(alignment: .topLeading) {
-                // Solid contrasting background so it's clearly distinct from the page background
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(notesBackground)
-                if notes.isEmpty {
-                    Text("Optional notes…")
-                        .foregroundStyle(.tertiary)
-                        .font(.system(size: 16))
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                }
-                TextField("Optional notes…", text: $notes, axis: .vertical)
-                    .foregroundStyle(.primary)
-                    .lineLimit(3...6)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
-            }
+            TextField("Optional notes…", text: $notes, axis: .vertical)
+                .foregroundStyle(.primary)
+                .lineLimit(3...6)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(notesBackground, in: RoundedRectangle(cornerRadius: 16))
         }
     }
 
@@ -720,7 +714,6 @@ struct AccountField: View {
     let fieldType: SuggestionFieldType
     let onPersist: (String, SuggestionFieldType) -> Void
 
-    @State private var showSuggestions = false
     @State private var showAddNew = false
 
     var body: some View {
@@ -731,27 +724,56 @@ struct AccountField: View {
                     .frame(minWidth: 80, alignment: .leading)
                     .foregroundStyle(.primary)
 
-                // Tapping anywhere on the value area shows suggestions if any exist
-                Button {
-                    if suggestions.isEmpty {
+                if suggestions.isEmpty {
+                    // No saved values yet — tapping the value area opens add-new
+                    Button {
                         showAddNew = true
-                    } else {
-                        showSuggestions = true
+                    } label: {
+                        Text(text.isEmpty ? placeholder : text)
+                            .foregroundStyle(text.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                     }
-                } label: {
-                    HStack {
-                        if text.isEmpty {
-                            Text(placeholder)
+                    .buttonStyle(.plain)
+                } else {
+                    // Saved values exist — show an inline Menu picker
+                    Menu {
+                        // Existing suggestions
+                        ForEach(suggestions, id: \.self) { suggestion in
+                            Button {
+                                text = suggestion
+                            } label: {
+                                if suggestion == text {
+                                    Label(suggestion, systemImage: "checkmark")
+                                } else {
+                                    Text(suggestion)
+                                }
+                            }
+                        }
+                        Divider()
+                        Button {
+                            showAddNew = true
+                        } label: {
+                            Label("Add New…", systemImage: "plus")
+                        }
+                        if !text.isEmpty {
+                            Button(role: .destructive) {
+                                text = ""
+                            } label: {
+                                Label("Clear", systemImage: "xmark.circle")
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(text.isEmpty ? placeholder : text)
+                                .foregroundStyle(text.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(.tertiary)
-                                .frame(maxWidth: .infinity, alignment: .trailing)
-                        } else {
-                            Text(text)
-                                .foregroundStyle(.primary)
-                                .frame(maxWidth: .infinity, alignment: .trailing)
                         }
                     }
+                    .menuStyle(.borderlessButton)
                 }
-                .buttonStyle(.plain)
 
                 // + always opens the add-new sheet
                 Button {
@@ -766,27 +788,6 @@ struct AccountField: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-
-            if let hint {
-                Text(hint)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-            }
-        }
-        // Suggestions sheet
-        .sheet(isPresented: $showSuggestions) {
-            AccountSuggestionsSheet(
-                label: label,
-                suggestions: suggestions,
-                current: text,
-                onSelect: { value in text = value },
-                onAddNew: { showAddNew = true }
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
         }
         // Add new value sheet
         .sheet(isPresented: $showAddNew) {
@@ -800,7 +801,7 @@ struct AccountField: View {
                     }
                 }
             )
-            .presentationDetents([.height(260)])
+            .presentationDetents([.height(280)])
             .presentationDragIndicator(.visible)
         }
     }

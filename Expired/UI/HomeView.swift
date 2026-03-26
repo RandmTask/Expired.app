@@ -18,6 +18,7 @@ struct HomeView: View {
     @State private var editingItem: SubscriptionItem?
     @State private var searchText = ""
     @State private var showSearch = false
+    @State private var isRefreshing = false
 
     // MARK: - Filtered groups
 
@@ -176,6 +177,11 @@ struct HomeView: View {
                     .padding(.top, 8)
                 }
                 .scrollEdgeEffectStyle(.soft, for: .top)
+                .refreshable {
+                    // CloudKit syncs automatically, but pulling gives the store a moment
+                    // to process any pending remote changes before the view re-queries.
+                    try? await Task.sleep(for: .seconds(1))
+                }
             }
             .navigationTitle("Expired")
             .largeNavigationTitle()

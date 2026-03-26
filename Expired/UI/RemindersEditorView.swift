@@ -41,19 +41,22 @@ struct RemindersEditorView: View {
     }
 
     private var presetsRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        VStack(spacing: 8) {
             HStack(spacing: 8) {
-                GlassPresetChip(label: "1 day",    icon: "bell")        { addRule(.daysBefore,   1) }
-                GlassPresetChip(label: "3 days",   icon: "bell")        { addRule(.daysBefore,   3) }
-                GlassPresetChip(label: "1 week",   icon: "bell")        { addRule(.weeksBefore,  1) }
-                GlassPresetChip(label: "1 month",  icon: "bell")        { addRule(.monthsBefore, 1) }
-                GlassPresetChip(label: "3 months", icon: "bell")        { addRule(.monthsBefore, 3) }
-                GlassPresetChip(label: "6 months", icon: "bell")        { addRule(.monthsBefore, 6) }
-                GlassPresetChip(label: "+ Custom", icon: "slider.horizontal.3", isAccent: true) { addRule(.daysBefore, 7) }
+                GlassPresetChip(label: "1 day",    icon: "bell")   { addRule(.daysBefore,   1) }
+                GlassPresetChip(label: "3 days",   icon: "bell")   { addRule(.daysBefore,   3) }
+                GlassPresetChip(label: "1 week",   icon: "bell")   { addRule(.weeksBefore,  1) }
+                GlassPresetChip(label: "1 month",  icon: "bell")   { addRule(.monthsBefore, 1) }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            HStack(spacing: 8) {
+                GlassPresetChip(label: "3 months", icon: "bell")   { addRule(.monthsBefore, 3) }
+                GlassPresetChip(label: "6 months", icon: "bell")   { addRule(.monthsBefore, 6) }
+                GlassPresetChip(label: "+ Custom", icon: "slider.horizontal.3", isAccent: true) { addRule(.daysBefore, 7) }
+                Spacer()
+            }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     /// Shows a contextual disclaimer about critical alerts.
