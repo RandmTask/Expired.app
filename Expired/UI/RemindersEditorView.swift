@@ -15,23 +15,28 @@ struct RemindersEditorView: View {
     @ViewBuilder
     private var rulesList: some View {
         if notifications.isEmpty {
-            Text("No reminders set")
-                .font(.system(size: 14))
-                .foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 16)
+            emptyLabel
         } else {
-            ForEach(Array(notifications.enumerated()), id: \.element.id) { index, rule in
+            ForEach(notifications.indices, id: \.self) { index in
                 if index > 0 {
                     Divider().padding(.leading, 16)
                 }
-                ReminderRuleRow(rule: rule) {
-                    withAnimation { notifications.remove(at: index) }
+                ReminderRuleRow(rule: notifications[index]) {
+                    let i = index
+                    withAnimation { _ = notifications.remove(at: i) }
                 } onUpdate: { updated in
                     notifications[index] = updated
                 }
             }
         }
+    }
+
+    private var emptyLabel: some View {
+        Text("No reminders set")
+            .font(.system(size: 14))
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.vertical, 16)
     }
 
     private var presetsRow: some View {

@@ -115,6 +115,7 @@ final class SubscriptionItem {
     var activeUntilDate: Date?
     var paymentMethod: String
     var emailUsed: String
+    var phoneNumber: String
     var notes: String
     var url: String
     var createdAt: Date
@@ -139,6 +140,7 @@ final class SubscriptionItem {
         activeUntilDate: Date? = nil,
         paymentMethod: String = "",
         emailUsed: String = "",
+        phoneNumber: String = "",
         notes: String = "",
         url: String = "",
         notifications: [NotificationRule] = []
@@ -158,6 +160,7 @@ final class SubscriptionItem {
         self.activeUntilDate = activeUntilDate
         self.paymentMethod = paymentMethod
         self.emailUsed = emailUsed
+        self.phoneNumber = phoneNumber
         self.notes = notes
         self.url = url
         self.createdAt = Date()

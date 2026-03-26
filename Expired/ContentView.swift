@@ -34,7 +34,7 @@ struct TimelineView: View {
         NavigationStack {
             timelineContent
                 .navigationTitle("Timeline")
-                .navigationBarTitleDisplayMode(.large)
+                .largeNavigationTitle()
         }
     }
 
@@ -129,7 +129,7 @@ struct InsightsView: View {
             }
             .background(groupedBackground.ignoresSafeArea())
             .navigationTitle("Insights")
-            .navigationBarTitleDisplayMode(.large)
+            .largeNavigationTitle()
         }
     }
 
@@ -255,14 +255,42 @@ struct CostBarRow: View {
     }
 }
 
-// MARK: - Cross-platform grouped background
+// MARK: - Cross-platform helpers (shared across files)
 
-private var groupedBackground: Color {
+var groupedBackground: Color {
 #if os(iOS)
     Color(uiColor: .systemGroupedBackground)
 #else
     Color(nsColor: .windowBackgroundColor)
 #endif
+}
+
+extension View {
+    func largeNavigationTitle() -> some View {
+#if os(iOS)
+        self.navigationBarTitleDisplayMode(.large)
+#else
+        self
+#endif
+    }
+
+    func inlineNavigationTitle() -> some View {
+#if os(iOS)
+        self.navigationBarTitleDisplayMode(.inline)
+#else
+        self
+#endif
+    }
+
+
+
+    func trailingTextAlignment() -> some View {
+#if os(iOS)
+        self.multilineTextAlignment(.trailing)
+#else
+        self
+#endif
+    }
 }
 
 // MARK: - Preview

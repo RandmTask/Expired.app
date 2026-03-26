@@ -197,5 +197,6 @@ extension Image {
         SubscriptionRowView(item: PreviewData.gym)
     }
     .padding()
-    .background(Color(.systemGroupedBackground))
+    .background(Color(white: 0.95))
 }
+

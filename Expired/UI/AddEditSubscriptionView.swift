@@ -20,6 +20,7 @@ struct AddEditSubscriptionView: View {
 
     // Icon
     @State private var iconData: Data? = nil
+    @State private var iconSource: IconSource = .system
     @State private var isFetchingIcon = false
     @State private var faviconFetchTask: Task<Void, Never>? = nil
 
@@ -36,26 +37,74 @@ struct AddEditSubscriptionView: View {
     @State private var notifications: [NotificationRule] = []
     @State private var notes = ""
 
-    // Suggestion dropdowns
-    @State private var showPaymentSuggestions = false
-    @State private var showEmailSuggestions = false
-    @State private var showPhoneSuggestions = false
+    // Suggestion sheets
+    @State private var showPaymentPicker = false
+    @State private var showEmailPicker = false
+    @State private var showPhonePicker = false
+
+    // Save-to-suggestions prompt
+    @State private var pendingSaveValue: String = ""
+    @State private var pendingSaveField: SuggestionFieldType? = nil
+    @State private var showSavePrompt = false
+
+    // Persistent suggestion store (UserDefaults-backed)
+    @AppStorage("savedCards") private var savedCardsData: Data = Data()
+    @AppStorage("savedEmails") private var savedEmailsData: Data = Data()
+    @AppStorage("savedPhones") private var savedPhonesData: Data = Data()
 
     private var isEditing: Bool { item != nil }
 
     // MARK: - Suggestions
 
+    private var savedCards: [String] {
+        (try? JSONDecoder().decode([String].self, from: savedCardsData)) ?? []
+    }
+    private var savedEmails: [String] {
+        (try? JSONDecoder().decode([String].self, from: savedEmailsData)) ?? []
+    }
+    private var savedPhones: [String] {
+        (try? JSONDecoder().decode([String].self, from: savedPhonesData)) ?? []
+    }
+
     private var paymentSuggestions: [String] {
-        Array(Set(allItems.compactMap { $0.paymentMethod.isEmpty ? nil : $0.paymentMethod }))
-            .filter { $0 != paymentMethod }.sorted()
+        let persisted = savedCards
+        let fromItems = allItems.compactMap { $0.paymentMethod.isEmpty ? nil : $0.paymentMethod }
+        return Array(Set(persisted + fromItems)).filter { $0 != paymentMethod }.sorted()
     }
     private var emailSuggestions: [String] {
-        Array(Set(allItems.compactMap { $0.emailUsed.isEmpty ? nil : $0.emailUsed }))
-            .filter { $0 != emailUsed }.sorted()
+        let persisted = savedEmails
+        let fromItems = allItems.compactMap { $0.emailUsed.isEmpty ? nil : $0.emailUsed }
+        return Array(Set(persisted + fromItems)).filter { $0 != emailUsed }.sorted()
     }
     private var phoneSuggestions: [String] {
-        Array(Set(allItems.compactMap { $0.phoneNumber.isEmpty ? nil : $0.phoneNumber }))
-            .filter { $0 != phoneNumber }.sorted()
+        let persisted = savedPhones
+        let fromItems = allItems.compactMap { $0.phoneNumber.isEmpty ? nil : $0.phoneNumber }
+        return Array(Set(persisted + fromItems)).filter { $0 != phoneNumber }.sorted()
+    }
+
+    private func persistSuggestion(_ value: String, type: SuggestionFieldType) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        switch type {
+        case .card:
+            var list = savedCards
+            if !list.contains(trimmed) {
+                list.append(trimmed)
+                savedCardsData = (try? JSONEncoder().encode(list)) ?? Data()
+            }
+        case .email:
+            var list = savedEmails
+            if !list.contains(trimmed) {
+                list.append(trimmed)
+                savedEmailsData = (try? JSONEncoder().encode(list)) ?? Data()
+            }
+        case .phone:
+            var list = savedPhones
+            if !list.contains(trimmed) {
+                list.append(trimmed)
+                savedPhonesData = (try? JSONEncoder().encode(list)) ?? Data()
+            }
+        }
     }
 
     // MARK: - Body
@@ -116,13 +165,12 @@ struct AddEditSubscriptionView: View {
 
                     FormDivider()
 
-                    // Website — triggers favicon
+                    // Website — favicon auto-fetches when URL changes
                     HStack {
                         Text("Website")
                             .font(.system(size: 16))
                             .frame(minWidth: 80, alignment: .leading)
                             .foregroundStyle(.primary)
-                        Spacer()
                         TextField("netflix.com", text: $url)
                             .foregroundStyle(.primary)
                             .trailingTextAlignment()
@@ -130,9 +178,16 @@ struct AddEditSubscriptionView: View {
                             .keyboardType(.URL)
                             .textInputAutocapitalization(.never)
 #endif
-                            .onChange(of: url) { _, newVal in scheduleFaviconFetch(newVal) }
+                            .onSubmit { scheduleFaviconFetch(url, delay: false) }
+                            .onChange(of: url) { _, newValue in
+                                scheduleFaviconFetch(newValue, delay: true)
+                            }
                         if isFetchingIcon {
-                            ProgressView().scaleEffect(0.75).padding(.leading, 6)
+                            ProgressView().scaleEffect(0.75).padding(.leading, 4)
+                        } else if iconData != nil {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .padding(.leading, 4)
                         }
                     }
                     .padding(.horizontal, 16)
@@ -181,47 +236,43 @@ struct AddEditSubscriptionView: View {
             SectionHeader(title: "Status")
             FormCard {
                 VStack(spacing: 0) {
-                    // Auto-Renew
-                    Toggle(isOn: $isAutoRenew) {
-                        Label("Auto-Renews", systemImage: "arrow.clockwise.circle.fill")
-                            .foregroundStyle(.primary)
-                            .symbolRenderingMode(.multicolor)
-                    }
-                    .padding(.horizontal, 16).padding(.vertical, 13)
-                    .onChange(of: isAutoRenew) { _, on in
-                        if on { isCancelled = false }   // flip the other off
-                    }
-
-                    FormDivider()
-
-                    // Free Trial
-                    Toggle(isOn: $isTrial) {
-                        Label("Free Trial", systemImage: "gift.fill")
-                            .foregroundStyle(.primary)
-                            .symbolRenderingMode(.multicolor)
-                    }
-                    .padding(.horizontal, 16).padding(.vertical, 13)
-                    .onChange(of: isTrial) { _, on in
-                        if on && notifications.isEmpty {
-                            notifications = [
-                                NotificationRule(offsetType: .daysBefore, value: 3),
-                                NotificationRule(offsetType: .daysBefore, value: 1)
-                            ]
+                    // Three status chips on one row
+                    HStack(spacing: 10) {
+                        StatusChip(
+                            label: "Auto-Renews",
+                            icon: "arrow.clockwise",
+                            color: .green,
+                            isOn: isAutoRenew
+                        ) {
+                            isAutoRenew.toggle()
+                            if isAutoRenew { isCancelled = false }
+                        }
+                        StatusChip(
+                            label: "Trial",
+                            icon: "gift",
+                            color: .purple,
+                            isOn: isTrial
+                        ) {
+                            isTrial.toggle()
+                            if isTrial && notifications.isEmpty {
+                                notifications = [
+                                    NotificationRule(offsetType: .daysBefore, value: 3),
+                                    NotificationRule(offsetType: .daysBefore, value: 1)
+                                ]
+                            }
+                        }
+                        StatusChip(
+                            label: "Cancelled",
+                            icon: "xmark",
+                            color: .orange,
+                            isOn: isCancelled
+                        ) {
+                            isCancelled.toggle()
+                            if isCancelled { isAutoRenew = false }
                         }
                     }
-
-                    FormDivider()
-
-                    // Cancelled — flips auto-renew off automatically
-                    Toggle(isOn: $isCancelled) {
-                        Label("Cancelled", systemImage: "xmark.circle.fill")
-                            .foregroundStyle(.primary)
-                            .symbolRenderingMode(.multicolor)
-                    }
-                    .padding(.horizontal, 16).padding(.vertical, 13)
-                    .onChange(of: isCancelled) { _, on in
-                        if on { isAutoRenew = false }   // flip the other off
-                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
 
                     if isCancelled {
                         FormDivider()
@@ -278,17 +329,23 @@ struct AddEditSubscriptionView: View {
             SectionHeader(title: "Account")
             FormCard {
                 VStack(spacing: 0) {
-                    SuggestionField(label: "Card", placeholder: "Visa ****1234",
-                                    text: $paymentMethod, suggestions: paymentSuggestions,
-                                    isExpanded: $showPaymentSuggestions)
+                    SheetPickerField(
+                        label: "Card", placeholder: "Visa ****1234",
+                        text: $paymentMethod, suggestions: paymentSuggestions,
+                        showPicker: $showPaymentPicker
+                    )
                     FormDivider()
-                    SuggestionField(label: "Email", placeholder: "you@example.com",
-                                    text: $emailUsed, suggestions: emailSuggestions,
-                                    isExpanded: $showEmailSuggestions)
+                    SheetPickerField(
+                        label: "Email", placeholder: "you@example.com",
+                        text: $emailUsed, suggestions: emailSuggestions,
+                        showPicker: $showEmailPicker
+                    )
                     FormDivider()
-                    SuggestionField(label: "Phone", placeholder: "+61 400 000 000",
-                                    text: $phoneNumber, suggestions: phoneSuggestions,
-                                    isExpanded: $showPhoneSuggestions)
+                    SheetPickerField(
+                        label: "Phone", placeholder: "+61 400 000 000",
+                        text: $phoneNumber, suggestions: phoneSuggestions,
+                        showPicker: $showPhonePicker
+                    )
                 }
             }
         }
@@ -337,21 +394,25 @@ struct AddEditSubscriptionView: View {
 
     // MARK: - Favicon fetch (debounced)
 
-    private func scheduleFaviconFetch(_ input: String) {
+    private func scheduleFaviconFetch(_ input: String, delay: Bool = true) {
         faviconFetchTask?.cancel()
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         // Need at least "x.co" to attempt
         guard trimmed.count >= 4, trimmed.contains(".") else { return }
 
         faviconFetchTask = Task {
-            // Small debounce so we don't fire on every keystroke
-            try? await Task.sleep(for: .milliseconds(600))
+            // Short debounce so we don't fire on every keystroke
+            if delay {
+                try? await Task.sleep(for: .milliseconds(800))
+            }
             guard !Task.isCancelled else { return }
-
             await MainActor.run { isFetchingIcon = true }
             let data = await FaviconFetcher.fetch(from: trimmed)
             await MainActor.run {
-                if let data { iconData = data }
+                if let data {
+                    iconData = data
+                    iconSource = .favicon
+                }
                 isFetchingIcon = false
             }
         }
@@ -378,6 +439,7 @@ struct AddEditSubscriptionView: View {
         phoneNumber = item.phoneNumber
         notes = item.notes
         iconData = item.iconData
+        iconSource = item.iconSource
         notifications = item.notifications
     }
 
@@ -387,11 +449,17 @@ struct AddEditSubscriptionView: View {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         guard !trimmedName.isEmpty else { return }
 
+        // Check if any account values are new and should be saved
+        checkAndPromptSave()
+
+        let resolvedIconSource: IconSource = (iconData != nil) ? .favicon : .system
+
         let savedItem: SubscriptionItem
         if let existing = item {
             existing.name = trimmedName
             existing.url = url
             existing.iconData = iconData
+            existing.iconSource = resolvedIconSource
             existing.nextRenewalDate = nextRenewalDate
             existing.isAutoRenew = isAutoRenew
             existing.isCancelled = isCancelled
@@ -410,6 +478,7 @@ struct AddEditSubscriptionView: View {
         } else {
             let newItem = SubscriptionItem(
                 name: trimmedName,
+                iconSource: resolvedIconSource,
                 cost: cost,
                 currency: currency,
                 billingCycle: billingCycle,
@@ -431,6 +500,23 @@ struct AddEditSubscriptionView: View {
         }
         Task { await NotificationManager.shared.reschedule(for: savedItem) }
         dismiss()
+    }
+
+    /// Check each account field: if the value isn't already in suggestions, prompt once to save it.
+    private func checkAndPromptSave() {
+        let cardTrimmed = paymentMethod.trimmingCharacters(in: .whitespacesAndNewlines)
+        let emailTrimmed = emailUsed.trimmingCharacters(in: .whitespacesAndNewlines)
+        let phoneTrimmed = phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !cardTrimmed.isEmpty && !savedCards.contains(cardTrimmed) {
+            persistSuggestion(cardTrimmed, type: .card)
+        }
+        if !emailTrimmed.isEmpty && !savedEmails.contains(emailTrimmed) {
+            persistSuggestion(emailTrimmed, type: .email)
+        }
+        if !phoneTrimmed.isEmpty && !savedPhones.contains(phoneTrimmed) {
+            persistSuggestion(phoneTrimmed, type: .phone)
+        }
     }
 
     private func deleteAndDismiss() {
@@ -455,72 +541,80 @@ struct SectionHeader: View {
     }
 }
 
-// MARK: - Suggestion Field
+// MARK: - Suggestion Field Type
 
-struct SuggestionField: View {
+enum SuggestionFieldType {
+    case card, email, phone
+}
+
+// MARK: - Status Chip
+
+struct StatusChip: View {
+    let label: String
+    let icon: String
+    let color: Color
+    let isOn: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: isOn ? "\(icon).circle.fill" : "\(icon).circle")
+                    .font(.system(size: 14, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .foregroundStyle(isOn ? color : Color.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
+            .background(isOn ? color.opacity(0.14) : Color.secondary.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Sheet Picker Field
+
+struct SheetPickerField: View {
     let label: String
     let placeholder: String
     @Binding var text: String
     let suggestions: [String]
-    @Binding var isExpanded: Bool
+    @Binding var showPicker: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(label)
-                    .font(.system(size: 16))
-                    .frame(minWidth: 80, alignment: .leading)
-                    .foregroundStyle(.primary)
-                TextField(placeholder, text: $text)
-                    .foregroundStyle(.primary)
-                    .trailingTextAlignment()
+        HStack {
+            Text(label)
+                .font(.system(size: 16))
+                .frame(minWidth: 80, alignment: .leading)
+                .foregroundStyle(.primary)
+            TextField(placeholder, text: $text)
+                .foregroundStyle(.primary)
+                .trailingTextAlignment()
 #if os(iOS)
-                    .keyboardType(resolvedKeyboardType)
-                    .textInputAutocapitalization(label == "Email" ? .never : .sentences)
+                .keyboardType(resolvedKeyboardType)
+                .textInputAutocapitalization(label == "Email" ? .never : .sentences)
 #endif
-                if !suggestions.isEmpty {
-                    Button {
-                        withAnimation(.spring(duration: 0.2)) { isExpanded.toggle() }
-                    } label: {
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.tertiary)
-                            .padding(.leading, 4)
-                    }
-                    .buttonStyle(.plain)
+            if !suggestions.isEmpty {
+                Button {
+                    showPicker = true
+                } label: {
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 4)
                 }
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-
-            if isExpanded && !suggestions.isEmpty {
-                Divider().padding(.leading, 16)
-                VStack(spacing: 0) {
-                    ForEach(suggestions, id: \.self) { suggestion in
-                        Button {
-                            withAnimation { text = suggestion; isExpanded = false }
-                        } label: {
-                            HStack {
-                                Text(suggestion)
-                                    .font(.system(size: 15))
-                                    .foregroundStyle(.primary)
-                                Spacer()
-                                Image(systemName: "arrow.up.left")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(Color.blue.opacity(0.04))
-                        }
-                        .buttonStyle(.plain)
-                        if suggestion != suggestions.last {
-                            Divider().padding(.leading, 16)
-                        }
-                    }
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .sheet(isPresented: $showPicker) {
+            SuggestionPickerSheet(label: label, suggestions: suggestions, selection: $text)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -533,6 +627,47 @@ struct SuggestionField: View {
         }
     }
 #endif
+}
+
+// MARK: - Suggestion Picker Sheet
+
+struct SuggestionPickerSheet: View {
+    let label: String
+    let suggestions: [String]
+    @Binding var selection: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(suggestions, id: \.self) { item in
+                    Button {
+                        selection = item
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Text(item)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if item == selection {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.blue)
+                                    .fontWeight(.semibold)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .navigationTitle(label)
+            .inlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Form Building Blocks

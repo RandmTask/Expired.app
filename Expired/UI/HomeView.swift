@@ -144,9 +144,9 @@ struct HomeView: View {
                 }
                 .padding(.top, 8)
             }
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .background(groupedBackground.ignoresSafeArea())
             .navigationTitle("Subscriptions")
-            .navigationBarTitleDisplayMode(.large)
+            .largeNavigationTitle()
             .searchable(text: $searchText, isPresented: $showSearch, prompt: "Search subscriptions")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {

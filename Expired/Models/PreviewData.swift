@@ -11,9 +11,6 @@ enum PreviewData {
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let container = try! ModelContainer(for: schema, configurations: config)
 
-        // Insert sample data
-        let items = [netflix, spotify, audible, gym, passport, netflix, adobe]
-        // Note: each call to these vars creates a new instance for previews
         for item in makeSamples() {
             container.mainContext.insert(item)
         }
