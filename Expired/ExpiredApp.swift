@@ -30,11 +30,11 @@ struct ExpiredApp: App {
             queue: .main
         ) { _ in
             print("[CloudKit] ⬇ Remote store change received")
-            // SwiftData's mainContext is backed by NSManagedObjectContext with
-            // automaticallyMergesChangesFromParent = true. Calling save() is enough
-            // to flush any pending state and cause @Query descriptors to re-evaluate.
-            try? modelContainer.mainContext.save()
-            print("[CloudKit]   mainContext saved — @Query views will refresh ✓")
+            // Must hop to MainActor because mainContext is main-actor isolated.
+            Task { @MainActor in
+                try? modelContainer.mainContext.save()
+                print("[CloudKit]   mainContext saved — @Query views will refresh ✓")
+            }
         }
 
         // NSPersistentCloudKitContainer.eventChangedNotification fires when an

@@ -196,6 +196,7 @@ struct AddEditSubscriptionView: View {
                             .font(.system(size: 16))
                             .foregroundStyle(.primary)
                             .submitLabel(.next)
+                            .autocorrectionDisabled()
                             .padding(.vertical, 14)
                             .padding(.trailing, 16)
                     }
@@ -387,6 +388,7 @@ struct AddEditSubscriptionView: View {
                             TextField("0.00", text: $costText)
                                 .foregroundStyle(.primary)
                                 .trailingTextAlignment()
+                                .autocorrectionDisabled()
 #if os(iOS)
                                 .keyboardType(.decimalPad)
 #endif
@@ -477,12 +479,8 @@ struct AddEditSubscriptionView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .padding(.top, 1)
-                Group {
-                    Text("Do ") +
-                    Text("not").bold() +
-                    Text(" enter card numbers — enter description only")
-                }
-                .font(.system(size: 13))
+                Text("Do **not** enter card numbers — enter description only")
+                    .font(.system(size: 13))
             }
             .foregroundStyle(.orange)
             .padding(.horizontal, 4)
@@ -884,6 +882,7 @@ struct AddAccountValueSheet: View {
                         .padding(12)
                         .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
                         .focused($focused)
+                        .autocorrectionDisabled()
 #if os(iOS)
                         .keyboardType(keyboardType)
                         .textInputAutocapitalization(fieldType == .email ? .never : .words)
@@ -1171,8 +1170,8 @@ struct CurrencyPickerSheet: View {
                                     .foregroundStyle(.blue)
                             }
                         }
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
                     .swipeActions(edge: .trailing) {
                         if customList.contains(entry.code) {
                             Button(role: .destructive) {

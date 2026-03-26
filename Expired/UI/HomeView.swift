@@ -17,8 +17,6 @@ struct HomeView: View {
     @State private var showingAdd = false
     @State private var editingItem: SubscriptionItem?
     @State private var searchText = ""
-    @State private var showSearch = false
-    @State private var isRefreshing = false
 
     // MARK: - Filtered groups
 
@@ -100,6 +98,32 @@ struct HomeView: View {
 
                 ScrollView {
                     LazyVStack(spacing: 20) {
+                        // Inline search bar — same horizontal inset as the cards
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            TextField("Search", text: $searchText)
+                                .font(.system(size: 15))
+                                .autocorrectionDisabled()
+#if os(iOS)
+                                .textInputAutocapitalization(.never)
+#endif
+                            if !searchText.isEmpty {
+                                Button { searchText = "" } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal)
+                        .padding(.top, 4)
+
                         // Hero summary card
                         if !allItems.isEmpty {
                             HeroSummaryCard(
@@ -182,7 +206,6 @@ struct HomeView: View {
             }
             .navigationTitle("Expired")
             .largeNavigationTitle()
-            .searchable(text: $searchText, isPresented: $showSearch, prompt: "Search")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button { showingAdd = true } label: {
