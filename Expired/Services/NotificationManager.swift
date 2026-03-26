@@ -70,7 +70,7 @@ final class NotificationManager {
 
         let baseDate = item.nextRelevantDate
 
-        for rule in item.notifications {
+        for rule in item.notificationsList {
             guard var fireDate = fireDate(baseDate: baseDate, rule: rule) else { continue }
 
             // Always fire at 9am so the alert lands at a sensible time
@@ -178,6 +178,6 @@ final class NotificationManager {
     }
 
     private func pendingIdentifiers(for item: SubscriptionItem) -> [String] {
-        item.notifications.map { identifier(itemID: item.id, ruleID: $0.id) }
+        item.notificationsList.map { identifier(itemID: item.id, ruleID: $0.id) }
     }
 }

@@ -595,7 +595,7 @@ struct AddEditSubscriptionView: View {
         if let vf = item.validFromDate { validFromDate = vf }
         iconData = item.iconData
         iconSource = item.iconSource
-        notifications = item.notifications
+        notifications = item.notificationsList
     }
 
     // MARK: - Save

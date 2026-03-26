@@ -78,10 +78,15 @@ enum SubscriptionStatus {
 
 @Model
 final class NotificationRule {
-    @Attribute(.unique) var id: UUID
-    var offsetType: NotificationOffsetType
-    var value: Int
-    var isCritical: Bool
+    // CloudKit: no @Attribute(.unique); all stored props need defaults or be optional
+    var id: UUID = UUID()
+    /// Stored as raw string for CloudKit compatibility; use `offsetType` computed property.
+    var offsetTypeRaw: String = NotificationOffsetType.daysBefore.rawValue
+    var value: Int = 1
+    var isCritical: Bool = false
+
+    /// Back-reference required by CloudKit (inverse relationship).
+    var item: SubscriptionItem?
 
     init(
         id: UUID = UUID(),
@@ -90,9 +95,14 @@ final class NotificationRule {
         isCritical: Bool = false
     ) {
         self.id = id
-        self.offsetType = offsetType
+        self.offsetTypeRaw = offsetType.rawValue
         self.value = value
         self.isCritical = isCritical
+    }
+
+    var offsetType: NotificationOffsetType {
+        get { NotificationOffsetType(rawValue: offsetTypeRaw) ?? .daysBefore }
+        set { offsetTypeRaw = newValue.rawValue }
     }
 
     var label: String {
@@ -113,46 +123,59 @@ final class NotificationRule {
 
 @Model
 final class SubscriptionItem {
-    @Attribute(.unique) var id: UUID
-    /// Stored as an optional String so CoreData's lightweight migration can leave
-    /// it nil for rows that predate this field. Access via `itemType` instead.
-    var itemTypeRaw: String?
-    var name: String
-    var provider: String
-    var iconSource: IconSource
-    @Attribute(.externalStorage) var iconData: Data?
-    var cost: Double?
-    var currency: String
-    var billingCycle: BillingCycle
-    var nextRenewalDate: Date
-    var trialEndDate: Date?
-    /// For documents: the hard expiry date (passport, licence, insurance, etc.)
-    var expiryDate: Date?
-    var isAutoRenew: Bool
-    var isCancelled: Bool
-    var activeUntilDate: Date?
-    var personName: String
-    var paymentMethod: String
-    var emailUsed: String
-    var phoneNumber: String
-    var notes: String
-    var url: String
-    /// Document-only: reference / licence number, policy number, etc.
-    var documentNumber: String?
-    /// Document-only: the date from which the document is valid (e.g. issue date)
-    var validFromDate: Date?
-    var createdAt: Date
-    var updatedAt: Date
+    // CloudKit: no @Attribute(.unique) on id; all stored non-optional props need defaults
+    var id: UUID = UUID()
+    /// Stored as an optional String so CloudKit can deliver nil for old records.
+    var itemTypeRaw: String? = nil
+    var name: String = ""
+    var provider: String = ""
+    /// Stored as raw string for CloudKit compatibility.
+    var iconSourceRaw: String = IconSource.system.rawValue
+    @Attribute(.externalStorage) var iconData: Data? = nil
+    var cost: Double? = nil
+    var currency: String = "AUD"
+    /// Stored as raw string for CloudKit compatibility.
+    var billingCycleRaw: String = BillingCycle.monthly.rawValue
+    var nextRenewalDate: Date = Date()
+    var trialEndDate: Date? = nil
+    var expiryDate: Date? = nil
+    var isAutoRenew: Bool = true
+    var isCancelled: Bool = false
+    var activeUntilDate: Date? = nil
+    var personName: String = ""
+    var paymentMethod: String = ""
+    var emailUsed: String = ""
+    var phoneNumber: String = ""
+    var notes: String = ""
+    var url: String = ""
+    var documentNumber: String? = nil
+    var validFromDate: Date? = nil
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
 
-    @Relationship(deleteRule: .cascade)
-    var notifications: [NotificationRule]
+    // CloudKit: relationship must be optional with an inverse (defined on NotificationRule.item)
+    @Relationship(deleteRule: .cascade, inverse: \NotificationRule.item)
+    var notifications: [NotificationRule]? = nil
 
-    /// Safely decodes `itemTypeRaw`, defaulting to `.subscription` when nil
-    /// (records that predate this field arriving from CloudKit or old local stores).
+    // MARK: - Computed wrappers (enum ↔ raw string)
+
     var itemType: ItemType {
         get { ItemType(rawValue: itemTypeRaw ?? "") ?? .subscription }
         set { itemTypeRaw = newValue.rawValue }
     }
+
+    var iconSource: IconSource {
+        get { IconSource(rawValue: iconSourceRaw) ?? .system }
+        set { iconSourceRaw = newValue.rawValue }
+    }
+
+    var billingCycle: BillingCycle {
+        get { BillingCycle(rawValue: billingCycleRaw) ?? .monthly }
+        set { billingCycleRaw = newValue.rawValue }
+    }
+
+    /// Safe accessor — never nil in practice; returns [] when CloudKit delivers nil.
+    var notificationsList: [NotificationRule] { notifications ?? [] }
 
     init(
         id: UUID = UUID(),
@@ -181,14 +204,14 @@ final class SubscriptionItem {
         notifications: [NotificationRule] = []
     ) {
         self.id = id
-        self.itemTypeRaw = itemType.rawValue  // always set on creation; only nil for migrated old records
+        self.itemTypeRaw = itemType.rawValue
         self.name = name
         self.provider = provider
-        self.iconSource = iconSource
+        self.iconSourceRaw = iconSource.rawValue
         self.iconData = iconData
         self.cost = cost
         self.currency = currency
-        self.billingCycle = billingCycle
+        self.billingCycleRaw = billingCycle.rawValue
         self.nextRenewalDate = nextRenewalDate
         self.trialEndDate = trialEndDate
         self.expiryDate = expiryDate
@@ -213,19 +236,16 @@ final class SubscriptionItem {
     var status: SubscriptionStatus {
         let now = Date()
 
-        // Documents use expiryDate as the authoritative date
         if itemType == .document {
             let target = expiryDate ?? nextRenewalDate
             if target < now { return .expired }
-            return .manualRenew   // "needs renewal" for docs
+            return .manualRenew
         }
 
-        // Active trial
         if let trial = trialEndDate, trial > now, !isCancelled {
             return .trial(endsOn: trial)
         }
 
-        // Cancelled — check if still in grace period
         if isCancelled {
             if let until = activeUntilDate, until > now {
                 return .cancelledButActive(until: until)
@@ -233,7 +253,6 @@ final class SubscriptionItem {
             return .expired
         }
 
-        // Check if past renewal date with no auto-renew
         if !isAutoRenew && nextRenewalDate < now {
             return .expired
         }
@@ -246,7 +265,6 @@ final class SubscriptionItem {
         return trial > Date() && !isCancelled
     }
 
-    // The date most relevant to surface in the UI
     var nextRelevantDate: Date {
         if itemType == .document {
             return expiryDate ?? nextRenewalDate
@@ -256,12 +274,10 @@ final class SubscriptionItem {
         return nextRenewalDate
     }
 
-    // Days until the next relevant date
     var daysUntilRenewal: Int {
         Calendar.current.dateComponents([.day], from: Date(), to: nextRelevantDate).day ?? 0
     }
 
-    /// Visual urgency: drives colour coding in the list
     enum Urgency { case critical, warning, normal, expired }
     var urgency: Urgency {
         if case .expired = status { return .expired }
@@ -274,7 +290,6 @@ final class SubscriptionItem {
 
     // MARK: - Cost Normalization
 
-    /// Monthly cost in the item's own currency.
     var monthlyCost: Double? {
         guard let cost = cost else { return nil }
         return cost * billingCycle.monthlyMultiplier
@@ -285,7 +300,6 @@ final class SubscriptionItem {
         return monthly * 12.0
     }
 
-    /// Monthly cost converted to `targetCurrency` using the built-in exchange rates.
     func monthlyCostConverted(to targetCurrency: String) -> Double? {
         guard let monthly = monthlyCost else { return nil }
         return CurrencyInfo.convert(monthly, from: currency, to: targetCurrency)
@@ -298,7 +312,6 @@ final class SubscriptionItem {
         let providerLower = provider.lowercased()
         let combined = lower + providerLower
 
-        // Document types
         if itemType == .document {
             if combined.contains("passport") { return "person.text.rectangle.fill" }
             if combined.contains("licence") || combined.contains("license") || combined.contains("driver") { return "car.fill" }
