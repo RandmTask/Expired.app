@@ -3,60 +3,59 @@ import SwiftData
 
 @main
 struct ExpiredApp: App {
+    // Persisted user preference for iCloud sync (default: on)
+    @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
+
     let container: ModelContainer
 
     init() {
-        container = Self.makeContainer()
+        // Read the preference before the App property wrappers are initialised
+        let syncOn = UserDefaults.standard.object(forKey: "iCloudSyncEnabled") as? Bool ?? true
+        container = Self.makeContainer(iCloudSync: syncOn)
     }
 
-    private static func makeContainer() -> ModelContainer {
+    static func makeContainer(iCloudSync: Bool) -> ModelContainer {
         let schema = Schema([SubscriptionItem.self, NotificationRule.self])
 
-        // Pin the store to a fixed URL so it survives schema changes and
-        // never accidentally opens a different file on fallback.
         let storeURL = URL.applicationSupportDirectory
             .appending(path: "Expired", directoryHint: .isDirectory)
             .appending(path: "default.store")
 
-        // Ensure the directory exists
         try? FileManager.default.createDirectory(
             at: storeURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
 
-        print("[ExpiredApp] Store URL: \(storeURL.path)")
+        print("[ExpiredApp] Store URL: \(storeURL.path) iCloud=\(iCloudSync)")
 
-        // Try CloudKit-backed store at the fixed URL
-        do {
-            let config = ModelConfiguration(
-                schema: schema,
-                url: storeURL,
-                cloudKitDatabase: .automatic
-            )
-            let c = try ModelContainer(for: schema, configurations: config)
-            print("[ExpiredApp] CloudKit store opened successfully")
-            return c
-        } catch {
-            print("[ExpiredApp] CloudKit store failed: \(error)")
+        // Try preferred store type first
+        if iCloudSync {
+            do {
+                let config = ModelConfiguration(
+                    schema: schema,
+                    url: storeURL,
+                    cloudKitDatabase: .automatic
+                )
+                let c = try ModelContainer(for: schema, configurations: config)
+                print("[ExpiredApp] CloudKit store opened successfully")
+                return c
+            } catch {
+                print("[ExpiredApp] CloudKit store failed: \(error)")
+            }
         }
 
-        // Fall back to local-only at the SAME fixed URL
+        // Local-only store
         do {
-            let config = ModelConfiguration(
-                schema: schema,
-                url: storeURL
-            )
+            let config = ModelConfiguration(schema: schema, url: storeURL)
             let c = try ModelContainer(for: schema, configurations: config)
             print("[ExpiredApp] Local store opened successfully")
             return c
         } catch {
             print("[ExpiredApp] Store failed (likely schema mismatch): \(error)")
-            // Delete the incompatible store files so the app can start fresh.
-            // This happens when new non-optional fields are added without a migration plan.
-            deleteSQLiteFiles(at: storeURL)
+            Self.deleteSQLiteFiles(at: storeURL)
         }
 
-        // Re-try with a clean store
+        // Re-try after clearing incompatible store
         do {
             let config = ModelConfiguration(schema: schema, url: storeURL)
             let c = try ModelContainer(for: schema, configurations: config)
@@ -66,15 +65,13 @@ struct ExpiredApp: App {
             print("[ExpiredApp] Fresh store also failed: \(error)")
         }
 
-        // Absolute last resort: fresh in-memory container
-        // (data won't persist — but the app won't crash)
         print("[ExpiredApp] WARNING: falling back to in-memory store")
         return try! ModelContainer(for: schema,
                                    configurations: ModelConfiguration(isStoredInMemoryOnly: true))
     }
 
     /// Removes the SQLite store triple (.sqlite, .sqlite-shm, .sqlite-wal) at the given URL.
-    private static func deleteSQLiteFiles(at url: URL) {
+    static func deleteSQLiteFiles(at url: URL) {
         let fm = FileManager.default
         for suffix in ["", "-shm", "-wal"] {
             let file = URL(fileURLWithPath: url.path + suffix)

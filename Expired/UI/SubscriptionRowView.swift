@@ -31,7 +31,7 @@ struct SubscriptionRowView: View {
 
             VStack(alignment: .trailing, spacing: 5) {
                 if item.itemType == .subscription, let monthly = item.monthlyCost {
-                    Text(monthly, format: .currency(code: item.currency))
+                    Text(CurrencyInfo.format(monthly, code: item.currency))
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary)
                     Text("/ mo")

@@ -13,6 +13,9 @@ struct ContentView: View {
             Tab("Insights", systemImage: "chart.bar") {
                 InsightsView()
             }
+            Tab("Settings", systemImage: "gear") {
+                SettingsView()
+            }
         }
 #if os(iOS)
         .tabBarMinimizeBehavior(.onScrollDown)
@@ -104,12 +107,19 @@ struct TimelineRow: View {
 
 struct InsightsView: View {
     @Query private var allItems: [SubscriptionItem]
+    @AppStorage("preferredCurrency") private var preferredCurrency = "AUD"
 
     private var activeItems: [SubscriptionItem] {
         allItems.filter { if case .expired = $0.status { return false }; return true }
     }
     private var monthlyTotal: Double { activeItems.compactMap(\.monthlyCost).reduce(0, +) }
     private var yearlyTotal: Double { monthlyTotal * 12 }
+
+    private var displayCurrency: String {
+        let codes = activeItems.map(\.currency)
+        let counts = Dictionary(codes.map { ($0, 1) }, uniquingKeysWith: +)
+        return counts.max(by: { $0.value < $1.value })?.key ?? preferredCurrency
+    }
     private var autoRenewCount: Int { activeItems.filter(\.isAutoRenew).count }
     private var trialCount: Int { activeItems.filter(\.isTrial).count }
     private var cancelledCount: Int {
@@ -137,8 +147,8 @@ struct InsightsView: View {
 
     private var costRow: some View {
         HStack(spacing: 12) {
-            GlassInsightCard(title: "Monthly", value: monthlyTotal.formatted(.currency(code: "AUD")), icon: "calendar", color: .blue)
-            GlassInsightCard(title: "Yearly", value: yearlyTotal.formatted(.currency(code: "AUD")), icon: "chart.line.uptrend.xyaxis", color: .indigo)
+            GlassInsightCard(title: "Monthly", value: CurrencyInfo.format(monthlyTotal, code: displayCurrency), icon: "calendar", color: .blue)
+            GlassInsightCard(title: "Yearly", value: CurrencyInfo.format(yearlyTotal, code: displayCurrency), icon: "chart.line.uptrend.xyaxis", color: .indigo)
         }
         .padding(.horizontal)
     }
@@ -275,6 +285,39 @@ extension View {
 #else
         self
 #endif
+    }
+}
+
+// MARK: - Settings View
+
+struct SettingsView: View {
+    @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
+    @State private var showRestartAlert = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Toggle(isOn: $iCloudSyncEnabled) {
+                        Label("iCloud Sync", systemImage: "icloud")
+                    }
+                    .onChange(of: iCloudSyncEnabled) { _, _ in
+                        showRestartAlert = true
+                    }
+                } header: {
+                    Text("Sync")
+                } footer: {
+                    Text("When enabled, your data syncs across all devices signed into the same iCloud account. Requires an iCloud account and internet connection. Restart the app after changing this setting.")
+                }
+            }
+            .navigationTitle("Settings")
+            .largeNavigationTitle()
+            .alert("Restart Required", isPresented: $showRestartAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Please restart the app for the iCloud sync change to take effect.")
+            }
+        }
     }
 }
 

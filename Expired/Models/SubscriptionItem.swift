@@ -137,6 +137,10 @@ final class SubscriptionItem {
     var phoneNumber: String
     var notes: String
     var url: String
+    /// Document-only: reference / licence number, policy number, etc.
+    var documentNumber: String?
+    /// Document-only: the date from which the document is valid (e.g. issue date)
+    var validFromDate: Date?
     var createdAt: Date
     var updatedAt: Date
 
@@ -172,6 +176,8 @@ final class SubscriptionItem {
         phoneNumber: String = "",
         notes: String = "",
         url: String = "",
+        documentNumber: String? = nil,
+        validFromDate: Date? = nil,
         notifications: [NotificationRule] = []
     ) {
         self.id = id
@@ -195,6 +201,8 @@ final class SubscriptionItem {
         self.phoneNumber = phoneNumber
         self.notes = notes
         self.url = url
+        self.documentNumber = documentNumber
+        self.validFromDate = validFromDate
         self.createdAt = Date()
         self.updatedAt = Date()
         self.notifications = notifications

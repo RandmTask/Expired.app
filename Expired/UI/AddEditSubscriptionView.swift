@@ -14,6 +14,8 @@ struct AddEditSubscriptionView: View {
     @State private var url = ""
     @State private var nextRenewalDate = Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date()
     @State private var expiryDate = Calendar.current.date(byAdding: .year, value: 1, to: Date()) ?? Date()
+    @State private var validFromDate: Date = Date()
+    @State private var documentNumber: String = ""
     @State private var isAutoRenew = true
     @State private var isCancelled = false
     @State private var isTrial = false
@@ -206,6 +208,7 @@ struct AddEditSubscriptionView: View {
                             TextField("netflix.com", text: $url)
                                 .foregroundStyle(.primary)
                                 .trailingTextAlignment()
+                                .autocorrectionDisabled()
 #if os(iOS)
                                 .keyboardType(.URL)
                                 .textInputAutocapitalization(.never)
@@ -234,6 +237,45 @@ struct AddEditSubscriptionView: View {
                             DatePicker("", selection: $expiryDate, displayedComponents: .date)
                                 .labelsHidden()
                         }
+                        FormDivider()
+                        FormRow(label: "Valid From") {
+                            DatePicker("", selection: $validFromDate, displayedComponents: .date)
+                                .labelsHidden()
+                        }
+                        FormDivider()
+                        HStack {
+                            Text("Reference")
+                                .font(.system(size: 16))
+                                .frame(minWidth: 80, alignment: .leading)
+                                .foregroundStyle(.primary)
+                            TextField("Document / policy number", text: $documentNumber)
+                                .foregroundStyle(.primary)
+                                .trailingTextAlignment()
+                                .autocorrectionDisabled()
+#if os(iOS)
+                                .textInputAutocapitalization(.characters)
+#endif
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        FormDivider()
+                        // Website field for documents too
+                        HStack {
+                            Text("Website")
+                                .font(.system(size: 16))
+                                .frame(minWidth: 80, alignment: .leading)
+                                .foregroundStyle(.primary)
+                            TextField("agency.gov.au", text: $url)
+                                .foregroundStyle(.primary)
+                                .trailingTextAlignment()
+                                .autocorrectionDisabled()
+#if os(iOS)
+                                .keyboardType(.URL)
+                                .textInputAutocapitalization(.never)
+#endif
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
                     } else {
                         FormRow(label: isTrial ? "Trial Ends" : "Renews") {
                             DatePicker("", selection: isTrial ? $trialEndDate : $nextRenewalDate,
@@ -344,7 +386,15 @@ struct AddEditSubscriptionView: View {
 #if os(iOS)
                                 .keyboardType(.decimalPad)
 #endif
-                                .onChange(of: costText) { _, val in cost = Double(val) }
+                                .onChange(of: costText) { _, val in
+                                    // Allow partial input while typing (e.g. "1.")
+                                    cost = Double(val)
+                                }
+                                .onSubmit {
+                                    if let c = cost {
+                                        costText = String(format: "%.2f", c)
+                                    }
+                                }
                             Button {
                                 showCurrencyPicker = true
                             } label: {
@@ -397,16 +447,6 @@ struct AddEditSubscriptionView: View {
                     )
                     FormDivider()
                     AccountField(
-                        label: "Payment",
-                        placeholder: "e.g. Visa, PayPal, Gift Card…",
-                        hint: "Description only — don't enter card numbers",
-                        text: $paymentMethod,
-                        suggestions: paymentSuggestions,
-                        fieldType: .card,
-                        onPersist: { v, t in persistSuggestion(v, type: t) }
-                    )
-                    FormDivider()
-                    AccountField(
                         label: "Email", placeholder: "you@example.com",
                         text: $emailUsed,
                         suggestions: emailSuggestions,
@@ -421,8 +461,26 @@ struct AddEditSubscriptionView: View {
                         fieldType: .phone,
                         onPersist: { v, t in persistSuggestion(v, type: t) }
                     )
+                    FormDivider()
+                    AccountField(
+                        label: "Payment",
+                        placeholder: "e.g. Visa, PayPal, Gift Card…",
+                        text: $paymentMethod,
+                        suggestions: paymentSuggestions,
+                        fieldType: .card,
+                        onPersist: { v, t in persistSuggestion(v, type: t) }
+                    )
                 }
             }
+            // Payment disclaimer sits outside the card row, below it
+            HStack(spacing: 5) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Do not enter card numbers — description only (e.g. Visa, PayPal)")
+                    .font(.system(size: 11))
+            }
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 4)
         }
     }
 
@@ -442,14 +500,32 @@ struct AddEditSubscriptionView: View {
     private var notesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Notes")
-            // Plain card — no glass, just the standard grouped material
-            TextField("Optional notes…", text: $notes, axis: .vertical)
-                .foregroundStyle(.primary)
-                .lineLimit(3...6)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+            ZStack(alignment: .topLeading) {
+                // Solid contrasting background so it's clearly distinct from the page background
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(notesBackground)
+                if notes.isEmpty {
+                    Text("Optional notes…")
+                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 16))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                }
+                TextField("Optional notes…", text: $notes, axis: .vertical)
+                    .foregroundStyle(.primary)
+                    .lineLimit(3...6)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+            }
         }
+    }
+
+    private var notesBackground: Color {
+#if os(iOS)
+        Color(uiColor: .secondarySystemGroupedBackground)
+#else
+        Color(nsColor: .controlBackgroundColor)
+#endif
     }
 
     // MARK: - Delete section
@@ -508,7 +584,7 @@ struct AddEditSubscriptionView: View {
         isTrial = item.isTrial
         if let t = item.trialEndDate { trialEndDate = t }
         if let u = item.activeUntilDate { activeUntilDate = u }
-        if let c = item.cost { costText = String(c) }
+        if let c = item.cost { costText = String(format: "%.2f", c) }
         cost = item.cost
         currency = item.currency
         billingCycle = item.billingCycle
@@ -517,6 +593,8 @@ struct AddEditSubscriptionView: View {
         emailUsed = item.emailUsed
         phoneNumber = item.phoneNumber
         notes = item.notes
+        documentNumber = item.documentNumber ?? ""
+        if let vf = item.validFromDate { validFromDate = vf }
         iconData = item.iconData
         iconSource = item.iconSource
         notifications = item.notifications
@@ -528,29 +606,44 @@ struct AddEditSubscriptionView: View {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         guard !trimmedName.isEmpty else { return }
 
+        // Trim all text fields
+        let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trimmedPersonName = personName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPayment = paymentMethod.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedEmail = emailUsed.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPhone = phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDocNum = documentNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Normalise cost to 2dp
+        if let c = cost { cost = (c * 100).rounded() / 100 }
+
         let resolvedIconSource: IconSource = (iconData != nil) ? .favicon : .system
+        let isDoc = itemType == .document
 
         let savedItem: SubscriptionItem
         if let existing = item {
             existing.itemType = itemType
             existing.name = trimmedName
-            existing.url = itemType == .subscription ? url : ""
+            existing.url = isDoc ? "" : trimmedURL
             existing.iconData = iconData
             existing.iconSource = resolvedIconSource
             existing.nextRenewalDate = nextRenewalDate
-            existing.expiryDate = itemType == .document ? expiryDate : nil
-            existing.isAutoRenew = itemType == .subscription ? isAutoRenew : false
-            existing.isCancelled = itemType == .subscription ? isCancelled : false
-            existing.trialEndDate = (itemType == .subscription && isTrial) ? trialEndDate : nil
-            existing.activeUntilDate = (itemType == .subscription && isCancelled) ? activeUntilDate : nil
-            existing.cost = itemType == .subscription ? cost : nil
+            existing.expiryDate = isDoc ? expiryDate : nil
+            existing.validFromDate = isDoc ? validFromDate : nil
+            existing.documentNumber = isDoc ? trimmedDocNum.isEmpty ? nil : trimmedDocNum : nil
+            existing.isAutoRenew = isDoc ? false : isAutoRenew
+            existing.isCancelled = isDoc ? false : isCancelled
+            existing.trialEndDate = (!isDoc && isTrial) ? trialEndDate : nil
+            existing.activeUntilDate = (!isDoc && isCancelled) ? activeUntilDate : nil
+            existing.cost = isDoc ? nil : cost
             existing.currency = currency
             existing.billingCycle = billingCycle
-            existing.personName = personName
-            existing.paymentMethod = paymentMethod
-            existing.emailUsed = emailUsed
-            existing.phoneNumber = phoneNumber
-            existing.notes = notes
+            existing.personName = trimmedPersonName
+            existing.paymentMethod = trimmedPayment
+            existing.emailUsed = trimmedEmail
+            existing.phoneNumber = trimmedPhone
+            existing.notes = trimmedNotes
             existing.notifications = notifications
             existing.updatedAt = Date()
             savedItem = existing
@@ -559,21 +652,23 @@ struct AddEditSubscriptionView: View {
                 itemType: itemType,
                 name: trimmedName,
                 iconSource: resolvedIconSource,
-                cost: itemType == .subscription ? cost : nil,
+                cost: isDoc ? nil : cost,
                 currency: currency,
                 billingCycle: billingCycle,
                 nextRenewalDate: nextRenewalDate,
-                trialEndDate: (itemType == .subscription && isTrial) ? trialEndDate : nil,
-                expiryDate: itemType == .document ? expiryDate : nil,
-                isAutoRenew: itemType == .subscription ? isAutoRenew : false,
-                isCancelled: itemType == .subscription ? isCancelled : false,
-                activeUntilDate: (itemType == .subscription && isCancelled) ? activeUntilDate : nil,
-                personName: personName,
-                paymentMethod: paymentMethod,
-                emailUsed: emailUsed,
-                phoneNumber: phoneNumber,
-                notes: notes,
-                url: itemType == .subscription ? url : "",
+                trialEndDate: (!isDoc && isTrial) ? trialEndDate : nil,
+                expiryDate: isDoc ? expiryDate : nil,
+                isAutoRenew: isDoc ? false : isAutoRenew,
+                isCancelled: isDoc ? false : isCancelled,
+                activeUntilDate: (!isDoc && isCancelled) ? activeUntilDate : nil,
+                personName: trimmedPersonName,
+                paymentMethod: trimmedPayment,
+                emailUsed: trimmedEmail,
+                phoneNumber: trimmedPhone,
+                notes: trimmedNotes,
+                url: isDoc ? "" : trimmedURL,
+                documentNumber: isDoc ? trimmedDocNum.isEmpty ? nil : trimmedDocNum : nil,
+                validFromDate: isDoc ? validFromDate : nil,
                 notifications: notifications
             )
             newItem.iconData = iconData
@@ -794,11 +889,8 @@ struct AddAccountValueSheet: View {
 #endif
                 }
 
-                if fieldType == .card {
-                    Text("Enter a description only — never store actual card numbers here.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.orange)
-                }
+                // Payment disclaimer shown outside the FormCard, not here
+
 
                 Toggle(isOn: $shouldSave) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -870,6 +962,7 @@ struct StatusChip: View {
             HStack(spacing: 5) {
                 Image(systemName: isOn ? "\(icon).circle.fill" : "\(icon).circle")
                     .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 16, height: 16)  // fixed frame prevents symbol size variance
                 Text(label)
                     .font(.system(size: 13, weight: .semibold))
             }
@@ -945,6 +1038,13 @@ enum CurrencyInfo {
 
     static func symbol(for code: String) -> String {
         defaults.first { $0.code == code }?.symbol ?? code
+    }
+
+    /// Formats an amount as "symbol + 2dp number", e.g. "A$55.00", "€12.99"
+    static func format(_ amount: Double, code: String) -> String {
+        let sym = symbol(for: code)
+        let formatted = String(format: "%.2f", amount)
+        return "\(sym)\(formatted)"
     }
 }
 

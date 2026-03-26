@@ -136,15 +136,19 @@ struct ReminderRuleRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             valueStepper
+                .fixedSize()
             typePicker
-            Spacer()
+                .fixedSize()
+            Spacer(minLength: 0)
             criticalButton
+                .fixedSize()
             deleteButton
+                .fixedSize()
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
     private var valueStepper: some View {

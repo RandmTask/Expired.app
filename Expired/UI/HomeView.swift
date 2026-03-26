@@ -78,11 +78,20 @@ struct HomeView: View {
         visibleDocuments.filter { $0.urgency == .normal }
     }
 
+    @AppStorage("preferredCurrency") private var preferredCurrency = "AUD"
+
     private var monthlyTotal: Double {
         subscriptionItems.compactMap(\.monthlyCost).reduce(0, +)
     }
 
     private var yearlyTotal: Double { monthlyTotal * 12 }
+
+    /// The most-used currency among subscriptions, falling back to preferredCurrency
+    private var displayCurrency: String {
+        let codes = subscriptionItems.map(\.currency)
+        let counts = Dictionary(codes.map { ($0, 1) }, uniquingKeysWith: +)
+        return counts.max(by: { $0.value < $1.value })?.key ?? preferredCurrency
+    }
 
     // MARK: - Body
 
@@ -100,6 +109,7 @@ struct HomeView: View {
                             HeroSummaryCard(
                                 monthlyTotal: monthlyTotal,
                                 yearlyTotal: yearlyTotal,
+                                currency: displayCurrency,
                                 activeCount: subscriptionItems.filter {
                                     if case .expired = $0.status { return false }
                                     return true
@@ -232,20 +242,21 @@ struct HomeView: View {
 struct HeroSummaryCard: View {
     let monthlyTotal: Double
     let yearlyTotal: Double
+    let currency: String
     let activeCount: Int
 
     var body: some View {
         HStack(spacing: 0) {
             heroItem(
                 label: "Monthly",
-                value: monthlyTotal.formatted(.currency(code: "AUD")),
+                value: CurrencyInfo.format(monthlyTotal, code: currency),
                 icon: "calendar",
                 color: .blue
             )
             Divider().frame(height: 44)
             heroItem(
                 label: "Yearly",
-                value: yearlyTotal.formatted(.currency(code: "AUD")),
+                value: CurrencyInfo.format(yearlyTotal, code: currency),
                 icon: "chart.line.uptrend.xyaxis",
                 color: .indigo
             )
