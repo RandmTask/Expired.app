@@ -5,6 +5,15 @@ struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \SubscriptionItem.nextRenewalDate) private var allItems: [SubscriptionItem]
 
+    private var subscriptionItems: [SubscriptionItem] {
+        allItems.filter { $0.itemType == .subscription }
+    }
+
+    private var documentItems: [SubscriptionItem] {
+        allItems.filter { $0.itemType == .document }
+            .sorted { $0.nextRelevantDate < $1.nextRelevantDate }
+    }
+
     @State private var showingAdd = false
     @State private var editingItem: SubscriptionItem?
     @State private var searchText = ""
@@ -21,38 +30,56 @@ struct HomeView: View {
         }
     }
 
+    private var visibleSubscriptions: [SubscriptionItem] {
+        visibleItems.filter { $0.itemType == .subscription }
+    }
+
+    private var visibleDocuments: [SubscriptionItem] {
+        visibleItems.filter { $0.itemType == .document }
+            .sorted { $0.nextRelevantDate < $1.nextRelevantDate }
+    }
+
     private var dueSoon: [SubscriptionItem] {
-        visibleItems.filter {
+        visibleSubscriptions.filter {
             !$0.isCancelled && !$0.isTrial &&
             $0.daysUntilRenewal >= 0 && $0.daysUntilRenewal <= 14
         }
     }
 
     private var trialsEnding: [SubscriptionItem] {
-        visibleItems.filter { $0.isTrial }
+        visibleSubscriptions.filter { $0.isTrial }
             .sorted { ($0.trialEndDate ?? .distantFuture) < ($1.trialEndDate ?? .distantFuture) }
     }
 
     private var cancelledActive: [SubscriptionItem] {
-        visibleItems.filter {
+        visibleSubscriptions.filter {
             if case .cancelledButActive = $0.status { return true }
             return false
         }
     }
 
     private var upcoming: [SubscriptionItem] {
-        visibleItems.filter { !$0.isCancelled && !$0.isTrial && $0.daysUntilRenewal > 14 }
+        visibleSubscriptions.filter { !$0.isCancelled && !$0.isTrial && $0.daysUntilRenewal > 14 }
     }
 
-    private var expired: [SubscriptionItem] {
-        visibleItems.filter {
+    private var expiredSubscriptions: [SubscriptionItem] {
+        visibleSubscriptions.filter {
             if case .expired = $0.status { return true }
             return false
         }
     }
 
+    // Documents split by urgency
+    private var urgentDocuments: [SubscriptionItem] {
+        visibleDocuments.filter { $0.urgency == .critical || $0.urgency == .warning || $0.urgency == .expired }
+    }
+
+    private var upcomingDocuments: [SubscriptionItem] {
+        visibleDocuments.filter { $0.urgency == .normal }
+    }
+
     private var monthlyTotal: Double {
-        allItems.compactMap(\.monthlyCost).reduce(0, +)
+        subscriptionItems.compactMap(\.monthlyCost).reduce(0, +)
     }
 
     private var yearlyTotal: Double { monthlyTotal * 12 }
@@ -73,7 +100,7 @@ struct HomeView: View {
                             HeroSummaryCard(
                                 monthlyTotal: monthlyTotal,
                                 yearlyTotal: yearlyTotal,
-                                activeCount: allItems.filter {
+                                activeCount: subscriptionItems.filter {
                                     if case .expired = $0.status { return false }
                                     return true
                                 }.count
@@ -83,6 +110,7 @@ struct HomeView: View {
                         }
 
                         Group {
+                            // Subscriptions
                             if !trialsEnding.isEmpty {
                                 GlassSectionView(title: "Trials Ending", icon: "clock.badge.exclamationmark", accentColor: .purple) {
                                     ForEach(trialsEnding) { itemRow($0) }
@@ -107,9 +135,22 @@ struct HomeView: View {
                                 }
                             }
 
-                            if !expired.isEmpty {
+                            if !expiredSubscriptions.isEmpty {
                                 GlassSectionView(title: "Expired", icon: "xmark.circle", accentColor: .secondary) {
-                                    ForEach(expired) { itemRow($0) }
+                                    ForEach(expiredSubscriptions) { itemRow($0) }
+                                }
+                            }
+
+                            // Documents
+                            if !urgentDocuments.isEmpty {
+                                GlassSectionView(title: "Documents — Action Needed", icon: "exclamationmark.triangle.fill", accentColor: .orange) {
+                                    ForEach(urgentDocuments) { itemRow($0) }
+                                }
+                            }
+
+                            if !upcomingDocuments.isEmpty {
+                                GlassSectionView(title: "Documents", icon: "doc.text.fill", accentColor: .indigo) {
+                                    ForEach(upcomingDocuments) { itemRow($0) }
                                 }
                             }
                         }
@@ -126,17 +167,15 @@ struct HomeView: View {
                 }
                 .scrollEdgeEffectStyle(.soft, for: .top)
             }
-            .navigationTitle("Subscriptions")
+            .navigationTitle("Expired")
             .largeNavigationTitle()
-            .searchable(text: $searchText, isPresented: $showSearch, prompt: "Search subscriptions")
+            .searchable(text: $searchText, isPresented: $showSearch, prompt: "Search")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button { showingAdd = true } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 16, weight: .semibold))
-                            .padding(8)
                     }
-                    .buttonStyle(.glass)
                 }
             }
             .sheet(isPresented: $showingAdd) { AddEditSubscriptionView(item: nil) }
@@ -251,7 +290,7 @@ struct GlassSectionView<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Section header pill
+            // Section header pill — solid tinted background for legibility
             HStack(spacing: 5) {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .bold))
@@ -259,10 +298,13 @@ struct GlassSectionView<Content: View>: View {
                     .font(.system(size: 11, weight: .bold))
                     .tracking(0.6)
             }
-            .foregroundStyle(accentColor)
+            .foregroundStyle(accentColor == .secondary ? Color.secondary : accentColor)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .glassEffect(.regular.tint(accentColor), in: Capsule())
+            .background(
+                (accentColor == .secondary ? Color.secondary : accentColor).opacity(0.12),
+                in: Capsule()
+            )
             .padding(.horizontal, 4)
 
             VStack(spacing: 8) {
@@ -290,7 +332,7 @@ struct EmptyStateView: View {
             }
 
             VStack(spacing: 8) {
-                Text("No Subscriptions Yet")
+                Text("Nothing Here Yet")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                 Text("Track your subscriptions,\nfree trials, and documents.")
                     .font(.system(size: 15))

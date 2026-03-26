@@ -50,7 +50,20 @@ struct ExpiredApp: App {
             print("[ExpiredApp] Local store opened successfully")
             return c
         } catch {
-            print("[ExpiredApp] Local store failed: \(error)")
+            print("[ExpiredApp] Store failed (likely schema mismatch): \(error)")
+            // Delete the incompatible store files so the app can start fresh.
+            // This happens when new non-optional fields are added without a migration plan.
+            deleteSQLiteFiles(at: storeURL)
+        }
+
+        // Re-try with a clean store
+        do {
+            let config = ModelConfiguration(schema: schema, url: storeURL)
+            let c = try ModelContainer(for: schema, configurations: config)
+            print("[ExpiredApp] Fresh store opened after deleting old schema")
+            return c
+        } catch {
+            print("[ExpiredApp] Fresh store also failed: \(error)")
         }
 
         // Absolute last resort: fresh in-memory container
@@ -58,6 +71,16 @@ struct ExpiredApp: App {
         print("[ExpiredApp] WARNING: falling back to in-memory store")
         return try! ModelContainer(for: schema,
                                    configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+    }
+
+    /// Removes the SQLite store triple (.sqlite, .sqlite-shm, .sqlite-wal) at the given URL.
+    private static func deleteSQLiteFiles(at url: URL) {
+        let fm = FileManager.default
+        for suffix in ["", "-shm", "-wal"] {
+            let file = URL(fileURLWithPath: url.path + suffix)
+            try? fm.removeItem(at: file)
+            print("[ExpiredApp] Deleted: \(file.lastPathComponent)")
+        }
     }
 
     var body: some Scene {

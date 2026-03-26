@@ -3,6 +3,19 @@ import SwiftData
 
 // MARK: - Enums
 
+/// High-level category — drives UI layout and notification copy.
+enum ItemType: String, Codable, CaseIterable {
+    case subscription   = "Subscription"
+    case document       = "Document"
+
+    var icon: String {
+        switch self {
+        case .subscription: return "creditcard.fill"
+        case .document:     return "doc.text.fill"
+        }
+    }
+}
+
 enum BillingCycle: String, Codable, CaseIterable {
     case weekly = "Weekly"
     case monthly = "Monthly"
@@ -101,6 +114,9 @@ final class NotificationRule {
 @Model
 final class SubscriptionItem {
     @Attribute(.unique) var id: UUID
+    /// Stored as an optional String so CoreData's lightweight migration can leave
+    /// it nil for rows that predate this field. Access via `itemType` instead.
+    var itemTypeRaw: String?
     var name: String
     var provider: String
     var iconSource: IconSource
@@ -110,6 +126,8 @@ final class SubscriptionItem {
     var billingCycle: BillingCycle
     var nextRenewalDate: Date
     var trialEndDate: Date?
+    /// For documents: the hard expiry date (passport, licence, insurance, etc.)
+    var expiryDate: Date?
     var isAutoRenew: Bool
     var isCancelled: Bool
     var activeUntilDate: Date?
@@ -124,8 +142,16 @@ final class SubscriptionItem {
     @Relationship(deleteRule: .cascade)
     var notifications: [NotificationRule]
 
+    /// Safely decodes `itemTypeRaw`, defaulting to `.subscription` when nil
+    /// (records that predate this field arriving from CloudKit or old local stores).
+    var itemType: ItemType {
+        get { ItemType(rawValue: itemTypeRaw ?? "") ?? .subscription }
+        set { itemTypeRaw = newValue.rawValue }
+    }
+
     init(
         id: UUID = UUID(),
+        itemType: ItemType = .subscription,
         name: String = "",
         provider: String = "",
         iconSource: IconSource = .system,
@@ -135,6 +161,7 @@ final class SubscriptionItem {
         billingCycle: BillingCycle = .monthly,
         nextRenewalDate: Date = Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date(),
         trialEndDate: Date? = nil,
+        expiryDate: Date? = nil,
         isAutoRenew: Bool = true,
         isCancelled: Bool = false,
         activeUntilDate: Date? = nil,
@@ -146,6 +173,7 @@ final class SubscriptionItem {
         notifications: [NotificationRule] = []
     ) {
         self.id = id
+        self.itemTypeRaw = itemType.rawValue  // always set on creation; only nil for migrated old records
         self.name = name
         self.provider = provider
         self.iconSource = iconSource
@@ -155,6 +183,7 @@ final class SubscriptionItem {
         self.billingCycle = billingCycle
         self.nextRenewalDate = nextRenewalDate
         self.trialEndDate = trialEndDate
+        self.expiryDate = expiryDate
         self.isAutoRenew = isAutoRenew
         self.isCancelled = isCancelled
         self.activeUntilDate = activeUntilDate
@@ -172,6 +201,13 @@ final class SubscriptionItem {
 
     var status: SubscriptionStatus {
         let now = Date()
+
+        // Documents use expiryDate as the authoritative date
+        if itemType == .document {
+            let target = expiryDate ?? nextRenewalDate
+            if target < now { return .expired }
+            return .manualRenew   // "needs renewal" for docs
+        }
 
         // Active trial
         if let trial = trialEndDate, trial > now, !isCancelled {
@@ -201,18 +237,28 @@ final class SubscriptionItem {
 
     // The date most relevant to surface in the UI
     var nextRelevantDate: Date {
-        if let trial = trialEndDate, trial > Date() {
-            return trial
+        if itemType == .document {
+            return expiryDate ?? nextRenewalDate
         }
-        if isCancelled, let until = activeUntilDate {
-            return until
-        }
+        if let trial = trialEndDate, trial > Date() { return trial }
+        if isCancelled, let until = activeUntilDate { return until }
         return nextRenewalDate
     }
 
     // Days until the next relevant date
     var daysUntilRenewal: Int {
         Calendar.current.dateComponents([.day], from: Date(), to: nextRelevantDate).day ?? 0
+    }
+
+    /// Visual urgency: drives colour coding in the list
+    enum Urgency { case critical, warning, normal, expired }
+    var urgency: Urgency {
+        if case .expired = status { return .expired }
+        let d = daysUntilRenewal
+        if d < 0  { return .expired }
+        if d <= 7  { return .critical }
+        if d <= 30 { return .warning }
+        return .normal
     }
 
     // MARK: - Cost Normalization
@@ -233,6 +279,18 @@ final class SubscriptionItem {
         let lower = name.lowercased()
         let providerLower = provider.lowercased()
         let combined = lower + providerLower
+
+        // Document types
+        if itemType == .document {
+            if combined.contains("passport") { return "person.text.rectangle.fill" }
+            if combined.contains("licence") || combined.contains("license") || combined.contains("driver") { return "car.fill" }
+            if combined.contains("insurance") || combined.contains("policy") { return "shield.fill" }
+            if combined.contains("visa") { return "airplane" }
+            if combined.contains("membership") || combined.contains("card") { return "creditcard.fill" }
+            if combined.contains("certificate") || combined.contains("cert") { return "rosette" }
+            if combined.contains("registration") || combined.contains("rego") { return "car.rear.fill" }
+            return "doc.text.fill"
+        }
 
         if combined.contains("netflix") { return "play.tv.fill" }
         if combined.contains("spotify") { return "music.note" }

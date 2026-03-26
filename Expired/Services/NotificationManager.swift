@@ -12,11 +12,34 @@ final class NotificationManager {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .notDetermined else { return }
-        // Request including criticalAlert — system will show a separate prompt for that
+        // criticalAlert requires a separate entitlement; the system will show an extra prompt
         _ = try? await center.requestAuthorization(options: [.alert, .badge, .sound, .criticalAlert])
+        registerCategories()
     }
 
-    // MARK: - Reschedule (call after every save)
+    // MARK: - Notification categories (enables "View" action on lock screen)
+
+    private func registerCategories() {
+        let viewAction = UNNotificationAction(
+            identifier: "VIEW_ITEM",
+            title: "View",
+            options: [.foreground]
+        )
+        let dismissAction = UNNotificationAction(
+            identifier: "DISMISS",
+            title: "Dismiss",
+            options: []
+        )
+        let category = UNNotificationCategory(
+            identifier: "EXPIRY_REMINDER",
+            actions: [viewAction, dismissAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        UNUserNotificationCenter.current().setNotificationCategories([category])
+    }
+
+    // MARK: - Reschedule
 
     func reschedule(for item: SubscriptionItem) async {
         await requestAuthorization()
@@ -25,9 +48,7 @@ final class NotificationManager {
     }
 
     func rescheduleAll(_ items: [SubscriptionItem]) async {
-        for item in items {
-            await reschedule(for: item)
-        }
+        for item in items { await reschedule(for: item) }
     }
 
     // MARK: - Remove
@@ -40,26 +61,47 @@ final class NotificationManager {
     // MARK: - Schedule
 
     private func schedule(for item: SubscriptionItem) async {
-        // Don't schedule if expired or cancelled with no active period
         if case .expired = item.status { return }
 
         let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .authorized ||
+              settings.authorizationStatus == .provisional else { return }
+
         let baseDate = item.nextRelevantDate
 
         for rule in item.notifications {
-            guard let fireDate = fireDate(baseDate: baseDate, rule: rule) else { continue }
+            guard var fireDate = fireDate(baseDate: baseDate, rule: rule) else { continue }
+
+            // Always fire at 9am so the alert lands at a sensible time
+            fireDate = Calendar.current.date(
+                bySettingHour: 9, minute: 0, second: 0, of: fireDate
+            ) ?? fireDate
+
             guard fireDate > Date() else { continue }
 
             let content = UNMutableNotificationContent()
-            content.title = item.name
-            content.body = body(for: item, rule: rule, fireDate: fireDate, baseDate: baseDate)
-            content.sound = rule.isCritical ? .defaultCritical : .default
+            content.title = notificationTitle(for: item)
+            content.subtitle = rule.label.capitalized
+            content.body = notificationBody(for: item, baseDate: baseDate)
+            content.categoryIdentifier = "EXPIRY_REMINDER"
+            content.userInfo = ["itemID": item.id.uuidString]
             content.badge = 1
 
-            // Include relevant metadata in userInfo for deep-link later
-            content.userInfo = ["itemID": item.id.uuidString]
+            if rule.isCritical {
+                // Critical alerts bypass Do Not Disturb / Silent mode
+                // On macOS they're delivered normally; they push to iPhone when
+                // the device is signed into the same iCloud account.
+                content.sound = .defaultCritical
+                content.interruptionLevel = .critical
+            } else {
+                content.sound = .default
+                content.interruptionLevel = .timeSensitive
+            }
 
-            let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)
+            let components = Calendar.current.dateComponents(
+                [.year, .month, .day, .hour, .minute], from: fireDate
+            )
             let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
             let request = UNNotificationRequest(
                 identifier: identifier(itemID: item.id, ruleID: rule.id),
@@ -81,35 +123,51 @@ final class NotificationManager {
         case .monthsBefore:
             return Calendar.current.date(byAdding: .month, value: -rule.value, to: baseDate)
         case .exactDate:
-            // Fire at 9am on the date itself
-            return Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: baseDate)
+            return baseDate
         }
     }
 
-    // MARK: - Notification body
+    // MARK: - Notification copy
 
-    private func body(for item: SubscriptionItem, rule: NotificationRule, fireDate: Date, baseDate: Date) -> String {
+    private func notificationTitle(for item: SubscriptionItem) -> String {
+        switch item.itemType {
+        case .document:
+            return "\(item.name) Expiring"
+        case .subscription:
+            switch item.status {
+            case .trial:   return "\(item.name) — Trial Ending"
+            case .autoRenew: return "\(item.name) — Auto-Renews Soon"
+            default:       return "\(item.name) — Renewal Due"
+            }
+        }
+    }
+
+    private func notificationBody(for item: SubscriptionItem, baseDate: Date) -> String {
         let dateStr = baseDate.formatted(date: .abbreviated, time: .omitted)
+        let days = Calendar.current.dateComponents([.day], from: Date(), to: baseDate).day ?? 0
+        let daysStr = days == 0 ? "today" : days == 1 ? "tomorrow" : "in \(days) days"
 
-        // Cost string
         let costStr: String
         if let monthly = item.monthlyCost {
-            costStr = " · " + monthly.formatted(.currency(code: item.currency)) + "/mo"
-        } else {
-            costStr = ""
-        }
+            costStr = " · \(monthly.formatted(.currency(code: item.currency)))/mo"
+        } else { costStr = "" }
 
-        switch item.status {
-        case .trial:
-            return "Free trial ends \(dateStr)\(costStr) — cancel to avoid charges"
-        case .cancelledButActive(let until):
-            return "Active until \(until.formatted(date: .abbreviated, time: .omitted))"
-        case .autoRenew:
-            return "Auto-renews \(dateStr)\(costStr)"
-        case .manualRenew:
-            return "Renewal due \(dateStr)\(costStr)"
-        case .expired:
-            return "Expired \(dateStr)"
+        switch item.itemType {
+        case .document:
+            return "Expires \(dateStr) (\(daysStr)) — renew before it lapses"
+        case .subscription:
+            switch item.status {
+            case .trial:
+                return "Free trial ends \(dateStr)\(costStr) — cancel to avoid charges"
+            case .cancelledButActive(let until):
+                return "Access ends \(until.formatted(date: .abbreviated, time: .omitted))"
+            case .autoRenew:
+                return "Auto-renews \(dateStr)\(costStr)"
+            case .manualRenew:
+                return "Renewal due \(dateStr)\(costStr)"
+            case .expired:
+                return "Expired \(dateStr)"
+            }
         }
     }
 

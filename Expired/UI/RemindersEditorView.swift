@@ -9,6 +9,7 @@ struct RemindersEditorView: View {
             rulesList
             Divider().padding(.leading, 16)
             presetsRow
+            criticalAlertDisclaimer
         }
     }
 
@@ -42,16 +43,40 @@ struct RemindersEditorView: View {
     private var presetsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                PresetChip(label: "1 day")   { addRule(.daysBefore,   1) }
-                PresetChip(label: "3 days")  { addRule(.daysBefore,   3) }
-                PresetChip(label: "1 week")  { addRule(.weeksBefore,  1) }
-                PresetChip(label: "1 month") { addRule(.monthsBefore, 1) }
-                PresetChip(label: "3 months"){ addRule(.monthsBefore, 3) }
-                PresetChip(label: "6 months"){ addRule(.monthsBefore, 6) }
-                PresetChip(label: "+ Custom", isCustom: true) { addRule(.daysBefore, 7) }
+                GlassPresetChip(label: "1 day",    icon: "bell")        { addRule(.daysBefore,   1) }
+                GlassPresetChip(label: "3 days",   icon: "bell")        { addRule(.daysBefore,   3) }
+                GlassPresetChip(label: "1 week",   icon: "bell")        { addRule(.weeksBefore,  1) }
+                GlassPresetChip(label: "1 month",  icon: "bell")        { addRule(.monthsBefore, 1) }
+                GlassPresetChip(label: "3 months", icon: "bell")        { addRule(.monthsBefore, 3) }
+                GlassPresetChip(label: "6 months", icon: "bell")        { addRule(.monthsBefore, 6) }
+                GlassPresetChip(label: "+ Custom", icon: "slider.horizontal.3", isAccent: true) { addRule(.daysBefore, 7) }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
+        }
+    }
+
+    /// Shows a contextual disclaimer about critical alerts.
+    /// On macOS: warns that critical alerts actually fire on the user's iPhone.
+    /// On iOS: confirms that critical alerts bypass Do Not Disturb.
+    @ViewBuilder
+    private var criticalAlertDisclaimer: some View {
+        let hasCritical = notifications.contains { $0.isCritical }
+        if hasCritical {
+            Divider().padding(.leading, 16)
+            #if os(macOS)
+            CriticalAlertBanner(
+                icon: "iphone.radiowaves.left.and.right",
+                color: .orange,
+                message: "Critical alerts scheduled on Mac will fire on your iPhone (same iCloud account). This Mac will not play a sound."
+            )
+            #else
+            CriticalAlertBanner(
+                icon: "exclamationmark.circle.fill",
+                color: .red,
+                message: "Critical alerts will play a sound and bypass Do Not Disturb and Silent mode."
+            )
+            #endif
         }
     }
 
@@ -60,6 +85,31 @@ struct RemindersEditorView: View {
         withAnimation {
             notifications.append(NotificationRule(offsetType: type, value: value))
         }
+    }
+}
+
+// MARK: - Critical Alert Banner
+
+private struct CriticalAlertBanner: View {
+    let icon: String
+    let color: Color
+    let message: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(color)
+            Text(message)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.07))
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
 }
 
@@ -134,11 +184,24 @@ struct ReminderRuleRow: View {
             isCritical.toggle()
             propagate()
         } label: {
-            Image(systemName: isCritical ? "exclamationmark.circle.fill" : "bell.fill")
-                .foregroundStyle(isCritical ? Color.red : Color.secondary)
-                .font(.system(size: 16))
+            HStack(spacing: 4) {
+                Image(systemName: isCritical ? "exclamationmark.circle.fill" : "bell.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                if isCritical {
+                    Text("Critical")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+            }
+            .foregroundStyle(isCritical ? Color.white : Color.secondary)
+            .padding(.horizontal, isCritical ? 8 : 6)
+            .padding(.vertical, 5)
+            .background(isCritical ? Color.red : Color.clear, in: Capsule())
+            .overlay(
+                Capsule().strokeBorder(isCritical ? Color.clear : Color.secondary.opacity(0.3), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
+        .animation(.spring(duration: 0.2), value: isCritical)
     }
 
     private var deleteButton: some View {
@@ -155,24 +218,31 @@ struct ReminderRuleRow: View {
     }
 }
 
-// MARK: - Preset Chip
+// MARK: - Glass Preset Chip
 
-struct PresetChip: View {
+struct GlassPresetChip: View {
     let label: String
-    var isCustom: Bool = false
+    var icon: String = "bell"
+    var isAccent: Bool = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(isCustom ? Color.blue : Color.secondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    isCustom ? Color.blue.opacity(0.12) : Color.secondary.opacity(0.15),
-                    in: Capsule()
-                )
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(isAccent ? Color.blue : Color.primary.opacity(0.75))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .glassEffect(
+                isAccent
+                    ? .regular.tint(.blue).interactive()
+                    : .regular.interactive(),
+                in: Capsule()
+            )
         }
         .buttonStyle(.plain)
     }

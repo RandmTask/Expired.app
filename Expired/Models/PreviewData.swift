@@ -146,20 +146,63 @@ enum PreviewData {
                 return item
             }(),
 
-            // Australian Passport — document expiry
+            // Australian Passport — document expiry (3 years out)
             {
                 let item = SubscriptionItem(
+                    itemType: .document,
                     name: "Australian Passport",
                     provider: "Department of Foreign Affairs",
                     iconSource: .system,
                     billingCycle: .yearly,
                     nextRenewalDate: Calendar.current.date(byAdding: .year, value: 3, to: Date()) ?? Date(),
+                    expiryDate: Calendar.current.date(byAdding: .year, value: 3, to: Date()),
                     isAutoRenew: false,
                     isCancelled: false,
                     notes: "Passport No: PA1234567",
                     notifications: [
                         NotificationRule(offsetType: .monthsBefore, value: 6, isCritical: true),
                         NotificationRule(offsetType: .monthsBefore, value: 3)
+                    ]
+                )
+                return item
+            }(),
+
+            // Driver's Licence — expiring soon (warning zone)
+            {
+                let item = SubscriptionItem(
+                    itemType: .document,
+                    name: "Driver's Licence",
+                    provider: "Service NSW",
+                    iconSource: .system,
+                    billingCycle: .yearly,
+                    nextRenewalDate: Calendar.current.date(byAdding: .day, value: 20, to: Date()) ?? Date(),
+                    expiryDate: Calendar.current.date(byAdding: .day, value: 20, to: Date()),
+                    isAutoRenew: false,
+                    isCancelled: false,
+                    notes: "Licence No: 12345678",
+                    notifications: [
+                        NotificationRule(offsetType: .weeksBefore, value: 4, isCritical: true),
+                        NotificationRule(offsetType: .weeksBefore, value: 1, isCritical: true)
+                    ]
+                )
+                return item
+            }(),
+
+            // Car Insurance — critical (expires in 5 days)
+            {
+                let item = SubscriptionItem(
+                    itemType: .document,
+                    name: "Car Insurance",
+                    provider: "NRMA",
+                    iconSource: .system,
+                    billingCycle: .yearly,
+                    nextRenewalDate: Calendar.current.date(byAdding: .day, value: 5, to: Date()) ?? Date(),
+                    expiryDate: Calendar.current.date(byAdding: .day, value: 5, to: Date()),
+                    isAutoRenew: false,
+                    isCancelled: false,
+                    notifications: [
+                        NotificationRule(offsetType: .daysBefore, value: 7, isCritical: true),
+                        NotificationRule(offsetType: .daysBefore, value: 1, isCritical: true)
                     ]
                 )
                 return item
@@ -205,6 +248,18 @@ enum PreviewData {
             isAutoRenew: false,
             isCancelled: true,
             activeUntilDate: Calendar.current.date(byAdding: .day, value: 18, to: Date()) ?? Date()
+        )
+    }
+
+    static var passport: SubscriptionItem {
+        SubscriptionItem(
+            itemType: .document,
+            name: "Australian Passport",
+            iconSource: .system,
+            billingCycle: .yearly,
+            nextRenewalDate: Calendar.current.date(byAdding: .day, value: 20, to: Date()) ?? Date(),
+            expiryDate: Calendar.current.date(byAdding: .day, value: 20, to: Date()),
+            isAutoRenew: false
         )
     }
 }

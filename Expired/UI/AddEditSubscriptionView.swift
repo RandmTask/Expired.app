@@ -9,9 +9,11 @@ struct AddEditSubscriptionView: View {
     let item: SubscriptionItem?
 
     // Core
+    @State private var itemType: ItemType = .subscription
     @State private var name = ""
     @State private var url = ""
     @State private var nextRenewalDate = Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date()
+    @State private var expiryDate = Calendar.current.date(byAdding: .year, value: 1, to: Date()) ?? Date()
     @State private var isAutoRenew = true
     @State private var isCancelled = false
     @State private var isTrial = false
@@ -41,6 +43,7 @@ struct AddEditSubscriptionView: View {
     @State private var showPaymentPicker = false
     @State private var showEmailPicker = false
     @State private var showPhonePicker = false
+    @State private var showCurrencyPicker = false
 
     // Save-to-suggestions prompt
     @State private var pendingSaveValue: String = ""
@@ -113,9 +116,10 @@ struct AddEditSubscriptionView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    itemTypeSection
                     basicSection
-                    statusSection
-                    costSection
+                    if itemType == .subscription { statusSection }
+                    if itemType == .subscription { costSection }
                     paymentSection
                     remindersSection
                     notesSection
@@ -126,7 +130,8 @@ struct AddEditSubscriptionView: View {
                 .padding(.top, 12)
             }
             .background(groupedBackground.ignoresSafeArea())
-            .navigationTitle(isEditing ? "Edit" : "Add Subscription")
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .navigationTitle(isEditing ? "Edit" : (itemType == .document ? "Add Document" : "Add Subscription"))
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -144,18 +149,50 @@ struct AddEditSubscriptionView: View {
         .presentationDragIndicator(.visible)
     }
 
+    // MARK: - Item Type section
+
+    private var itemTypeSection: some View {
+        FormCard {
+            HStack(spacing: 0) {
+                ForEach(ItemType.allCases, id: \.self) { type in
+                    Button {
+                        withAnimation(.spring(duration: 0.25)) { itemType = type }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: type.icon)
+                                .font(.system(size: 14, weight: .semibold))
+                            Text(type.rawValue)
+                                .font(.system(size: 14, weight: .semibold))
+                        }
+                        .foregroundStyle(itemType == type ? Color.primary : Color.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(
+                            itemType == type
+                                ? (type == .document ? Color.indigo.opacity(0.15) : Color.blue.opacity(0.12))
+                                : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 12)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(4)
+                }
+            }
+        }
+    }
+
     // MARK: - Basic section
 
     private var basicSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Subscription")
+            SectionHeader(title: itemType == .document ? "Document" : "Subscription")
             FormCard {
                 VStack(spacing: 0) {
                     // Name + icon
                     HStack(spacing: 12) {
                         iconView
                             .padding(.leading, 16)
-                        TextField("Name", text: $name)
+                        TextField(itemType == .document ? "Document Name" : "Name", text: $name)
                             .font(.system(size: 16))
                             .foregroundStyle(.primary)
                             .submitLabel(.next)
@@ -165,40 +202,50 @@ struct AddEditSubscriptionView: View {
 
                     FormDivider()
 
-                    // Website — favicon auto-fetches when URL changes
-                    HStack {
-                        Text("Website")
-                            .font(.system(size: 16))
-                            .frame(minWidth: 80, alignment: .leading)
-                            .foregroundStyle(.primary)
-                        TextField("netflix.com", text: $url)
-                            .foregroundStyle(.primary)
-                            .trailingTextAlignment()
+                    // Website — favicon auto-fetches when URL changes (subscriptions only)
+                    if itemType == .subscription {
+                        HStack {
+                            Text("Website")
+                                .font(.system(size: 16))
+                                .frame(minWidth: 80, alignment: .leading)
+                                .foregroundStyle(.primary)
+                            TextField("netflix.com", text: $url)
+                                .foregroundStyle(.primary)
+                                .trailingTextAlignment()
 #if os(iOS)
-                            .keyboardType(.URL)
-                            .textInputAutocapitalization(.never)
+                                .keyboardType(.URL)
+                                .textInputAutocapitalization(.never)
 #endif
-                            .onSubmit { scheduleFaviconFetch(url, delay: false) }
-                            .onChange(of: url) { _, newValue in
-                                scheduleFaviconFetch(newValue, delay: true)
+                                .onSubmit { scheduleFaviconFetch(url, delay: false) }
+                                .onChange(of: url) { _, newValue in
+                                    scheduleFaviconFetch(newValue, delay: true)
+                                }
+                            if isFetchingIcon {
+                                ProgressView().scaleEffect(0.75).padding(.leading, 4)
+                            } else if iconData != nil {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                    .padding(.leading, 4)
                             }
-                        if isFetchingIcon {
-                            ProgressView().scaleEffect(0.75).padding(.leading, 4)
-                        } else if iconData != nil {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                                .padding(.leading, 4)
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+
+                        FormDivider()
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
 
-                    FormDivider()
-
-                    FormRow(label: isTrial ? "Trial Ends" : "Renews") {
-                        DatePicker("", selection: isTrial ? $trialEndDate : $nextRenewalDate,
-                                   displayedComponents: .date)
-                            .labelsHidden()
+                    // Date field: expiry for documents, renew/trial for subscriptions
+                    if itemType == .document {
+                        FormRow(label: "Expires") {
+                            DatePicker("", selection: $expiryDate, displayedComponents: .date)
+                                .labelsHidden()
+                        }
+                    } else {
+                        FormRow(label: isTrial ? "Trial Ends" : "Renews") {
+                            DatePicker("", selection: isTrial ? $trialEndDate : $nextRenewalDate,
+                                       displayedComponents: .date)
+                                .labelsHidden()
+                        }
                     }
                 }
             }
@@ -219,12 +266,12 @@ struct AddEditSubscriptionView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
         } else {
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.blue.opacity(0.12))
+                .fill(itemType == .document ? Color.indigo.opacity(0.12) : Color.blue.opacity(0.12))
                 .frame(width: 36, height: 36)
                 .overlay {
-                    Image(systemName: "globe")
+                    Image(systemName: itemType == .document ? "doc.text.fill" : "globe")
                         .font(.system(size: 16))
-                        .foregroundStyle(.blue.opacity(0.5))
+                        .foregroundStyle(itemType == .document ? .indigo.opacity(0.7) : .blue.opacity(0.5))
                 }
         }
     }
@@ -296,7 +343,7 @@ struct AddEditSubscriptionView: View {
             FormCard {
                 VStack(spacing: 0) {
                     FormRow(label: "Amount") {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 8) {
                             TextField("0.00", text: $costText)
                                 .foregroundStyle(.primary)
                                 .trailingTextAlignment()
@@ -304,10 +351,28 @@ struct AddEditSubscriptionView: View {
                                 .keyboardType(.decimalPad)
 #endif
                                 .onChange(of: costText) { _, val in cost = Double(val) }
-                            Picker("", selection: $currency) {
-                                ForEach(["AUD","USD","EUR","GBP","CAD","NZD"], id: \.self) { Text($0) }
+                            Button {
+                                showCurrencyPicker = true
+                            } label: {
+                                HStack(spacing: 3) {
+                                    Text(CurrencyInfo.symbol(for: currency))
+                                        .font(.system(size: 13, weight: .semibold))
+                                    Text(currency)
+                                        .font(.system(size: 13, weight: .semibold))
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.system(size: 9, weight: .bold))
+                                }
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(Color.secondary.opacity(0.1), in: Capsule())
                             }
-                            .pickerStyle(.menu).fixedSize()
+                            .buttonStyle(.plain)
+                            .sheet(isPresented: $showCurrencyPicker) {
+                                CurrencyPickerSheet(selectedCode: $currency)
+                                    .presentationDetents([.medium, .large])
+                                    .presentationDragIndicator(.visible)
+                            }
                         }
                     }
                     FormDivider()
@@ -367,13 +432,13 @@ struct AddEditSubscriptionView: View {
     private var notesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Notes")
-            FormCard {
-                TextField("Optional notes…", text: $notes, axis: .vertical)
-                    .foregroundStyle(.primary)
-                    .lineLimit(3...6)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-            }
+            // Plain card — no glass, just the standard grouped material
+            TextField("Optional notes…", text: $notes, axis: .vertical)
+                .foregroundStyle(.primary)
+                .lineLimit(3...6)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         }
     }
 
@@ -383,13 +448,14 @@ struct AddEditSubscriptionView: View {
         Button(role: .destructive, action: deleteAndDismiss) {
             HStack {
                 Spacer()
-                Label("Delete Subscription", systemImage: "trash")
+                Label("Delete \(itemType.rawValue)", systemImage: "trash")
                     .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
                 Spacer()
             }
         }
         .padding(.vertical, 14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .background(Color.red, in: RoundedRectangle(cornerRadius: 16))
     }
 
     // MARK: - Favicon fetch (debounced)
@@ -422,9 +488,11 @@ struct AddEditSubscriptionView: View {
 
     private func populateFromItem() {
         guard let item else { return }
+        itemType = item.itemType
         name = item.name
         url = item.url
         nextRenewalDate = item.nextRenewalDate
+        if let e = item.expiryDate { expiryDate = e }
         isAutoRenew = item.isAutoRenew
         isCancelled = item.isCancelled
         isTrial = item.isTrial
@@ -456,16 +524,18 @@ struct AddEditSubscriptionView: View {
 
         let savedItem: SubscriptionItem
         if let existing = item {
+            existing.itemType = itemType
             existing.name = trimmedName
-            existing.url = url
+            existing.url = itemType == .subscription ? url : ""
             existing.iconData = iconData
             existing.iconSource = resolvedIconSource
             existing.nextRenewalDate = nextRenewalDate
-            existing.isAutoRenew = isAutoRenew
-            existing.isCancelled = isCancelled
-            existing.trialEndDate = isTrial ? trialEndDate : nil
-            existing.activeUntilDate = isCancelled ? activeUntilDate : nil
-            existing.cost = cost
+            existing.expiryDate = itemType == .document ? expiryDate : nil
+            existing.isAutoRenew = itemType == .subscription ? isAutoRenew : false
+            existing.isCancelled = itemType == .subscription ? isCancelled : false
+            existing.trialEndDate = (itemType == .subscription && isTrial) ? trialEndDate : nil
+            existing.activeUntilDate = (itemType == .subscription && isCancelled) ? activeUntilDate : nil
+            existing.cost = itemType == .subscription ? cost : nil
             existing.currency = currency
             existing.billingCycle = billingCycle
             existing.paymentMethod = paymentMethod
@@ -477,21 +547,23 @@ struct AddEditSubscriptionView: View {
             savedItem = existing
         } else {
             let newItem = SubscriptionItem(
+                itemType: itemType,
                 name: trimmedName,
                 iconSource: resolvedIconSource,
-                cost: cost,
+                cost: itemType == .subscription ? cost : nil,
                 currency: currency,
                 billingCycle: billingCycle,
                 nextRenewalDate: nextRenewalDate,
-                trialEndDate: isTrial ? trialEndDate : nil,
-                isAutoRenew: isAutoRenew,
-                isCancelled: isCancelled,
-                activeUntilDate: isCancelled ? activeUntilDate : nil,
+                trialEndDate: (itemType == .subscription && isTrial) ? trialEndDate : nil,
+                expiryDate: itemType == .document ? expiryDate : nil,
+                isAutoRenew: itemType == .subscription ? isAutoRenew : false,
+                isCancelled: itemType == .subscription ? isCancelled : false,
+                activeUntilDate: (itemType == .subscription && isCancelled) ? activeUntilDate : nil,
                 paymentMethod: paymentMethod,
                 emailUsed: emailUsed,
                 phoneNumber: phoneNumber,
                 notes: notes,
-                url: url,
+                url: itemType == .subscription ? url : "",
                 notifications: notifications
             )
             newItem.iconData = iconData
@@ -675,7 +747,7 @@ struct SuggestionPickerSheet: View {
 struct FormCard<Content: View>: View {
     @ViewBuilder let content: Content
     var body: some View {
-        content.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        content.glassEffect(in: .rect(cornerRadius: 20))
     }
 }
 
@@ -698,6 +770,157 @@ struct FormRow<Content: View>: View {
 
 struct FormDivider: View {
     var body: some View { Divider().padding(.leading, 16) }
+}
+
+// MARK: - Currency Info
+
+enum CurrencyInfo {
+    /// Well-known currencies with their symbols and display order.
+    static let builtIn: [(code: String, symbol: String, name: String)] = [
+        ("AUD", "A$",  "Australian Dollar"),
+        ("USD", "$",   "US Dollar"),
+        ("EUR", "€",   "Euro"),
+        ("GBP", "£",   "British Pound"),
+        ("CAD", "C$",  "Canadian Dollar"),
+        ("NZD", "NZ$", "New Zealand Dollar"),
+        ("AED", "د.إ", "UAE Dirham"),
+        ("SGD", "S$",  "Singapore Dollar"),
+        ("HKD", "HK$", "Hong Kong Dollar"),
+        ("JPY", "¥",   "Japanese Yen"),
+        ("CNY", "¥",   "Chinese Yuan"),
+        ("INR", "₹",   "Indian Rupee"),
+        ("CHF", "Fr",  "Swiss Franc"),
+        ("SEK", "kr",  "Swedish Krona"),
+        ("NOK", "kr",  "Norwegian Krone"),
+        ("DKK", "kr",  "Danish Krone"),
+        ("MXN", "MX$", "Mexican Peso"),
+        ("BRL", "R$",  "Brazilian Real"),
+        ("ZAR", "R",   "South African Rand"),
+        ("THB", "฿",   "Thai Baht"),
+        ("KRW", "₩",   "South Korean Won"),
+    ]
+
+    static func symbol(for code: String) -> String {
+        builtIn.first { $0.code == code }?.symbol ?? code
+    }
+}
+
+// MARK: - Currency Picker Sheet
+
+struct CurrencyPickerSheet: View {
+    @Binding var selectedCode: String
+    @Environment(\.dismiss) private var dismiss
+
+    // Persisted custom currencies (JSON array of code strings)
+    @AppStorage("customCurrencies") private var customCurrenciesData: Data = Data()
+    @State private var searchText = ""
+    @State private var showAddCustom = false
+    @State private var newCurrencyCode = ""
+
+    private var customCurrencies: [String] {
+        (try? JSONDecoder().decode([String].self, from: customCurrenciesData)) ?? []
+    }
+
+    private func saveCustomCurrencies(_ list: [String]) {
+        customCurrenciesData = (try? JSONEncoder().encode(list)) ?? Data()
+    }
+
+    private var allEntries: [(code: String, symbol: String, name: String)] {
+        let custom = customCurrencies.map { code -> (code: String, symbol: String, name: String) in
+            // Try to get a locale-based symbol for the custom code
+            let locale = Locale(identifier: "en_\(code)")
+            let sym = locale.currencySymbol ?? code
+            return (code, sym, "Custom")
+        }
+        return CurrencyInfo.builtIn + custom
+    }
+
+    private var filtered: [(code: String, symbol: String, name: String)] {
+        guard !searchText.isEmpty else { return allEntries }
+        return allEntries.filter {
+            $0.code.localizedCaseInsensitiveContains(searchText) ||
+            $0.name.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(filtered, id: \.code) { entry in
+                    Button {
+                        selectedCode = entry.code
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Text(entry.symbol)
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                .frame(width: 36, alignment: .leading)
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.code)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                Text(entry.name)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if entry.code == selectedCode {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .swipeActions(edge: .trailing) {
+                        // Only allow deleting custom entries
+                        if customCurrencies.contains(entry.code) {
+                            Button(role: .destructive) {
+                                var list = customCurrencies
+                                list.removeAll { $0 == entry.code }
+                                saveCustomCurrencies(list)
+                                if selectedCode == entry.code { selectedCode = "AUD" }
+                            } label: {
+                                Label("Remove", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            }
+            .searchable(text: $searchText, prompt: "Search currencies")
+            .navigationTitle("Currency")
+            .inlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        newCurrencyCode = ""
+                        showAddCustom = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                }
+            }
+            .alert("Add Custom Currency", isPresented: $showAddCustom) {
+                TextField("Currency code (e.g. SAR)", text: $newCurrencyCode)
+#if os(iOS)
+                    .textInputAutocapitalization(.characters)
+#endif
+                Button("Add") {
+                    let code = newCurrencyCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                    guard !code.isEmpty, !customCurrencies.contains(code),
+                          !CurrencyInfo.builtIn.map(\.code).contains(code) else { return }
+                    saveCustomCurrencies(customCurrencies + [code])
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Enter a 3-letter ISO currency code.")
+            }
+        }
+    }
 }
 
 // MARK: - Preview
