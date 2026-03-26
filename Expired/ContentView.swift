@@ -338,11 +338,7 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .largeNavigationTitle()
-            .sheet(isPresented: $showCurrencyPicker) {
-                CurrencyPickerSheet(selectedCode: $preferredCurrency)
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-            }
+            .currencyPickerPresentation(isPresented: $showCurrencyPicker, selectedCode: $preferredCurrency)
             .alert("Restart Required", isPresented: $showRestartAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
@@ -358,3 +354,23 @@ struct SettingsView: View {
     ContentView()
         .modelContainer(PreviewData.container)
 }
+// MARK: - Platform-adaptive currency picker presentation
+
+extension View {
+    /// Presents `CurrencyPickerSheet` as a sheet on iOS and a popover on macOS.
+    func currencyPickerPresentation(isPresented: Binding<Bool>, selectedCode: Binding<String>) -> some View {
+#if os(iOS)
+        self.sheet(isPresented: isPresented) {
+            CurrencyPickerSheet(selectedCode: selectedCode)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+#else
+        self.popover(isPresented: isPresented, arrowEdge: .bottom) {
+            CurrencyPickerSheet(selectedCode: selectedCode)
+                .frame(minWidth: 320, minHeight: 400)
+        }
+#endif
+    }
+}
+

@@ -172,11 +172,13 @@ struct HomeView: View {
                     .padding(.top, 8)
                 }
                 .scrollEdgeEffectStyle(.soft, for: .top)
+#if os(iOS)
                 .refreshable {
                     // CloudKit syncs automatically, but pulling gives the store a moment
                     // to process any pending remote changes before the view re-queries.
                     try? await Task.sleep(for: .seconds(1))
                 }
+#endif
             }
             .navigationTitle("Expired")
             .largeNavigationTitle()

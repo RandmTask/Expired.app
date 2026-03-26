@@ -416,11 +416,7 @@ struct AddEditSubscriptionView: View {
                                 .background(Color.secondary.opacity(0.1), in: Capsule())
                             }
                             .buttonStyle(.plain)
-                            .sheet(isPresented: $showCurrencyPicker) {
-                                CurrencyPickerSheet(selectedCode: $currency)
-                                    .presentationDetents([.medium, .large])
-                                    .presentationDragIndicator(.visible)
-                            }
+                            .currencyPickerPresentation(isPresented: $showCurrencyPicker, selectedCode: $currency)
                         }
                     }
                     FormDivider()

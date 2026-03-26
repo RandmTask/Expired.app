@@ -27,6 +27,8 @@ struct ExpiredApp: App {
         )
 
         print("[ExpiredApp] Store URL: \(storeURL.path) iCloud=\(iCloudSync)")
+        print("[ExpiredApp] Bundle ID: \(Bundle.main.bundleIdentifier ?? "unknown")")
+        print("[ExpiredApp] CloudKit container: iCloud.\(Bundle.main.bundleIdentifier ?? "unknown")")
 
         // Try preferred store type first
         if iCloudSync {
