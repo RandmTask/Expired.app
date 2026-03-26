@@ -18,18 +18,46 @@ struct ExpiredApp: App {
         let syncOn = UserDefaults.standard.object(forKey: "iCloudSyncEnabled") as? Bool ?? true
         container = Self.makeContainer(iCloudSync: syncOn)
 
-        // NSPersistentStoreRemoteChangeNotification fires every time CloudKit
-        // delivers remote changes to the local store. If we never see this log
-        // line it means CloudKit is not pushing any data to this device.
+        // NSPersistentStoreRemoteChangeNotification fires at the CoreData store level.
+        // We observe it and explicitly call refreshAllObjects() on the main context so
+        // SwiftUI @Query properties re-evaluate. Without this, remote changes arrive in
+        // the SQLite store but the in-memory context (and therefore the UI) never sees them.
+        let modelContainer = container   // local copy for capture
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name("NSPersistentStoreRemoteChangeNotification"),
             object: nil,
             queue: .main
+        ) { _ in
+            print("[CloudKit] ⬇ Remote store change received")
+            // SwiftData's mainContext is backed by NSManagedObjectContext with
+            // automaticallyMergesChangesFromParent = true. Calling save() is enough
+            // to flush any pending state and cause @Query descriptors to re-evaluate.
+            try? modelContainer.mainContext.save()
+            print("[CloudKit]   mainContext saved — @Query views will refresh ✓")
+        }
+
+        // NSPersistentCloudKitContainer.eventChangedNotification fires when an
+        // import/export/setup operation completes. This is the high-level signal.
+        NotificationCenter.default.addObserver(
+            forName: NSPersistentCloudKitContainer.eventChangedNotification,
+            object: nil,
+            queue: .main
         ) { note in
-            print("[CloudKit] ⬇ Remote change received — store is updating from iCloud")
-            if let info = note.userInfo {
-                print("[CloudKit]   history token present: \(info["NSPersistentHistoryToken"] != nil)")
-                print("[CloudKit]   store URL: \(info["NSPersistentStoreURLKey"] as? URL ?? URL(fileURLWithPath: "?"))")
+            guard let event = note.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
+                    as? NSPersistentCloudKitContainer.Event else { return }
+            let typeStr: String
+            switch event.type {
+            case .setup:  typeStr = "setup"
+            case .import: typeStr = "import ⬇"
+            case .export: typeStr = "export ⬆"
+            @unknown default: typeStr = "unknown(\(event.type.rawValue))"
+            }
+            if let error = event.error {
+                print("[CloudKit] ✗ \(typeStr) event FAILED: \(error)")
+            } else if event.succeeded {
+                print("[CloudKit] ✓ \(typeStr) event succeeded")
+            } else {
+                print("[CloudKit] … \(typeStr) event in progress")
             }
         }
 
@@ -48,8 +76,9 @@ struct ExpiredApp: App {
         let ckContainer = CKContainer(identifier: "iCloud.com.swiftstudio.Expired")
         let db = ckContainer.privateCloudDatabase
 
-        // SwiftData stores records under the type name with "CD_" prefix
-        let query = CKQuery(recordType: "CD_SubscriptionItem", predicate: NSPredicate(value: true))
+        // SwiftData stores records with "CD_" prefix. We query by a known field
+        // rather than recordName since recordName isn't queryable by default.
+        let query = CKQuery(recordType: "CD_SubscriptionItem", predicate: NSPredicate(format: "CD_name != %@", ""))
         do {
             let (results, _) = try await db.records(matching: query, resultsLimit: 5)
             let successes = results.compactMap { try? $0.1.get() }
@@ -74,6 +103,10 @@ struct ExpiredApp: App {
                 print("[CloudKit] ✗ Network error: \(error.localizedDescription)")
             case .requestRateLimited:
                 print("[CloudKit] ⚠ Rate limited — wait and try again")
+            case .invalidArguments:
+                print("[CloudKit] ⚠ Query field not queryable in CloudKit Console")
+                print("[CloudKit]   → Go to icloud.developer.apple.com > Schema > CD_SubscriptionItem")
+                print("[CloudKit]   → Set CD_name field to 'Queryable' and deploy to Production")
             default:
                 print("[CloudKit] ✗ CKError \(error.code.rawValue): \(error.localizedDescription)")
             }
@@ -130,7 +163,6 @@ struct ExpiredApp: App {
                 )
                 let c = try ModelContainer(for: schema, configurations: config)
                 print("[ExpiredApp] CloudKit store opened successfully ✓")
-                print("[ExpiredApp] NOTE: Sync activity visible with launch arg: -com.apple.CoreData.CloudKitDebug 3")
                 return c
             } catch {
                 print("[ExpiredApp] CloudKit store FAILED: \(error)")
