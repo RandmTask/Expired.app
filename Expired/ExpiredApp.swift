@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import CloudKit
+import CoreData
 
 @main
 struct ExpiredApp: App {
