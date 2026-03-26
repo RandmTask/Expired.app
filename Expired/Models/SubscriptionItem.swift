@@ -131,6 +131,7 @@ final class SubscriptionItem {
     var isAutoRenew: Bool
     var isCancelled: Bool
     var activeUntilDate: Date?
+    var personName: String
     var paymentMethod: String
     var emailUsed: String
     var phoneNumber: String
@@ -165,6 +166,7 @@ final class SubscriptionItem {
         isAutoRenew: Bool = true,
         isCancelled: Bool = false,
         activeUntilDate: Date? = nil,
+        personName: String = "",
         paymentMethod: String = "",
         emailUsed: String = "",
         phoneNumber: String = "",
@@ -187,6 +189,7 @@ final class SubscriptionItem {
         self.isAutoRenew = isAutoRenew
         self.isCancelled = isCancelled
         self.activeUntilDate = activeUntilDate
+        self.personName = personName
         self.paymentMethod = paymentMethod
         self.emailUsed = emailUsed
         self.phoneNumber = phoneNumber

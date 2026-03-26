@@ -35,23 +35,19 @@ struct AddEditSubscriptionView: View {
     @State private var emailUsed = ""
     @State private var phoneNumber = ""
 
+    // Account
+    @State private var personName = ""
+
     // Reminders & notes
     @State private var notifications: [NotificationRule] = []
     @State private var notes = ""
 
-    // Suggestion sheets
-    @State private var showPaymentPicker = false
-    @State private var showEmailPicker = false
-    @State private var showPhonePicker = false
+    // Account field sheets
     @State private var showCurrencyPicker = false
 
-    // Save-to-suggestions prompt
-    @State private var pendingSaveValue: String = ""
-    @State private var pendingSaveField: SuggestionFieldType? = nil
-    @State private var showSavePrompt = false
-
     // Persistent suggestion store (UserDefaults-backed)
-    @AppStorage("savedCards") private var savedCardsData: Data = Data()
+    @AppStorage("savedNames")  private var savedNamesData:  Data = Data()
+    @AppStorage("savedCards")  private var savedCardsData:  Data = Data()
     @AppStorage("savedEmails") private var savedEmailsData: Data = Data()
     @AppStorage("savedPhones") private var savedPhonesData: Data = Data()
 
@@ -59,6 +55,9 @@ struct AddEditSubscriptionView: View {
 
     // MARK: - Suggestions
 
+    private var savedNames: [String] {
+        (try? JSONDecoder().decode([String].self, from: savedNamesData)) ?? []
+    }
     private var savedCards: [String] {
         (try? JSONDecoder().decode([String].self, from: savedCardsData)) ?? []
     }
@@ -69,44 +68,39 @@ struct AddEditSubscriptionView: View {
         (try? JSONDecoder().decode([String].self, from: savedPhonesData)) ?? []
     }
 
+    private var nameSuggestions: [String] {
+        let fromItems = allItems.compactMap { $0.personName.isEmpty ? nil : $0.personName }
+        return Array(Set(savedNames + fromItems)).sorted()
+    }
     private var paymentSuggestions: [String] {
-        let persisted = savedCards
         let fromItems = allItems.compactMap { $0.paymentMethod.isEmpty ? nil : $0.paymentMethod }
-        return Array(Set(persisted + fromItems)).filter { $0 != paymentMethod }.sorted()
+        return Array(Set(savedCards + fromItems)).sorted()
     }
     private var emailSuggestions: [String] {
-        let persisted = savedEmails
         let fromItems = allItems.compactMap { $0.emailUsed.isEmpty ? nil : $0.emailUsed }
-        return Array(Set(persisted + fromItems)).filter { $0 != emailUsed }.sorted()
+        return Array(Set(savedEmails + fromItems)).sorted()
     }
     private var phoneSuggestions: [String] {
-        let persisted = savedPhones
         let fromItems = allItems.compactMap { $0.phoneNumber.isEmpty ? nil : $0.phoneNumber }
-        return Array(Set(persisted + fromItems)).filter { $0 != phoneNumber }.sorted()
+        return Array(Set(savedPhones + fromItems)).sorted()
     }
 
-    private func persistSuggestion(_ value: String, type: SuggestionFieldType) {
+    func persistSuggestion(_ value: String, type: SuggestionFieldType) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         switch type {
+        case .name:
+            var list = savedNames
+            if !list.contains(trimmed) { list.append(trimmed); savedNamesData = (try? JSONEncoder().encode(list)) ?? Data() }
         case .card:
             var list = savedCards
-            if !list.contains(trimmed) {
-                list.append(trimmed)
-                savedCardsData = (try? JSONEncoder().encode(list)) ?? Data()
-            }
+            if !list.contains(trimmed) { list.append(trimmed); savedCardsData = (try? JSONEncoder().encode(list)) ?? Data() }
         case .email:
             var list = savedEmails
-            if !list.contains(trimmed) {
-                list.append(trimmed)
-                savedEmailsData = (try? JSONEncoder().encode(list)) ?? Data()
-            }
+            if !list.contains(trimmed) { list.append(trimmed); savedEmailsData = (try? JSONEncoder().encode(list)) ?? Data() }
         case .phone:
             var list = savedPhones
-            if !list.contains(trimmed) {
-                list.append(trimmed)
-                savedPhonesData = (try? JSONEncoder().encode(list)) ?? Data()
-            }
+            if !list.contains(trimmed) { list.append(trimmed); savedPhonesData = (try? JSONEncoder().encode(list)) ?? Data() }
         }
     }
 
@@ -394,22 +388,38 @@ struct AddEditSubscriptionView: View {
             SectionHeader(title: "Account")
             FormCard {
                 VStack(spacing: 0) {
-                    SheetPickerField(
-                        label: "Card", placeholder: "Visa ****1234",
-                        text: $paymentMethod, suggestions: paymentSuggestions,
-                        showPicker: $showPaymentPicker
+                    AccountField(
+                        label: "Name", placeholder: "Account holder name",
+                        text: $personName,
+                        suggestions: nameSuggestions,
+                        fieldType: .name,
+                        onPersist: { v, t in persistSuggestion(v, type: t) }
                     )
                     FormDivider()
-                    SheetPickerField(
+                    AccountField(
+                        label: "Payment",
+                        placeholder: "e.g. Visa, PayPal, Gift Card…",
+                        hint: "Description only — don't enter card numbers",
+                        text: $paymentMethod,
+                        suggestions: paymentSuggestions,
+                        fieldType: .card,
+                        onPersist: { v, t in persistSuggestion(v, type: t) }
+                    )
+                    FormDivider()
+                    AccountField(
                         label: "Email", placeholder: "you@example.com",
-                        text: $emailUsed, suggestions: emailSuggestions,
-                        showPicker: $showEmailPicker
+                        text: $emailUsed,
+                        suggestions: emailSuggestions,
+                        fieldType: .email,
+                        onPersist: { v, t in persistSuggestion(v, type: t) }
                     )
                     FormDivider()
-                    SheetPickerField(
+                    AccountField(
                         label: "Phone", placeholder: "+61 400 000 000",
-                        text: $phoneNumber, suggestions: phoneSuggestions,
-                        showPicker: $showPhonePicker
+                        text: $phoneNumber,
+                        suggestions: phoneSuggestions,
+                        fieldType: .phone,
+                        onPersist: { v, t in persistSuggestion(v, type: t) }
                     )
                 }
             }
@@ -502,6 +512,7 @@ struct AddEditSubscriptionView: View {
         cost = item.cost
         currency = item.currency
         billingCycle = item.billingCycle
+        personName = item.personName
         paymentMethod = item.paymentMethod
         emailUsed = item.emailUsed
         phoneNumber = item.phoneNumber
@@ -516,9 +527,6 @@ struct AddEditSubscriptionView: View {
     private func saveAndDismiss() {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         guard !trimmedName.isEmpty else { return }
-
-        // Check if any account values are new and should be saved
-        checkAndPromptSave()
 
         let resolvedIconSource: IconSource = (iconData != nil) ? .favicon : .system
 
@@ -538,6 +546,7 @@ struct AddEditSubscriptionView: View {
             existing.cost = itemType == .subscription ? cost : nil
             existing.currency = currency
             existing.billingCycle = billingCycle
+            existing.personName = personName
             existing.paymentMethod = paymentMethod
             existing.emailUsed = emailUsed
             existing.phoneNumber = phoneNumber
@@ -559,6 +568,7 @@ struct AddEditSubscriptionView: View {
                 isAutoRenew: itemType == .subscription ? isAutoRenew : false,
                 isCancelled: itemType == .subscription ? isCancelled : false,
                 activeUntilDate: (itemType == .subscription && isCancelled) ? activeUntilDate : nil,
+                personName: personName,
                 paymentMethod: paymentMethod,
                 emailUsed: emailUsed,
                 phoneNumber: phoneNumber,
@@ -572,23 +582,6 @@ struct AddEditSubscriptionView: View {
         }
         Task { await NotificationManager.shared.reschedule(for: savedItem) }
         dismiss()
-    }
-
-    /// Check each account field: if the value isn't already in suggestions, prompt once to save it.
-    private func checkAndPromptSave() {
-        let cardTrimmed = paymentMethod.trimmingCharacters(in: .whitespacesAndNewlines)
-        let emailTrimmed = emailUsed.trimmingCharacters(in: .whitespacesAndNewlines)
-        let phoneTrimmed = phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if !cardTrimmed.isEmpty && !savedCards.contains(cardTrimmed) {
-            persistSuggestion(cardTrimmed, type: .card)
-        }
-        if !emailTrimmed.isEmpty && !savedEmails.contains(emailTrimmed) {
-            persistSuggestion(emailTrimmed, type: .email)
-        }
-        if !phoneTrimmed.isEmpty && !savedPhones.contains(phoneTrimmed) {
-            persistSuggestion(phoneTrimmed, type: .phone)
-        }
     }
 
     private func deleteAndDismiss() {
@@ -616,7 +609,251 @@ struct SectionHeader: View {
 // MARK: - Suggestion Field Type
 
 enum SuggestionFieldType {
-    case card, email, phone
+    case name, card, email, phone
+}
+
+// MARK: - Account Field
+// Replaces SheetPickerField. Tapping the field shows saved suggestions inline.
+// The + button opens a sheet to enter a new value, with an optional "Save for later" toggle.
+
+struct AccountField: View {
+    let label: String
+    let placeholder: String
+    var hint: String? = nil
+    @Binding var text: String
+    let suggestions: [String]
+    let fieldType: SuggestionFieldType
+    let onPersist: (String, SuggestionFieldType) -> Void
+
+    @State private var showSuggestions = false
+    @State private var showAddNew = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 16))
+                    .frame(minWidth: 80, alignment: .leading)
+                    .foregroundStyle(.primary)
+
+                // Tapping anywhere on the value area shows suggestions if any exist
+                Button {
+                    if suggestions.isEmpty {
+                        showAddNew = true
+                    } else {
+                        showSuggestions = true
+                    }
+                } label: {
+                    HStack {
+                        if text.isEmpty {
+                            Text(placeholder)
+                                .foregroundStyle(.tertiary)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                        } else {
+                            Text(text)
+                                .foregroundStyle(.primary)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+
+                // + always opens the add-new sheet
+                Button {
+                    showAddNew = true
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.blue.opacity(0.8))
+                        .padding(.leading, 6)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            if let hint {
+                Text(hint)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
+        }
+        // Suggestions sheet
+        .sheet(isPresented: $showSuggestions) {
+            AccountSuggestionsSheet(
+                label: label,
+                suggestions: suggestions,
+                current: text,
+                onSelect: { value in text = value },
+                onAddNew: { showAddNew = true }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        // Add new value sheet
+        .sheet(isPresented: $showAddNew) {
+            AddAccountValueSheet(
+                label: label,
+                fieldType: fieldType,
+                onSave: { value, shouldPersist in
+                    text = value
+                    if shouldPersist {
+                        onPersist(value, fieldType)
+                    }
+                }
+            )
+            .presentationDetents([.height(260)])
+            .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+// MARK: - Account Suggestions Sheet (existing values)
+
+struct AccountSuggestionsSheet: View {
+    let label: String
+    let suggestions: [String]
+    let current: String
+    let onSelect: (String) -> Void
+    let onAddNew: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(suggestions, id: \.self) { item in
+                    Button {
+                        onSelect(item)
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Text(item).foregroundStyle(.primary)
+                            Spacer()
+                            if item == current {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .navigationTitle(label)
+            .inlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        dismiss()
+                        // Small delay so dismiss animation completes before next sheet opens
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { onAddNew() }
+                    } label: {
+                        Label("Add New", systemImage: "plus")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Add Account Value Sheet (new entry + optional save)
+
+struct AddAccountValueSheet: View {
+    let label: String
+    let fieldType: SuggestionFieldType
+    let onSave: (String, Bool) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var value = ""
+    @State private var shouldSave = true
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(fieldType == .card ? "e.g. Visa, PayPal, Apple Pay…" : placeholder)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+
+                    TextField(placeholder, text: $value)
+                        .font(.system(size: 16))
+                        .padding(12)
+                        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                        .focused($focused)
+#if os(iOS)
+                        .keyboardType(keyboardType)
+                        .textInputAutocapitalization(fieldType == .email ? .never : .words)
+#endif
+                }
+
+                if fieldType == .card {
+                    Text("Enter a description only — never store actual card numbers here.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                }
+
+                Toggle(isOn: $shouldSave) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Save for future use")
+                            .font(.system(size: 15))
+                        Text("Appears as a quick-pick option next time")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.blue)
+
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .navigationTitle("Add \(label)")
+            .inlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { dismiss(); return }
+                        onSave(trimmed, shouldSave)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .onAppear { focused = true }
+        }
+    }
+
+    private var placeholder: String {
+        switch fieldType {
+        case .name:  return "Full name"
+        case .card:  return "Visa, PayPal, Apple Pay…"
+        case .email: return "you@example.com"
+        case .phone: return "+61 400 000 000"
+        }
+    }
+
+#if os(iOS)
+    private var keyboardType: UIKeyboardType {
+        switch fieldType {
+        case .email: return .emailAddress
+        case .phone: return .phonePad
+        default:     return .default
+        }
+    }
+#endif
 }
 
 // MARK: - Status Chip
@@ -644,101 +881,6 @@ struct StatusChip: View {
                         in: RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Sheet Picker Field
-
-struct SheetPickerField: View {
-    let label: String
-    let placeholder: String
-    @Binding var text: String
-    let suggestions: [String]
-    @Binding var showPicker: Bool
-
-    var body: some View {
-        HStack {
-            Text(label)
-                .font(.system(size: 16))
-                .frame(minWidth: 80, alignment: .leading)
-                .foregroundStyle(.primary)
-            TextField(placeholder, text: $text)
-                .foregroundStyle(.primary)
-                .trailingTextAlignment()
-#if os(iOS)
-                .keyboardType(resolvedKeyboardType)
-                .textInputAutocapitalization(label == "Email" ? .never : .sentences)
-#endif
-            if !suggestions.isEmpty {
-                Button {
-                    showPicker = true
-                } label: {
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 4)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .sheet(isPresented: $showPicker) {
-            SuggestionPickerSheet(label: label, suggestions: suggestions, selection: $text)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
-    }
-
-#if os(iOS)
-    private var resolvedKeyboardType: UIKeyboardType {
-        switch label {
-        case "Email": return .emailAddress
-        case "Phone": return .phonePad
-        default: return .default
-        }
-    }
-#endif
-}
-
-// MARK: - Suggestion Picker Sheet
-
-struct SuggestionPickerSheet: View {
-    let label: String
-    let suggestions: [String]
-    @Binding var selection: String
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                ForEach(suggestions, id: \.self) { item in
-                    Button {
-                        selection = item
-                        dismiss()
-                    } label: {
-                        HStack {
-                            Text(item)
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            if item == selection {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.blue)
-                                    .fontWeight(.semibold)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .navigationTitle(label)
-            .inlineNavigationTitle()
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
     }
 }
 
@@ -775,33 +917,34 @@ struct FormDivider: View {
 // MARK: - Currency Info
 
 enum CurrencyInfo {
-    /// Well-known currencies with their symbols and display order.
-    static let builtIn: [(code: String, symbol: String, name: String)] = [
+    typealias Entry = (code: String, symbol: String, name: String)
+
+    /// Default currencies shown without any user customisation.
+    static let defaults: [Entry] = [
         ("AUD", "A$",  "Australian Dollar"),
         ("USD", "$",   "US Dollar"),
         ("EUR", "€",   "Euro"),
         ("GBP", "£",   "British Pound"),
-        ("CAD", "C$",  "Canadian Dollar"),
-        ("NZD", "NZ$", "New Zealand Dollar"),
+        ("INR", "₹",   "Indian Rupee"),
         ("AED", "د.إ", "UAE Dirham"),
         ("SGD", "S$",  "Singapore Dollar"),
-        ("HKD", "HK$", "Hong Kong Dollar"),
+        ("NZD", "NZ$", "New Zealand Dollar"),
+        ("CAD", "C$",  "Canadian Dollar"),
         ("JPY", "¥",   "Japanese Yen"),
-        ("CNY", "¥",   "Chinese Yuan"),
-        ("INR", "₹",   "Indian Rupee"),
         ("CHF", "Fr",  "Swiss Franc"),
-        ("SEK", "kr",  "Swedish Krona"),
-        ("NOK", "kr",  "Norwegian Krone"),
-        ("DKK", "kr",  "Danish Krone"),
-        ("MXN", "MX$", "Mexican Peso"),
+        ("HKD", "HK$", "Hong Kong Dollar"),
+        ("CNY", "¥",   "Chinese Yuan"),
+        ("KRW", "₩",   "South Korean Won"),
         ("BRL", "R$",  "Brazilian Real"),
         ("ZAR", "R",   "South African Rand"),
+        ("SEK", "kr",  "Swedish Krona"),
+        ("NOK", "kr",  "Norwegian Krone"),
+        ("MXN", "MX$", "Mexican Peso"),
         ("THB", "฿",   "Thai Baht"),
-        ("KRW", "₩",   "South Korean Won"),
     ]
 
     static func symbol(for code: String) -> String {
-        builtIn.first { $0.code == code }?.symbol ?? code
+        defaults.first { $0.code == code }?.symbol ?? code
     }
 }
 
@@ -811,36 +954,30 @@ struct CurrencyPickerSheet: View {
     @Binding var selectedCode: String
     @Environment(\.dismiss) private var dismiss
 
-    // Persisted custom currencies (JSON array of code strings)
     @AppStorage("customCurrencies") private var customCurrenciesData: Data = Data()
+    // Use @State for the list so mutations immediately re-render the List
+    @State private var customList: [String] = []
     @State private var searchText = ""
     @State private var showAddCustom = false
     @State private var newCurrencyCode = ""
 
-    private var customCurrencies: [String] {
-        (try? JSONDecoder().decode([String].self, from: customCurrenciesData)) ?? []
-    }
-
-    private func saveCustomCurrencies(_ list: [String]) {
-        customCurrenciesData = (try? JSONEncoder().encode(list)) ?? Data()
-    }
-
-    private var allEntries: [(code: String, symbol: String, name: String)] {
-        let custom = customCurrencies.map { code -> (code: String, symbol: String, name: String) in
-            // Try to get a locale-based symbol for the custom code
-            let locale = Locale(identifier: "en_\(code)")
-            let sym = locale.currencySymbol ?? code
-            return (code, sym, "Custom")
+    private var allEntries: [CurrencyInfo.Entry] {
+        let custom: [CurrencyInfo.Entry] = customList.map { code in
+            (code, code, "Custom")
         }
-        return CurrencyInfo.builtIn + custom
+        return CurrencyInfo.defaults + custom
     }
 
-    private var filtered: [(code: String, symbol: String, name: String)] {
+    private var filtered: [CurrencyInfo.Entry] {
         guard !searchText.isEmpty else { return allEntries }
         return allEntries.filter {
             $0.code.localizedCaseInsensitiveContains(searchText) ||
             $0.name.localizedCaseInsensitiveContains(searchText)
         }
+    }
+
+    private func persistCustomList() {
+        customCurrenciesData = (try? JSONEncoder().encode(customList)) ?? Data()
     }
 
     var body: some View {
@@ -853,8 +990,8 @@ struct CurrencyPickerSheet: View {
                     } label: {
                         HStack {
                             Text(entry.symbol)
-                                .font(.system(size: 16, weight: .semibold, design: .rounded))
-                                .frame(width: 36, alignment: .leading)
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .frame(width: 40, alignment: .leading)
                                 .foregroundStyle(.secondary)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(entry.code)
@@ -874,12 +1011,10 @@ struct CurrencyPickerSheet: View {
                     }
                     .buttonStyle(.plain)
                     .swipeActions(edge: .trailing) {
-                        // Only allow deleting custom entries
-                        if customCurrencies.contains(entry.code) {
+                        if customList.contains(entry.code) {
                             Button(role: .destructive) {
-                                var list = customCurrencies
-                                list.removeAll { $0 == entry.code }
-                                saveCustomCurrencies(list)
+                                customList.removeAll { $0 == entry.code }
+                                persistCustomList()
                                 if selectedCode == entry.code { selectedCode = "AUD" }
                             } label: {
                                 Label("Remove", systemImage: "trash")
@@ -904,20 +1039,21 @@ struct CurrencyPickerSheet: View {
                     }
                 }
             }
-            .alert("Add Custom Currency", isPresented: $showAddCustom) {
-                TextField("Currency code (e.g. SAR)", text: $newCurrencyCode)
-#if os(iOS)
-                    .textInputAutocapitalization(.characters)
-#endif
+            .alert("Add Currency", isPresented: $showAddCustom) {
+                TextField("ISO code, e.g. SAR", text: $newCurrencyCode)
                 Button("Add") {
                     let code = newCurrencyCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-                    guard !code.isEmpty, !customCurrencies.contains(code),
-                          !CurrencyInfo.builtIn.map(\.code).contains(code) else { return }
-                    saveCustomCurrencies(customCurrencies + [code])
+                    let existing = CurrencyInfo.defaults.map(\.code) + customList
+                    guard !code.isEmpty, !existing.contains(code) else { return }
+                    customList.append(code)
+                    persistCustomList()
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Enter a 3-letter ISO currency code.")
+                Text("Enter a 3-letter ISO currency code (e.g. SAR, QAR, TWD).")
+            }
+            .onAppear {
+                customList = (try? JSONDecoder().decode([String].self, from: customCurrenciesData)) ?? []
             }
         }
     }
