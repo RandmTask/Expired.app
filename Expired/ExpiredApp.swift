@@ -116,10 +116,14 @@ struct ExpiredApp: App {
         print("[CloudKit] ────────────────────────────────────────────")
     }
 
-    /// Logs iCloud account status to help diagnose sync issues.
+    /// Logs iCloud account status and the CloudKit user record ID.
+    /// The user record ID is a stable per-account identifier — it must match
+    /// across all devices for sync to work. If it differs, different Apple IDs
+    /// are signed in and data will never cross between devices.
     static func logCloudKitAccountStatus() async {
+        let ckContainer = CKContainer(identifier: "iCloud.com.swiftstudio.Expired")
         do {
-            let status = try await CKContainer(identifier: "iCloud.com.swiftstudio.Expired").accountStatus()
+            let status = try await ckContainer.accountStatus()
             switch status {
             case .available:      print("[ExpiredApp] iCloud account: available ✓")
             case .noAccount:      print("[ExpiredApp] iCloud account: NO ACCOUNT — user not signed in to iCloud")
@@ -130,6 +134,18 @@ struct ExpiredApp: App {
             }
         } catch {
             print("[ExpiredApp] iCloud account check failed: \(error)")
+        }
+        // Fetch the CloudKit user record ID — this is unique per Apple ID.
+        // Compare this value across Mac, iPhone, and iPad.
+        // If they differ, the devices are on different iCloud accounts and will
+        // each have their own isolated private database — explaining why data
+        // added on one device never appears on another.
+        do {
+            let userID = try await ckContainer.userRecordID()
+            print("[ExpiredApp] CloudKit user record ID: \(userID.recordName)")
+            print("[ExpiredApp] ⚠ Compare this value across all devices — must be identical for sync to work")
+        } catch {
+            print("[ExpiredApp] CloudKit user record ID fetch failed: \(error)")
         }
     }
 
