@@ -79,20 +79,15 @@ struct HomeView: View {
         visibleDocuments.filter { $0.urgency == .normal }
     }
 
-    @AppStorage("preferredCurrency") private var preferredCurrency = "AUD"
+    @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
 
     private var monthlyTotal: Double {
-        subscriptionItems.compactMap(\.monthlyCost).reduce(0, +)
+        subscriptionItems.compactMap { $0.monthlyCostConverted(to: preferredCurrency) }.reduce(0, +)
     }
 
     private var yearlyTotal: Double { monthlyTotal * 12 }
 
-    /// The most-used currency among subscriptions, falling back to preferredCurrency
-    private var displayCurrency: String {
-        let codes = subscriptionItems.map(\.currency)
-        let counts = Dictionary(codes.map { ($0, 1) }, uniquingKeysWith: +)
-        return counts.max(by: { $0.value < $1.value })?.key ?? preferredCurrency
-    }
+    private var displayCurrency: String { preferredCurrency }
 
     // MARK: - Body
 

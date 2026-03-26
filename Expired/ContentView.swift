@@ -107,19 +107,16 @@ struct TimelineRow: View {
 
 struct InsightsView: View {
     @Query private var allItems: [SubscriptionItem]
-    @AppStorage("preferredCurrency") private var preferredCurrency = "AUD"
+    @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
 
     private var activeItems: [SubscriptionItem] {
         allItems.filter { if case .expired = $0.status { return false }; return true }
     }
-    private var monthlyTotal: Double { activeItems.compactMap(\.monthlyCost).reduce(0, +) }
-    private var yearlyTotal: Double { monthlyTotal * 12 }
-
-    private var displayCurrency: String {
-        let codes = activeItems.map(\.currency)
-        let counts = Dictionary(codes.map { ($0, 1) }, uniquingKeysWith: +)
-        return counts.max(by: { $0.value < $1.value })?.key ?? preferredCurrency
+    private var monthlyTotal: Double {
+        activeItems.compactMap { $0.monthlyCostConverted(to: preferredCurrency) }.reduce(0, +)
     }
+    private var yearlyTotal: Double { monthlyTotal * 12 }
+    private var displayCurrency: String { preferredCurrency }
     private var autoRenewCount: Int { activeItems.filter(\.isAutoRenew).count }
     private var trialCount: Int { activeItems.filter(\.isTrial).count }
     private var cancelledCount: Int {
@@ -292,11 +289,40 @@ extension View {
 
 struct SettingsView: View {
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
+    @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
     @State private var showRestartAlert = false
+    @State private var showCurrencyPicker = false
+
+    /// Best-guess currency from the device locale, falling back to USD.
+    static var localeCurrencyCode: String {
+        Locale.current.currency?.identifier ?? "USD"
+    }
 
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    // Base currency row — taps open the full currency picker
+                    Button {
+                        showCurrencyPicker = true
+                    } label: {
+                        HStack {
+                            Label("Base Currency", systemImage: "dollarsign.circle")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text("\(CurrencyInfo.symbol(for: preferredCurrency)) \(preferredCurrency)")
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                } header: {
+                    Text("Display")
+                } footer: {
+                    Text("All subscription costs are converted to this currency when calculating totals. Exchange rates are approximate and updated periodically.")
+                }
+
                 Section {
                     Toggle(isOn: $iCloudSyncEnabled) {
                         Label("iCloud Sync", systemImage: "icloud")
@@ -312,6 +338,11 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .largeNavigationTitle()
+            .sheet(isPresented: $showCurrencyPicker) {
+                CurrencyPickerSheet(selectedCode: $preferredCurrency)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
             .alert("Restart Required", isPresented: $showRestartAlert) {
                 Button("OK", role: .cancel) {}
             } message: {

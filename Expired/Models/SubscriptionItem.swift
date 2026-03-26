@@ -162,7 +162,7 @@ final class SubscriptionItem {
         iconSource: IconSource = .system,
         iconData: Data? = nil,
         cost: Double? = nil,
-        currency: String = "AUD",
+        currency: String = Locale.current.currency?.identifier ?? "AUD",
         billingCycle: BillingCycle = .monthly,
         nextRenewalDate: Date = Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date(),
         trialEndDate: Date? = nil,
@@ -274,6 +274,7 @@ final class SubscriptionItem {
 
     // MARK: - Cost Normalization
 
+    /// Monthly cost in the item's own currency.
     var monthlyCost: Double? {
         guard let cost = cost else { return nil }
         return cost * billingCycle.monthlyMultiplier
@@ -282,6 +283,12 @@ final class SubscriptionItem {
     var yearlyCost: Double? {
         guard let monthly = monthlyCost else { return nil }
         return monthly * 12.0
+    }
+
+    /// Monthly cost converted to `targetCurrency` using the built-in exchange rates.
+    func monthlyCostConverted(to targetCurrency: String) -> Double? {
+        guard let monthly = monthlyCost else { return nil }
+        return CurrencyInfo.convert(monthly, from: currency, to: targetCurrency)
     }
 
     // MARK: - System Icon Name

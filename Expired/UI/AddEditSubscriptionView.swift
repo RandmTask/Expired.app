@@ -31,7 +31,8 @@ struct AddEditSubscriptionView: View {
     // Cost & payment
     @State private var cost: Double? = nil
     @State private var costText = ""
-    @State private var currency = "AUD"
+    @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
+    @State private var currency = ""  // set in onAppear / populateFromItem
     @State private var billingCycle: BillingCycle = .monthly
     @State private var paymentMethod = ""
     @State private var emailUsed = ""
@@ -140,7 +141,10 @@ struct AddEditSubscriptionView: View {
                 }
             }
         }
-        .onAppear { populateFromItem() }
+        .onAppear {
+            if currency.isEmpty { currency = preferredCurrency }
+            populateFromItem()
+        }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
@@ -1013,28 +1017,75 @@ struct FormDivider: View {
 enum CurrencyInfo {
     typealias Entry = (code: String, symbol: String, name: String)
 
-    /// Default currencies shown without any user customisation.
+    /// All supported currencies with symbols and display names.
     static let defaults: [Entry] = [
-        ("AUD", "A$",  "Australian Dollar"),
-        ("USD", "$",   "US Dollar"),
-        ("EUR", "€",   "Euro"),
-        ("GBP", "£",   "British Pound"),
-        ("INR", "₹",   "Indian Rupee"),
-        ("AED", "د.إ", "UAE Dirham"),
-        ("SGD", "S$",  "Singapore Dollar"),
-        ("NZD", "NZ$", "New Zealand Dollar"),
-        ("CAD", "C$",  "Canadian Dollar"),
-        ("JPY", "¥",   "Japanese Yen"),
-        ("CHF", "Fr",  "Swiss Franc"),
-        ("HKD", "HK$", "Hong Kong Dollar"),
-        ("CNY", "¥",   "Chinese Yuan"),
-        ("KRW", "₩",   "South Korean Won"),
-        ("BRL", "R$",  "Brazilian Real"),
-        ("ZAR", "R",   "South African Rand"),
-        ("SEK", "kr",  "Swedish Krona"),
-        ("NOK", "kr",  "Norwegian Krone"),
-        ("MXN", "MX$", "Mexican Peso"),
-        ("THB", "฿",   "Thai Baht"),
+        ("AUD", "A$",   "Australian Dollar"),
+        ("USD", "$",    "US Dollar"),
+        ("EUR", "€",    "Euro"),
+        ("GBP", "£",    "British Pound"),
+        ("INR", "₹",    "Indian Rupee"),
+        ("AED", "د.إ",  "UAE Dirham"),
+        ("SGD", "S$",   "Singapore Dollar"),
+        ("NZD", "NZ$",  "New Zealand Dollar"),
+        ("CAD", "C$",   "Canadian Dollar"),
+        ("JPY", "¥",    "Japanese Yen"),
+        ("CHF", "Fr",   "Swiss Franc"),
+        ("HKD", "HK$",  "Hong Kong Dollar"),
+        ("CNY", "¥",    "Chinese Yuan"),
+        ("KRW", "₩",    "South Korean Won"),
+        ("BRL", "R$",   "Brazilian Real"),
+        ("ZAR", "R",    "South African Rand"),
+        ("SEK", "kr",   "Swedish Krona"),
+        ("NOK", "kr",   "Norwegian Krone"),
+        ("MXN", "MX$",  "Mexican Peso"),
+        ("THB", "฿",    "Thai Baht"),
+        ("SAR", "﷼",    "Saudi Riyal"),
+        ("TRY", "₺",    "Turkish Lira"),
+        ("TWD", "NT$",  "Taiwan New Dollar"),
+        ("DKK", "kr",   "Danish Krone"),
+        ("PLN", "zł",   "Polish Zloty"),
+        ("IDR", "Rp",   "Indonesian Rupiah"),
+        ("HUF", "Ft",   "Hungarian Forint"),
+        ("CZK", "Kč",   "Czech Koruna"),
+        ("ILS", "₪",    "Israeli New Shekel"),
+        ("CLP", "CL$",  "Chilean Peso"),
+        ("PHP", "₱",    "Philippine Peso"),
+    ]
+
+    /// Exchange rates relative to 1 USD (snapshot — updated manually or via future API).
+    /// Used only for converting totals to a display currency; individual item amounts are stored as-is.
+    static let ratesFromUSD: [String: Double] = [
+        "USD": 1.00000,
+        "EUR": 0.86540,
+        "JPY": 158.71800,
+        "GBP": 0.74532,
+        "AUD": 1.43193,
+        "CAD": 1.37654,
+        "CHF": 0.78830,
+        "CNY": 6.88570,
+        "HKD": 7.83270,
+        "NZD": 1.71233,
+        "SEK": 9.36110,
+        "KRW": 1504.15000,
+        "SGD": 1.28190,
+        "NOK": 9.57820,
+        "MXN": 17.88740,
+        "INR": 93.83207,
+        "BRL": 5.28960,
+        "ZAR": 17.04010,
+        "TRY": 44.36710,
+        "TWD": 31.91000,
+        "DKK": 6.47280,
+        "PLN": 3.72870,
+        "THB": 32.87000,
+        "IDR": 11832.00000,
+        "HUF": 335.63100,
+        "CZK": 21.28400,
+        "ILS": 3.11900,
+        "CLP": 913.98000,
+        "PHP": 59.53100,
+        "AED": 3.67250,
+        "SAR": 3.75000,
     ]
 
     static func symbol(for code: String) -> String {
@@ -1044,8 +1095,23 @@ enum CurrencyInfo {
     /// Formats an amount as "symbol + 2dp number", e.g. "A$55.00", "€12.99"
     static func format(_ amount: Double, code: String) -> String {
         let sym = symbol(for: code)
-        let formatted = String(format: "%.2f", amount)
+        // JPY, KRW, IDR, CLP, HUF have no sub-units — show 0dp
+        let noSubunits: Set<String> = ["JPY", "KRW", "IDR", "CLP", "HUF"]
+        let formatted = noSubunits.contains(code)
+            ? String(format: "%.0f", amount)
+            : String(format: "%.2f", amount)
         return "\(sym)\(formatted)"
+    }
+
+    /// Converts `amount` in `fromCode` to `toCode` using the USD-pivot rates.
+    /// Returns the original amount unchanged if either rate is unknown.
+    static func convert(_ amount: Double, from fromCode: String, to toCode: String) -> Double {
+        guard fromCode != toCode else { return amount }
+        guard let fromRate = ratesFromUSD[fromCode],
+              let toRate   = ratesFromUSD[toCode],
+              fromRate > 0 else { return amount }
+        // amount / fromRate = USD amount; * toRate = target currency
+        return (amount / fromRate) * toRate
     }
 }
 
