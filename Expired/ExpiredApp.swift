@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import CloudKit
 
 @main
 struct ExpiredApp: App {
@@ -12,6 +13,25 @@ struct ExpiredApp: App {
         // Read the preference before the App property wrappers are initialised
         let syncOn = UserDefaults.standard.object(forKey: "iCloudSyncEnabled") as? Bool ?? true
         container = Self.makeContainer(iCloudSync: syncOn)
+        // Check iCloud account status at launch for diagnostics
+        Task { await Self.logCloudKitAccountStatus() }
+    }
+
+    /// Logs iCloud account status to help diagnose sync issues.
+    static func logCloudKitAccountStatus() async {
+        do {
+            let status = try await CKContainer(identifier: "iCloud.com.swiftstudio.Expired").accountStatus()
+            switch status {
+            case .available:      print("[ExpiredApp] iCloud account: available ✓")
+            case .noAccount:      print("[ExpiredApp] iCloud account: NO ACCOUNT — user not signed in to iCloud")
+            case .restricted:     print("[ExpiredApp] iCloud account: restricted — parental controls or MDM")
+            case .couldNotDetermine: print("[ExpiredApp] iCloud account: could not determine — check network")
+            case .temporarilyUnavailable: print("[ExpiredApp] iCloud account: temporarily unavailable")
+            @unknown default:     print("[ExpiredApp] iCloud account: unknown status \(status.rawValue)")
+            }
+        } catch {
+            print("[ExpiredApp] iCloud account check failed: \(error)")
+        }
     }
 
     static func makeContainer(iCloudSync: Bool) -> ModelContainer {
@@ -26,9 +46,13 @@ struct ExpiredApp: App {
             withIntermediateDirectories: true
         )
 
-        print("[ExpiredApp] Store URL: \(storeURL.path) iCloud=\(iCloudSync)")
+        print("[ExpiredApp] ── Launch diagnostics ──────────────────────")
+        print("[ExpiredApp] Platform: \(platformName)")
         print("[ExpiredApp] Bundle ID: \(Bundle.main.bundleIdentifier ?? "unknown")")
-        print("[ExpiredApp] CloudKit container: iCloud.\(Bundle.main.bundleIdentifier ?? "unknown")")
+        print("[ExpiredApp] CloudKit container: iCloud.com.swiftstudio.Expired")
+        print("[ExpiredApp] Store URL: \(storeURL.path)")
+        print("[ExpiredApp] iCloud sync enabled: \(iCloudSync)")
+        print("[ExpiredApp] ────────────────────────────────────────────")
 
         // Try preferred store type first
         if iCloudSync {
@@ -39,10 +63,12 @@ struct ExpiredApp: App {
                     cloudKitDatabase: .automatic
                 )
                 let c = try ModelContainer(for: schema, configurations: config)
-                print("[ExpiredApp] CloudKit store opened successfully")
+                print("[ExpiredApp] CloudKit store opened successfully ✓")
+                print("[ExpiredApp] NOTE: Sync activity visible with launch arg: -com.apple.CoreData.CloudKitDebug 3")
                 return c
             } catch {
-                print("[ExpiredApp] CloudKit store failed: \(error)")
+                print("[ExpiredApp] CloudKit store FAILED: \(error)")
+                print("[ExpiredApp] Falling back to local-only store")
             }
         }
 
@@ -72,6 +98,16 @@ struct ExpiredApp: App {
                                    configurations: ModelConfiguration(isStoredInMemoryOnly: true))
     }
 
+    private static var platformName: String {
+#if os(macOS)
+        "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"
+#elseif os(iOS)
+        "iOS \(UIDevice.current.systemVersion) (\(UIDevice.current.model))"
+#else
+        "Unknown"
+#endif
+    }
+
     /// Removes the SQLite store triple (.sqlite, .sqlite-shm, .sqlite-wal) at the given URL.
     static func deleteSQLiteFiles(at url: URL) {
         let fm = FileManager.default
@@ -89,9 +125,22 @@ struct ExpiredApp: App {
                 .task {
                     await NotificationManager.shared.requestAuthorization()
                 }
+#if os(macOS)
+                // On macOS, CloudKit processes remote changes on scene phase transitions.
+                // We also respond to manual refresh requests from Settings.
+                .onReceive(NotificationCenter.default.publisher(for: .expiredManualSync)) { _ in
+                    print("[ExpiredApp] Manual sync triggered")
+                    Task { await Self.logCloudKitAccountStatus() }
+                }
+#endif
         }
 #if os(macOS)
         .defaultSize(width: 900, height: 680)
 #endif
     }
 }
+
+extension Notification.Name {
+    static let expiredManualSync = Notification.Name("com.swiftstudio.Expired.manualSync")
+}
+

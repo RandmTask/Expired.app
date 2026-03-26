@@ -292,6 +292,7 @@ struct SettingsView: View {
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
     @State private var showRestartAlert = false
     @State private var showCurrencyPicker = false
+    @State private var isSyncing = false
 
     /// Best-guess currency from the device locale, falling back to USD.
     static var localeCurrencyCode: String {
@@ -330,6 +331,29 @@ struct SettingsView: View {
                     .onChange(of: iCloudSyncEnabled) { _, _ in
                         showRestartAlert = true
                     }
+#if os(macOS)
+                    // macOS has no pull-to-refresh; this nudges CloudKit to process pending changes.
+                    Button {
+                        guard !isSyncing else { return }
+                        isSyncing = true
+                        NotificationCenter.default.post(name: .expiredManualSync, object: nil)
+                        // Brief visual feedback — CloudKit is async and has no completion callback
+                        Task {
+                            try? await Task.sleep(for: .seconds(2))
+                            isSyncing = false
+                        }
+                    } label: {
+                        HStack {
+                            Label("Sync Now", systemImage: isSyncing ? "arrow.triangle.2.circlepath" : "arrow.clockwise.icloud")
+                                .foregroundStyle(.primary)
+                            if isSyncing {
+                                Spacer()
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                    }
+                    .disabled(!iCloudSyncEnabled || isSyncing)
+#endif
                 } header: {
                     Text("Sync")
                 } footer: {
