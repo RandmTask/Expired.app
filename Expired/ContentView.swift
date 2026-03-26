@@ -4,18 +4,19 @@ import SwiftData
 struct ContentView: View {
     var body: some View {
         TabView {
-            Tab("Subscriptions", systemImage: "creditcard.fill") {
+            Tab("Subscriptions", systemImage: "creditcard") {
                 HomeView()
             }
-
             Tab("Timeline", systemImage: "calendar") {
                 TimelineView()
             }
-
-            Tab("Insights", systemImage: "chart.bar.fill") {
+            Tab("Insights", systemImage: "chart.bar") {
                 InsightsView()
             }
         }
+#if os(iOS)
+        .tabBarMinimizeBehavior(.onScrollDown)
+#endif
     }
 }
 
@@ -25,8 +26,7 @@ struct TimelineView: View {
     @Query(sort: \SubscriptionItem.nextRenewalDate) private var allItems: [SubscriptionItem]
 
     private var upcoming: [SubscriptionItem] {
-        allItems
-            .filter { $0.daysUntilRenewal >= 0 }
+        allItems.filter { $0.daysUntilRenewal >= 0 }
             .sorted { $0.nextRelevantDate < $1.nextRelevantDate }
     }
 
@@ -47,32 +47,46 @@ struct TimelineView: View {
                 description: Text("Add subscriptions to see your timeline.")
             )
         } else {
-            List {
-                ForEach(upcoming) { item in
-                    TimelineRow(item: item)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, item in
+                        TimelineRow(item: item, isLast: index == upcoming.count - 1)
+                    }
                 }
+                .padding(.horizontal)
+                .padding(.top, 12)
+                .padding(.bottom, 100)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(groupedBackground)
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .background(groupedBackground.ignoresSafeArea())
         }
     }
 }
 
 struct TimelineRow: View {
     let item: SubscriptionItem
+    let isLast: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            Circle()
-                .fill(dotColor)
-                .frame(width: 10, height: 10)
+        HStack(alignment: .center, spacing: 12) {
+            // Timeline spine
+            VStack(spacing: 0) {
+                Circle()
+                    .fill(dotColor)
+                    .frame(width: 10, height: 10)
+                    .padding(.top, 4)
+                if !isLast {
+                    Rectangle()
+                        .fill(dotColor.opacity(0.25))
+                        .frame(width: 2)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+            .frame(width: 10)
 
             SubscriptionRowView(item: item)
         }
+        .frame(minHeight: 60)
     }
 
     private var dotColor: Color {
@@ -92,41 +106,29 @@ struct InsightsView: View {
     @Query private var allItems: [SubscriptionItem]
 
     private var activeItems: [SubscriptionItem] {
-        allItems.filter {
-            if case .expired = $0.status { return false }
-            return true
-        }
+        allItems.filter { if case .expired = $0.status { return false }; return true }
     }
-
-    private var monthlyTotal: Double {
-        activeItems.compactMap(\.monthlyCost).reduce(0, +)
-    }
-
+    private var monthlyTotal: Double { activeItems.compactMap(\.monthlyCost).reduce(0, +) }
     private var yearlyTotal: Double { monthlyTotal * 12 }
-
     private var autoRenewCount: Int { activeItems.filter(\.isAutoRenew).count }
     private var trialCount: Int { activeItems.filter(\.isTrial).count }
-
     private var cancelledCount: Int {
-        allItems.filter {
-            if case .cancelledButActive = $0.status { return true }
-            return false
-        }.count
+        allItems.filter { if case .cancelledButActive = $0.status { return true }; return false }.count
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
+                VStack(spacing: 16) {
                     costRow
                     countsRow
-                    if !activeItems.isEmpty {
-                        costBreakdown
-                    }
+                    if !activeItems.isEmpty { costBreakdown }
                     Spacer(minLength: 40)
                 }
                 .padding(.top, 12)
+                .padding(.bottom, 100)
             }
+            .scrollEdgeEffectStyle(.soft, for: .top)
             .background(groupedBackground.ignoresSafeArea())
             .navigationTitle("Insights")
             .largeNavigationTitle()
@@ -135,49 +137,35 @@ struct InsightsView: View {
 
     private var costRow: some View {
         HStack(spacing: 12) {
-            InsightCard(title: "Monthly Cost",
-                        value: monthlyTotal.formatted(.currency(code: "AUD")),
-                        icon: "calendar",
-                        color: .blue)
-            InsightCard(title: "Yearly Cost",
-                        value: yearlyTotal.formatted(.currency(code: "AUD")),
-                        icon: "chart.line.uptrend.xyaxis",
-                        color: .indigo)
+            GlassInsightCard(title: "Monthly", value: monthlyTotal.formatted(.currency(code: "AUD")), icon: "calendar", color: .blue)
+            GlassInsightCard(title: "Yearly", value: yearlyTotal.formatted(.currency(code: "AUD")), icon: "chart.line.uptrend.xyaxis", color: .indigo)
         }
         .padding(.horizontal)
     }
 
     private var countsRow: some View {
         HStack(spacing: 12) {
-            InsightCard(title: "Auto-Renewing",
-                        value: "\(autoRenewCount)",
-                        icon: "arrow.clockwise",
-                        color: .green)
-            InsightCard(title: "Free Trials",
-                        value: "\(trialCount)",
-                        icon: "gift.fill",
-                        color: .purple)
-            InsightCard(title: "Cancelled",
-                        value: "\(cancelledCount)",
-                        icon: "xmark.circle",
-                        color: .orange)
+            GlassInsightCard(title: "Auto-Renewing", value: "\(autoRenewCount)", icon: "arrow.clockwise", color: .green)
+            GlassInsightCard(title: "Free Trials", value: "\(trialCount)", icon: "gift.fill", color: .purple)
+            GlassInsightCard(title: "Cancelled", value: "\(cancelledCount)", icon: "xmark.circle", color: .orange)
         }
         .padding(.horizontal)
     }
 
     private var costBreakdown: some View {
-        let sorted = activeItems
-            .sorted { ($0.monthlyCost ?? 0) > ($1.monthlyCost ?? 0) }
-            .prefix(5)
+        let sorted = activeItems.sorted { ($0.monthlyCost ?? 0) > ($1.monthlyCost ?? 0) }.prefix(6)
         let maxCost = activeItems.compactMap(\.monthlyCost).max() ?? 1
 
         return VStack(alignment: .leading, spacing: 10) {
-            Text("By Cost")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-                .tracking(0.5)
-                .padding(.horizontal, 4)
+            HStack(spacing: 5) {
+                Image(systemName: "list.number")
+                    .font(.system(size: 11, weight: .bold))
+                Text("TOP BY COST")
+                    .font(.system(size: 11, weight: .bold))
+                    .tracking(0.6)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
 
             VStack(spacing: 8) {
                 ForEach(Array(sorted)) { item in
@@ -189,29 +177,29 @@ struct InsightsView: View {
     }
 }
 
-struct InsightCard: View {
+struct GlassInsightCard: View {
     let title: String
     let value: String
     let icon: String
     let color: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundStyle(color)
-                Spacer()
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(color)
             Text(value)
-                .font(.system(size: 22, weight: .bold))
+                .font(.system(size: 22, weight: .bold, design: .rounded))
                 .foregroundStyle(.primary)
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
             Text(title)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .glassEffect(in: .rect(cornerRadius: 20))
     }
 }
 
@@ -221,16 +209,16 @@ struct CostBarRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ItemIconView(item: item, size: 32)
+            ItemIconView(item: item, size: 34)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 HStack {
                     Text(item.name)
                         .font(.system(size: 14, weight: .medium))
                     Spacer()
                     if let monthly = item.monthlyCost {
                         Text(monthly.formatted(.currency(code: item.currency)))
-                            .font(.system(size: 13))
+                            .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -238,20 +226,19 @@ struct CostBarRow: View {
                 GeometryReader { geo in
                     let fraction = max(0, min(1, (item.monthlyCost ?? 0) / maxCost))
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.blue.opacity(0.2))
-                            .frame(width: geo.size.width)
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.blue)
-                            .frame(width: geo.size.width * fraction)
+                        Capsule().fill(Color.blue.opacity(0.12)).frame(width: geo.size.width)
+                        Capsule().fill(
+                            LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing)
+                        )
+                        .frame(width: geo.size.width * fraction)
                     }
                 }
-                .frame(height: 6)
+                .frame(height: 5)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .glassEffect(in: .rect(cornerRadius: 16))
     }
 }
 
@@ -281,8 +268,6 @@ extension View {
         self
 #endif
     }
-
-
 
     func trailingTextAlignment() -> some View {
 #if os(iOS)

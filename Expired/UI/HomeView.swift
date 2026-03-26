@@ -21,13 +21,10 @@ struct HomeView: View {
         }
     }
 
-    // Due within 14 days, not cancelled, not trial
     private var dueSoon: [SubscriptionItem] {
         visibleItems.filter {
-            !$0.isCancelled &&
-            !$0.isTrial &&
-            $0.daysUntilRenewal >= 0 &&
-            $0.daysUntilRenewal <= 14
+            !$0.isCancelled && !$0.isTrial &&
+            $0.daysUntilRenewal >= 0 && $0.daysUntilRenewal <= 14
         }
     }
 
@@ -44,11 +41,7 @@ struct HomeView: View {
     }
 
     private var upcoming: [SubscriptionItem] {
-        visibleItems.filter {
-            !$0.isCancelled &&
-            !$0.isTrial &&
-            $0.daysUntilRenewal > 14
-        }
+        visibleItems.filter { !$0.isCancelled && !$0.isTrial && $0.daysUntilRenewal > 14 }
     }
 
     private var expired: [SubscriptionItem] {
@@ -58,114 +51,105 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Cost totals
-
     private var monthlyTotal: Double {
         allItems.compactMap(\.monthlyCost).reduce(0, +)
     }
 
-    private var yearlyTotal: Double {
-        monthlyTotal * 12
-    }
+    private var yearlyTotal: Double { monthlyTotal * 12 }
+
+    // MARK: - Body
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(spacing: 24) {
-                    // Summary card
-                    if !allItems.isEmpty {
-                        SummaryCardView(
-                            monthlyTotal: monthlyTotal,
-                            yearlyTotal: yearlyTotal,
-                            activeCount: allItems.filter { if case .expired = $0.status { return false }; return true }.count
-                        )
-                        .padding(.horizontal)
-                    }
+            ZStack(alignment: .top) {
+                // Mesh gradient hero backdrop
+                heroBackground
+                    .ignoresSafeArea()
 
-                    // Trials ending — highest urgency
-                    if !trialsEnding.isEmpty {
-                        SectionView(title: "Trials Ending", icon: "clock.badge.exclamationmark", accentColor: .purple) {
-                            ForEach(trialsEnding) { item in
-                                itemRow(item)
+                ScrollView {
+                    LazyVStack(spacing: 20) {
+                        // Hero summary card
+                        if !allItems.isEmpty {
+                            HeroSummaryCard(
+                                monthlyTotal: monthlyTotal,
+                                yearlyTotal: yearlyTotal,
+                                activeCount: allItems.filter {
+                                    if case .expired = $0.status { return false }
+                                    return true
+                                }.count
+                            )
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                        }
+
+                        Group {
+                            if !trialsEnding.isEmpty {
+                                GlassSectionView(title: "Trials Ending", icon: "clock.badge.exclamationmark", accentColor: .purple) {
+                                    ForEach(trialsEnding) { itemRow($0) }
+                                }
+                            }
+
+                            if !dueSoon.isEmpty {
+                                GlassSectionView(title: "Due Soon", icon: "bell.fill", accentColor: .red) {
+                                    ForEach(dueSoon) { itemRow($0) }
+                                }
+                            }
+
+                            if !cancelledActive.isEmpty {
+                                GlassSectionView(title: "Cancelled but Active", icon: "calendar.badge.minus", accentColor: .orange) {
+                                    ForEach(cancelledActive) { itemRow($0) }
+                                }
+                            }
+
+                            if !upcoming.isEmpty {
+                                GlassSectionView(title: "Upcoming", icon: "calendar", accentColor: .blue) {
+                                    ForEach(upcoming) { itemRow($0) }
+                                }
+                            }
+
+                            if !expired.isEmpty {
+                                GlassSectionView(title: "Expired", icon: "xmark.circle", accentColor: .secondary) {
+                                    ForEach(expired) { itemRow($0) }
+                                }
                             }
                         }
                         .padding(.horizontal)
-                    }
 
-                    // Due soon
-                    if !dueSoon.isEmpty {
-                        SectionView(title: "Due Soon", icon: "bell.fill", accentColor: .red) {
-                            ForEach(dueSoon) { item in
-                                itemRow(item)
-                            }
+                        if allItems.isEmpty {
+                            EmptyStateView { showingAdd = true }
+                                .padding(.top, 60)
                         }
-                        .padding(.horizontal)
-                    }
 
-                    // Cancelled but still active
-                    if !cancelledActive.isEmpty {
-                        SectionView(title: "Cancelled but Active", icon: "calendar.badge.minus", accentColor: .orange) {
-                            ForEach(cancelledActive) { item in
-                                itemRow(item)
-                            }
-                        }
-                        .padding(.horizontal)
+                        Spacer(minLength: 100)
                     }
-
-                    // Upcoming
-                    if !upcoming.isEmpty {
-                        SectionView(title: "Upcoming", icon: "calendar", accentColor: .blue) {
-                            ForEach(upcoming) { item in
-                                itemRow(item)
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
-
-                    // Expired
-                    if !expired.isEmpty {
-                        SectionView(title: "Expired", icon: "xmark.circle", accentColor: .gray) {
-                            ForEach(expired) { item in
-                                itemRow(item)
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
-
-                    // Empty state
-                    if allItems.isEmpty {
-                        EmptyStateView {
-                            showingAdd = true
-                        }
-                        .padding(.top, 60)
-                    }
-
-                    Spacer(minLength: 100)
+                    .padding(.top, 8)
                 }
-                .padding(.top, 8)
+                .scrollEdgeEffectStyle(.soft, for: .top)
             }
-            .background(groupedBackground.ignoresSafeArea())
             .navigationTitle("Subscriptions")
             .largeNavigationTitle()
             .searchable(text: $searchText, isPresented: $showSearch, prompt: "Search subscriptions")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showingAdd = true
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 22))
-                            .symbolRenderingMode(.hierarchical)
+                    Button { showingAdd = true } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 16, weight: .semibold))
+                            .padding(8)
                     }
+                    .buttonStyle(.glass)
                 }
             }
-            .sheet(isPresented: $showingAdd) {
-                AddEditSubscriptionView(item: nil)
-            }
-            .sheet(item: $editingItem) { item in
-                AddEditSubscriptionView(item: item)
-            }
+            .sheet(isPresented: $showingAdd) { AddEditSubscriptionView(item: nil) }
+            .sheet(item: $editingItem) { AddEditSubscriptionView(item: $0) }
         }
+    }
+
+    // MARK: - Hero background
+
+    @ViewBuilder
+    private var heroBackground: some View {
+        Rectangle()
+            .fill(groupedBackground)
     }
 
     // MARK: - Row with swipe actions
@@ -173,19 +157,12 @@ struct HomeView: View {
     @ViewBuilder
     private func itemRow(_ item: SubscriptionItem) -> some View {
         SubscriptionRowView(item: item)
-            .onTapGesture {
-                editingItem = item
-            }
+            .onTapGesture { editingItem = item }
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button(role: .destructive) {
-                    deleteItem(item)
-                } label: {
+                Button(role: .destructive) { deleteItem(item) } label: {
                     Label("Delete", systemImage: "trash")
                 }
-
-                Button {
-                    toggleCancelled(item)
-                } label: {
+                Button { toggleCancelled(item) } label: {
                     Label(
                         item.isCancelled ? "Reinstate" : "Cancel",
                         systemImage: item.isCancelled ? "arrow.uturn.left" : "xmark"
@@ -198,27 +175,75 @@ struct HomeView: View {
     // MARK: - Actions
 
     private func deleteItem(_ item: SubscriptionItem) {
-        withAnimation {
-            modelContext.delete(item)
-        }
+        withAnimation { modelContext.delete(item) }
     }
 
     private func toggleCancelled(_ item: SubscriptionItem) {
         withAnimation {
             item.isCancelled.toggle()
-            if item.isCancelled {
-                item.activeUntilDate = item.nextRenewalDate
-            } else {
-                item.activeUntilDate = nil
-            }
+            if item.isCancelled { item.activeUntilDate = item.nextRenewalDate }
+            else { item.activeUntilDate = nil }
             item.updatedAt = Date()
         }
     }
 }
 
-// MARK: - Section Container
+// MARK: - Hero Summary Card
 
-struct SectionView<Content: View>: View {
+struct HeroSummaryCard: View {
+    let monthlyTotal: Double
+    let yearlyTotal: Double
+    let activeCount: Int
+
+    var body: some View {
+        HStack(spacing: 0) {
+            heroItem(
+                label: "Monthly",
+                value: monthlyTotal.formatted(.currency(code: "AUD")),
+                icon: "calendar",
+                color: .blue
+            )
+            Divider().frame(height: 44)
+            heroItem(
+                label: "Yearly",
+                value: yearlyTotal.formatted(.currency(code: "AUD")),
+                icon: "chart.line.uptrend.xyaxis",
+                color: .indigo
+            )
+            Divider().frame(height: 44)
+            heroItem(
+                label: "Active",
+                value: "\(activeCount)",
+                icon: "checkmark.seal.fill",
+                color: .green
+            )
+        }
+        .padding(.vertical, 18)
+        .glassEffect(in: .rect(cornerRadius: 24))
+    }
+
+    @ViewBuilder
+    private func heroItem(label: String, value: String, icon: String, color: Color) -> some View {
+        VStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(color)
+            Text(value)
+                .font(.system(size: 19, weight: .bold, design: .rounded))
+                .foregroundStyle(.primary)
+                .minimumScaleFactor(0.7)
+                .lineLimit(1)
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Glass Section View
+
+struct GlassSectionView<Content: View>: View {
     let title: String
     let icon: String
     let accentColor: Color
@@ -226,16 +251,18 @@ struct SectionView<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
+            // Section header pill
+            HStack(spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(accentColor)
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                    .tracking(0.5)
+                    .font(.system(size: 11, weight: .bold))
+                Text(title.uppercased())
+                    .font(.system(size: 11, weight: .bold))
+                    .tracking(0.6)
             }
+            .foregroundStyle(accentColor)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .glassEffect(.regular.tint(accentColor), in: Capsule())
             .padding(.horizontal, 4)
 
             VStack(spacing: 8) {
@@ -245,73 +272,26 @@ struct SectionView<Content: View>: View {
     }
 }
 
-// MARK: - Summary Card
-
-struct SummaryCardView: View {
-    let monthlyTotal: Double
-    let yearlyTotal: Double
-    let activeCount: Int
-
-    var body: some View {
-        HStack(spacing: 0) {
-            summaryItem(
-                label: "Monthly",
-                value: monthlyTotal.formatted(.currency(code: "AUD"))
-            )
-
-            Divider()
-                .frame(height: 36)
-
-            summaryItem(
-                label: "Yearly",
-                value: yearlyTotal.formatted(.currency(code: "AUD"))
-            )
-
-            Divider()
-                .frame(height: 36)
-
-            summaryItem(
-                label: "Active",
-                value: "\(activeCount)"
-            )
-        }
-        .padding(.vertical, 16)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
-    }
-
-    @ViewBuilder
-    private func summaryItem(label: String, value: String) -> some View {
-        VStack(spacing: 4) {
-            Text(value)
-                .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(.primary)
-            Text(label)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
 // MARK: - Empty State
 
 struct EmptyStateView: View {
     let onAdd: () -> Void
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 24) {
             ZStack {
                 Circle()
-                    .fill(.blue.opacity(0.1))
-                    .frame(width: 80, height: 80)
+                    .fill(.blue.opacity(0.08))
+                    .frame(width: 88, height: 88)
+                    .glassEffect(in: Circle())
                 Image(systemName: "creditcard.fill")
-                    .font(.system(size: 34))
-                    .foregroundStyle(.blue.opacity(0.7))
+                    .font(.system(size: 36))
+                    .foregroundStyle(.blue.opacity(0.8))
             }
 
             VStack(spacing: 8) {
                 Text("No Subscriptions Yet")
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
                 Text("Track your subscriptions,\nfree trials, and documents.")
                     .font(.system(size: 15))
                     .foregroundStyle(.secondary)
@@ -321,11 +301,10 @@ struct EmptyStateView: View {
             Button(action: onAdd) {
                 Label("Add Subscription", systemImage: "plus")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
-                    .background(.blue, in: Capsule())
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 14)
             }
+            .buttonStyle(.glassProminent)
         }
         .padding()
     }

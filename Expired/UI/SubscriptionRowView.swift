@@ -5,39 +5,35 @@ struct SubscriptionRowView: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            // Icon
-            ItemIconView(item: item, size: 46)
+            ItemIconView(item: item, size: 48)
 
-            // Name + date
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(item.name)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.primary)
 
                 dateLabel
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            // Right side: cost + badge
             VStack(alignment: .trailing, spacing: 5) {
                 if let monthly = item.monthlyCost {
                     Text(monthly, format: .currency(code: item.currency))
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary)
                     Text("/ mo")
-                        .font(.system(size: 11))
+                        .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }
-
                 StatusBadge(status: item.status)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 13)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .glassEffect(in: .rect(cornerRadius: 20))
         .contentShape(RoundedRectangle(cornerRadius: 20))
     }
 
@@ -45,25 +41,22 @@ struct SubscriptionRowView: View {
     private var dateLabel: some View {
         switch item.status {
         case .trial(let endsOn):
-            HStack(spacing: 4) {
-                Image(systemName: "clock.badge.exclamationmark")
-                    .foregroundStyle(.purple)
+            HStack(spacing: 3) {
+                Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.purple)
                 Text("Trial ends \(endsOn, style: .relative)")
             }
         case .cancelledButActive(let until):
-            HStack(spacing: 4) {
-                Image(systemName: "calendar.badge.minus")
-                    .foregroundStyle(.orange)
+            HStack(spacing: 3) {
+                Image(systemName: "calendar.badge.minus").foregroundStyle(.orange)
                 Text("Active until \(until.formatted(date: .abbreviated, time: .omitted))")
             }
         case .expired:
-            HStack(spacing: 4) {
-                Image(systemName: "xmark.circle")
-                    .foregroundStyle(.red)
+            HStack(spacing: 3) {
+                Image(systemName: "xmark.circle").foregroundStyle(.red)
                 Text("Expired")
             }
         default:
-            HStack(spacing: 4) {
+            HStack(spacing: 3) {
                 Image(systemName: "calendar")
                 Text(item.nextRelevantDate, style: .date)
             }
@@ -81,8 +74,8 @@ struct ItemIconView: View {
         Group {
             if item.iconSource == .customImage || item.iconSource == .favicon,
                let data = item.iconData,
-               let uiImage = platformImage(from: data) {
-                Image(platformImage: uiImage)
+               let img = platformImage(from: data) {
+                Image(platformImage: img)
                     .resizable()
                     .scaledToFill()
                     .frame(width: size, height: size)
@@ -92,17 +85,18 @@ struct ItemIconView: View {
                     RoundedRectangle(cornerRadius: size * 0.22)
                         .fill(iconGradient)
                     Image(systemName: item.systemIconName)
-                        .font(.system(size: size * 0.44, weight: .semibold))
+                        .font(.system(size: size * 0.42, weight: .semibold))
                         .foregroundStyle(.white)
                 }
                 .frame(width: size, height: size)
             }
         }
+        .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
     }
 
     private var iconGradient: LinearGradient {
-        let colors = gradientColors(for: item.name)
-        return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+        LinearGradient(colors: gradientColors(for: item.name),
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
     private func gradientColors(for name: String) -> [Color] {
@@ -118,15 +112,10 @@ struct ItemIconView: View {
         if lower.contains("microsoft") { return [.blue, .cyan] }
         if lower.contains("adobe") { return [.red, .pink] }
         if lower.contains("passport") || lower.contains("licence") { return [.indigo, .blue] }
-
-        // Hash-based fallback for consistent colours per name
         let hash = abs(name.hashValue)
         let palettes: [[Color]] = [
-            [.blue, .cyan],
-            [.purple, .indigo],
-            [.pink, .orange],
-            [.teal, .green],
-            [.orange, .yellow],
+            [.blue, .cyan], [.purple, .indigo], [.pink, .orange],
+            [.teal, .green], [.orange, .yellow],
             [Color(red: 0.3, green: 0.2, blue: 0.8), .purple],
         ]
         return palettes[hash % palettes.count]
@@ -140,11 +129,11 @@ struct StatusBadge: View {
 
     var body: some View {
         Text(status.label)
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: 10, weight: .bold))
             .foregroundStyle(badgeColor)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(badgeColor.opacity(0.15), in: Capsule())
+            .glassEffect(.regular.tint(badgeColor), in: Capsule())
     }
 
     private var badgeColor: Color {
@@ -164,27 +153,19 @@ struct StatusBadge: View {
 import UIKit
 typealias PlatformImage = UIImage
 
-func platformImage(from data: Data) -> UIImage? {
-    UIImage(data: data)
-}
+func platformImage(from data: Data) -> UIImage? { UIImage(data: data) }
 
 extension Image {
-    init(platformImage: UIImage) {
-        self.init(uiImage: platformImage)
-    }
+    init(platformImage: UIImage) { self.init(uiImage: platformImage) }
 }
 #elseif os(macOS)
 import AppKit
 typealias PlatformImage = NSImage
 
-func platformImage(from data: Data) -> NSImage? {
-    NSImage(data: data)
-}
+func platformImage(from data: Data) -> NSImage? { NSImage(data: data) }
 
 extension Image {
-    init(platformImage: NSImage) {
-        self.init(nsImage: platformImage)
-    }
+    init(platformImage: NSImage) { self.init(nsImage: platformImage) }
 }
 #endif
 
@@ -197,6 +178,5 @@ extension Image {
         SubscriptionRowView(item: PreviewData.gym)
     }
     .padding()
-    .background(Color(white: 0.95))
+    .background(Color(white: 0.92))
 }
-
