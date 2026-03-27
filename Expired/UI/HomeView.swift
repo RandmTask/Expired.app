@@ -93,6 +93,12 @@ struct HomeView: View {
         }
     }
 
+    private var allSectionsEmpty: Bool {
+        trialsEnding.isEmpty && dueSoon.isEmpty && cancelledActive.isEmpty &&
+        upcoming.isEmpty && expiredSubscriptions.isEmpty &&
+        urgentDocuments.isEmpty && upcomingDocuments.isEmpty
+    }
+
     // Documents split by urgency
     private var urgentDocuments: [SubscriptionItem] {
         visibleDocuments.filter { $0.urgency == .critical || $0.urgency == .warning || $0.urgency == .expired }
@@ -136,12 +142,43 @@ struct HomeView: View {
                             .transition(.opacity.combined(with: .move(edge: .top)))
                         }
 
+                        // Active filter chip
+                        if filterOption != .all {
+                            HStack {
+                                Label(filterOption.rawValue, systemImage: "line.3.horizontal.decrease.circle.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                Button {
+                                    filterOptionRaw = FilterOption.all.rawValue
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(.white.opacity(0.8))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.blue, in: Capsule())
+                            .padding(.horizontal)
+                        }
+
                         contentSections
                             .padding(.horizontal)
 
                         if allItems.isEmpty {
                             EmptyStateView { showingAdd = true }
                                 .padding(.top, 60)
+                        } else if allSectionsEmpty && filterOption != .all {
+                            VStack(spacing: 8) {
+                                Image(systemName: "line.3.horizontal.decrease.circle")
+                                    .font(.system(size: 36))
+                                    .foregroundStyle(.secondary)
+                                Text("No \(filterOption.rawValue) subscriptions")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.top, 60)
                         }
 
                         Spacer(minLength: 100)
@@ -240,7 +277,7 @@ struct HomeView: View {
             }
         }
         if !cancelledActive.isEmpty {
-            GlassSectionView(title: "Cancelled but Active", icon: "calendar.badge.minus", accentColor: .orange) {
+            GlassSectionView(title: "Cancelled but Active", icon: "calendar.badge.minus", accentColor: .red) {
                 ForEach(cancelledActive) { itemRow($0) }
             }
         }

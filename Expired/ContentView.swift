@@ -111,14 +111,61 @@ struct InsightsView: View {
     @Query(filter: #Predicate<SubscriptionItem> { !$0.isArchived }) private var allItems: [SubscriptionItem]
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
 
+    enum CostPeriod: String, CaseIterable {
+        case monthly  = "Monthly"
+        case annual   = "Annual"
+        case ytd      = "YTD"
+        case lifetime = "Lifetime"
+    }
+    @State private var costPeriod: CostPeriod = .monthly
+
     private var activeItems: [SubscriptionItem] {
         allItems.filter { if case .expired = $0.status { return false }; return true }
     }
+    private var displayCurrency: String { preferredCurrency }
+
     private var monthlyTotal: Double {
         activeItems.compactMap { $0.monthlyCostConverted(to: preferredCurrency) }.reduce(0, +)
     }
     private var yearlyTotal: Double { monthlyTotal * 12 }
-    private var displayCurrency: String { preferredCurrency }
+
+    /// Year-to-date: monthly total × months elapsed this year (including partial current month)
+    private var ytdTotal: Double {
+        let now = Date()
+        let cal = Calendar.current
+        let dayOfYear = cal.ordinality(of: .day, in: .year, for: now) ?? 1
+        let daysInYear = cal.range(of: .day, in: .year, for: now)?.count ?? 365
+        let yearFraction = Double(dayOfYear) / Double(daysInYear)
+        return yearlyTotal * yearFraction
+    }
+
+    /// Lifetime: sum of (monthly cost × months since createdAt) for each item
+    private var lifetimeTotal: Double {
+        activeItems.reduce(0) { sum, item in
+            guard let monthly = item.monthlyCostConverted(to: preferredCurrency) else { return sum }
+            let months = max(1, Calendar.current.dateComponents([.month], from: item.createdAt, to: Date()).month ?? 1)
+            return sum + monthly * Double(months)
+        }
+    }
+
+    private var displayTotal: Double {
+        switch costPeriod {
+        case .monthly:  return monthlyTotal
+        case .annual:   return yearlyTotal
+        case .ytd:      return ytdTotal
+        case .lifetime: return lifetimeTotal
+        }
+    }
+
+    private var costPeriodIcon: String {
+        switch costPeriod {
+        case .monthly:  return "calendar"
+        case .annual:   return "chart.line.uptrend.xyaxis"
+        case .ytd:      return "calendar.badge.checkmark"
+        case .lifetime: return "infinity"
+        }
+    }
+
     private var autoRenewCount: Int { activeItems.filter(\.isAutoRenew).count }
     private var trialCount: Int { activeItems.filter(\.isTrial).count }
     private var cancelledCount: Int {
@@ -129,7 +176,14 @@ struct InsightsView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    costRow
+                    // Period picker
+                    Picker("Period", selection: $costPeriod) {
+                        ForEach(CostPeriod.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+
+                    costCard
                     countsRow
                     if !activeItems.isEmpty { costBreakdown }
                     Spacer(minLength: 40)
@@ -144,11 +198,13 @@ struct InsightsView: View {
         }
     }
 
-    private var costRow: some View {
-        HStack(spacing: 12) {
-            GlassInsightCard(title: "Monthly", value: CurrencyInfo.format(monthlyTotal, code: displayCurrency), icon: "calendar", color: .blue)
-            GlassInsightCard(title: "Yearly", value: CurrencyInfo.format(yearlyTotal, code: displayCurrency), icon: "chart.line.uptrend.xyaxis", color: .indigo)
-        }
+    private var costCard: some View {
+        GlassInsightCard(
+            title: costPeriod.rawValue + " Cost",
+            value: CurrencyInfo.format(displayTotal, code: displayCurrency),
+            icon: costPeriodIcon,
+            color: .blue
+        )
         .padding(.horizontal)
     }
 
@@ -156,7 +212,7 @@ struct InsightsView: View {
         HStack(spacing: 12) {
             GlassInsightCard(title: "Auto-Renewing", value: "\(autoRenewCount)", icon: "arrow.clockwise", color: .green)
             GlassInsightCard(title: "Free Trials", value: "\(trialCount)", icon: "gift.fill", color: .purple)
-            GlassInsightCard(title: "Cancelled", value: "\(cancelledCount)", icon: "xmark.circle", color: .orange)
+            GlassInsightCard(title: "Cancelled", value: "\(cancelledCount)", icon: "xmark.circle", color: .red)
         }
         .padding(.horizontal)
     }

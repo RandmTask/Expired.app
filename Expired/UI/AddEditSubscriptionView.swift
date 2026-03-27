@@ -60,6 +60,10 @@ struct AddEditSubscriptionView: View {
     // Account field sheets
     @State private var showCurrencyPicker = false
 
+    // Confirmation dialogs
+    @State private var showDeleteConfirmation = false
+    @State private var showArchiveConfirmation = false
+
     // Persistent suggestion store (UserDefaults-backed)
     @AppStorage("savedNames")  private var savedNamesData:  Data = Data()
     @AppStorage("savedCards")  private var savedCardsData:  Data = Data()
@@ -140,6 +144,9 @@ struct AddEditSubscriptionView: View {
             }
             .background(groupedBackground.ignoresSafeArea())
             .scrollEdgeEffectStyle(.soft, for: .top)
+#if os(iOS)
+            .scrollDismissesKeyboard(.interactively)
+#endif
             .navigationTitle(isEditing ? "Edit" : (itemType == .document ? "Add Document" : "Add Subscription"))
             .inlineNavigationTitle()
             .toolbar {
@@ -593,17 +600,26 @@ struct AddEditSubscriptionView: View {
             SectionHeader(title: "Cost")
             FormCard {
                 VStack(spacing: 0) {
-                    FormRow(label: "Amount") {
-                        HStack(spacing: 8) {
+                    // Amount row: "Amount   A$ 55.00   [A$AUD ▾]"
+                    HStack {
+                        Text("Amount")
+                            .font(.system(size: 16))
+                            .frame(minWidth: 80, alignment: .leading)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        HStack(spacing: 3) {
+                            Text(CurrencyInfo.symbol(for: currency))
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(.primary)
                             TextField("0.00", text: $costText)
                                 .foregroundStyle(.primary)
                                 .trailingTextAlignment()
                                 .autocorrectionDisabled()
+                                .frame(minWidth: 60)
 #if os(iOS)
                                 .keyboardType(.decimalPad)
 #endif
                                 .onChange(of: costText) { _, val in
-                                    // Allow partial input while typing (e.g. "1.")
                                     cost = Double(val)
                                 }
                                 .onSubmit {
@@ -611,26 +627,28 @@ struct AddEditSubscriptionView: View {
                                         costText = String(format: "%.2f", c)
                                     }
                                 }
-                            Button {
-                                showCurrencyPicker = true
-                            } label: {
-                                HStack(spacing: 3) {
-                                    Text(CurrencyInfo.symbol(for: currency))
-                                        .font(.system(size: 13, weight: .semibold))
-                                    Text(currency)
-                                        .font(.system(size: 13, weight: .semibold))
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.system(size: 9, weight: .bold))
-                                }
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(Color.secondary.opacity(0.1), in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .currencyPickerPresentation(isPresented: $showCurrencyPicker, selectedCode: $currency)
                         }
+                        Button {
+                            showCurrencyPicker = true
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text(CurrencyInfo.symbol(for: currency))
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text(currency)
+                                    .font(.system(size: 13, weight: .semibold))
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color.secondary.opacity(0.1), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .currencyPickerPresentation(isPresented: $showCurrencyPicker, selectedCode: $currency)
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
                     FormDivider()
                     FormRow(label: "Billing") {
                         Picker("", selection: $billingCycle) {
@@ -732,23 +750,42 @@ struct AddEditSubscriptionView: View {
 
     // MARK: - Delete section
 
+    private var isCurrentlyArchived: Bool { item?.isArchived == true }
+
     private var deleteSection: some View {
         HStack(spacing: 12) {
-            // Archive button
-            Button(action: archiveAndDismiss) {
+            // Archive / Unarchive button
+            Button {
+                showArchiveConfirmation = true
+            } label: {
                 HStack {
                     Spacer()
-                    Label("Archive", systemImage: "archivebox")
+                    Label(isCurrentlyArchived ? "Unarchive" : "Archive",
+                          systemImage: isCurrentlyArchived ? "arrow.uturn.left" : "archivebox")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white)
                     Spacer()
                 }
             }
             .padding(.vertical, 14)
-            .background(Color.indigo, in: RoundedRectangle(cornerRadius: 16))
+            .background(Color.orange, in: RoundedRectangle(cornerRadius: 16))
+            .confirmationDialog(
+                isCurrentlyArchived ? "Unarchive this item?" : "Archive this item?",
+                isPresented: $showArchiveConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(isCurrentlyArchived ? "Unarchive" : "Archive") { archiveAndDismiss() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(isCurrentlyArchived
+                    ? "This item will be moved back to your active list."
+                    : "This item will be hidden from your main list and stored in the Archive.")
+            }
 
             // Delete button
-            Button(role: .destructive, action: deleteAndDismiss) {
+            Button {
+                showDeleteConfirmation = true
+            } label: {
                 HStack {
                     Spacer()
                     Label("Delete", systemImage: "trash")
@@ -759,6 +796,16 @@ struct AddEditSubscriptionView: View {
             }
             .padding(.vertical, 14)
             .background(Color.red, in: RoundedRectangle(cornerRadius: 16))
+            .confirmationDialog(
+                "Delete this \(itemType.rawValue.lowercased())?",
+                isPresented: $showDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) { deleteAndDismiss() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This cannot be undone.")
+            }
         }
     }
 
@@ -910,7 +957,7 @@ struct AddEditSubscriptionView: View {
 
     private func archiveAndDismiss() {
         if let item {
-            item.isArchived = true
+            item.isArchived = !item.isArchived
             item.updatedAt = Date()
         }
         dismiss()
@@ -1248,16 +1295,18 @@ struct StatusChip: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Image(systemName: isOn ? "\(icon).circle.fill" : "\(icon).circle")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 16, height: 16)  // fixed frame prevents symbol size variance
-                Text(label)
                     .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 14, height: 14)
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .minimumScaleFactor(0.85)
+                    .lineLimit(1)
             }
             .foregroundStyle(isOn ? color : Color.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
             .background(isOn ? color.opacity(0.14) : Color.secondary.opacity(0.08),
                         in: RoundedRectangle(cornerRadius: 10))
