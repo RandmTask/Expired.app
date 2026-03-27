@@ -35,8 +35,6 @@ struct AddEditSubscriptionView: View {
     @State private var showIconMenu = false
     @State private var showPhotoPicker = false
     @State private var showFilePicker = false
-    @State private var showURLEntry = false
-    @State private var iconURLText = ""
     @State private var photoPickerItem: PhotosPickerItem? = nil
     @State private var isDropTargeted = false
     @State private var showImagePlayground = false
@@ -392,7 +390,6 @@ struct AddEditSubscriptionView: View {
                 Button("Choose Photo") { showPhotoPicker = true }
                 Button("Choose File") { showFilePicker = true }
                 Button("Paste Image") { pasteImageFromClipboard() }
-                Button("Enter URL") { iconURLText = ""; showURLEntry = true }
                 if iconData != nil {
                     Button("Remove Icon", role: .destructive) { clearIcon() }
                 }
@@ -443,17 +440,6 @@ struct AddEditSubscriptionView: View {
                     iconSource = .customImage
                 }
             }
-            .alert("Image URL", isPresented: $showURLEntry) {
-                TextField("https://example.com/logo.png", text: $iconURLText)
-#if os(iOS)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-#endif
-                Button("Fetch") { fetchIconFromURL(iconURLText) }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Enter an image URL or App Store app URL")
-            }
             // Drag and drop (both platforms)
             .dropDestination(for: Data.self) { items, _ in
                 guard let data = items.first, FaviconFetcher.isImage(data) else { return false }
@@ -491,11 +477,6 @@ struct AddEditSubscriptionView: View {
     private var macIconMenuContent: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button("Choose Image File…") { showIconMenu = false; showFilePicker = true }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            Divider()
-            Button("Enter Image URL…") { showIconMenu = false; showURLEntry = true }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -542,21 +523,6 @@ struct AddEditSubscriptionView: View {
         iconSource = .system
     }
 
-    private func fetchIconFromURL(_ urlString: String) {
-        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        isFetchingIcon = true
-        Task {
-            let data = await FaviconFetcher.fetch(from: trimmed)
-            await MainActor.run {
-                if let data {
-                    iconData = data
-                    iconSource = .customImage
-                }
-                isFetchingIcon = false
-            }
-        }
-    }
 
     // MARK: - Status section (chips + date + cost)
 

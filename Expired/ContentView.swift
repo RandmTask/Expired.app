@@ -741,19 +741,24 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    DatePicker(
-                        selection: Binding(
-                            get: { notificationTime },
-                            set: { newDate in
-                                let comps = Calendar.current.dateComponents([.hour, .minute], from: newDate)
-                                notificationHour   = comps.hour   ?? 9
-                                notificationMinute = comps.minute ?? 0
-                            }
-                        ),
-                        displayedComponents: .hourAndMinute
-                    ) {
+                    HStack {
                         Label("Reminder Time", systemImage: "clock")
                             .foregroundStyle(.primary, .secondary)
+                        Spacer()
+                        DatePicker(
+                            "",
+                            selection: Binding(
+                                get: { notificationTime },
+                                set: { newDate in
+                                    let comps = Calendar.current.dateComponents([.hour, .minute], from: newDate)
+                                    notificationHour   = comps.hour   ?? 9
+                                    notificationMinute = comps.minute ?? 0
+                                }
+                            ),
+                            displayedComponents: .hourAndMinute
+                        )
+                        .labelsHidden()
+                        .fixedSize()
                     }
                 } header: {
                     Text("Notifications")
