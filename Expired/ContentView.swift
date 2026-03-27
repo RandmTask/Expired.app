@@ -217,15 +217,42 @@ struct InsightsView: View {
         .padding(.horizontal)
     }
 
+    /// Multiplier to convert monthly cost to the selected period's cost
+    private var periodMultiplier: Double {
+        switch costPeriod {
+        case .monthly:  return 1.0
+        case .annual:   return 12.0
+        case .ytd:
+            let cal = Calendar.current
+            let now = Date()
+            let dayOfYear = cal.ordinality(of: .day, in: .year, for: now) ?? 1
+            let daysInYear = cal.range(of: .day, in: .year, for: now)?.count ?? 365
+            return 12.0 * Double(dayOfYear) / Double(daysInYear)
+        case .lifetime:
+            return 1.0  // handled per-item in periodCost(for:)
+        }
+    }
+
+    private func periodCost(for item: SubscriptionItem) -> Double {
+        guard let monthly = item.monthlyCostConverted(to: preferredCurrency) else { return 0 }
+        if costPeriod == .lifetime {
+            let months = max(1, Calendar.current.dateComponents([.month], from: item.createdAt, to: Date()).month ?? 1)
+            return monthly * Double(months)
+        }
+        return monthly * periodMultiplier
+    }
+
     private var costBreakdown: some View {
-        let sorted = activeItems.sorted { ($0.monthlyCost ?? 0) > ($1.monthlyCost ?? 0) }.prefix(6)
-        let maxCost = activeItems.compactMap(\.monthlyCost).max() ?? 1
+        let itemsWithCost = activeItems
+            .filter { $0.monthlyCostConverted(to: preferredCurrency) != nil }
+            .sorted { periodCost(for: $0) > periodCost(for: $1) }
+        let maxCost = itemsWithCost.map { periodCost(for: $0) }.first ?? 1
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 5) {
                 Image(systemName: "list.number")
                     .font(.system(size: 11, weight: .bold))
-                Text("TOP BY COST")
+                Text("BY COST")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(0.6)
             }
@@ -233,8 +260,13 @@ struct InsightsView: View {
             .padding(.horizontal, 4)
 
             VStack(spacing: 8) {
-                ForEach(Array(sorted)) { item in
-                    CostBarRow(item: item, maxCost: maxCost)
+                ForEach(itemsWithCost) { item in
+                    CostBarRow(
+                        item: item,
+                        displayCost: periodCost(for: item),
+                        displayCurrency: preferredCurrency,
+                        maxCost: maxCost
+                    )
                 }
             }
         }
@@ -270,6 +302,8 @@ struct GlassInsightCard: View {
 
 struct CostBarRow: View {
     let item: SubscriptionItem
+    let displayCost: Double
+    let displayCurrency: String
     let maxCost: Double
 
     var body: some View {
@@ -281,15 +315,13 @@ struct CostBarRow: View {
                     Text(item.name)
                         .font(.system(size: 14, weight: .medium))
                     Spacer()
-                    if let monthly = item.monthlyCost {
-                        Text(monthly.formatted(.currency(code: item.currency)))
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(CurrencyInfo.format(displayCost, code: displayCurrency))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
 
                 GeometryReader { geo in
-                    let fraction = max(0, min(1, (item.monthlyCost ?? 0) / maxCost))
+                    let fraction = maxCost > 0 ? max(0, min(1, displayCost / maxCost)) : 0
                     ZStack(alignment: .leading) {
                         Capsule().fill(Color.blue.opacity(0.12)).frame(width: geo.size.width)
                         Capsule().fill(
@@ -490,24 +522,50 @@ struct SettingsView: View {
                     } label: {
                         HStack {
                             Label("Base Currency", systemImage: "dollarsign.circle")
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(.primary, .secondary)
                             Spacer()
                             Text("\(CurrencyInfo.symbol(for: preferredCurrency)) \(preferredCurrency)")
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(.secondary)
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(.tertiary)
                         }
                     }
                     .foregroundStyle(.primary)
-                    Picker(selection: $appearanceMode) {
-                        Text("System").tag(0)
-                        Text("Light").tag(1)
-                        Text("Dark").tag(2)
+                    // Appearance row — custom button to avoid Picker opacity bug when alerts appear
+                    Button {
+                        appearanceMode = (appearanceMode + 1) % 3
                     } label: {
-                        Label("Appearance", systemImage: "paintbrush")
+                        HStack {
+                            Label("Appearance", systemImage: "paintbrush")
+                                .foregroundStyle(.primary, .secondary)
+                            Spacer()
+                            Menu {
+                                Button { appearanceMode = 0 } label: {
+                                    if appearanceMode == 0 { Label("System", systemImage: "checkmark") }
+                                    else { Text("System") }
+                                }
+                                Button { appearanceMode = 1 } label: {
+                                    if appearanceMode == 1 { Label("Light", systemImage: "checkmark") }
+                                    else { Text("Light") }
+                                }
+                                Button { appearanceMode = 2 } label: {
+                                    if appearanceMode == 2 { Label("Dark", systemImage: "checkmark") }
+                                    else { Text("Dark") }
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
+                                        .foregroundStyle(.secondary)
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .tint(.primary)
+                    .buttonStyle(.plain)
                 } header: {
                     Text("Display")
                 } footer: {
@@ -517,6 +575,7 @@ struct SettingsView: View {
                 Section {
                     Toggle(isOn: $iCloudSyncEnabled) {
                         Label("iCloud Sync", systemImage: "icloud")
+                            .foregroundStyle(.primary, .secondary)
                     }
                     .onChange(of: iCloudSyncEnabled) { _, _ in
                         showRestartAlert = true
@@ -535,7 +594,7 @@ struct SettingsView: View {
                     } label: {
                         HStack {
                             Label("Sync Now", systemImage: isSyncing ? "arrow.triangle.2.circlepath" : "arrow.clockwise.icloud")
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(.primary, .secondary)
                             if isSyncing {
                                 Spacer()
                                 ProgressView().controlSize(.small)
@@ -555,6 +614,7 @@ struct SettingsView: View {
                     } label: {
                         HStack {
                             Label("Archive", systemImage: "archivebox")
+                                .foregroundStyle(.primary, .secondary)
                             Spacer()
                             if !archivedItems.isEmpty {
                                 Text("\(archivedItems.count)")
@@ -566,6 +626,7 @@ struct SettingsView: View {
                         CategoriesView()
                     } label: {
                         Label("Categories", systemImage: "square.grid.2x2")
+                            .foregroundStyle(.primary, .secondary)
                     }
                     Button {
                         refreshAllFavicons()

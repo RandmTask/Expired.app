@@ -846,8 +846,14 @@ struct AddEditSubscriptionView: View {
         if let e = item.expiryDate { expiryDate = e }
         isAutoRenew = item.isAutoRenew
         isCancelled = item.isCancelled
-        isTrial = item.isTrial
-        if let t = item.trialEndDate { trialEndDate = t }
+        // Populate isTrial from whether a future trialEndDate exists, not item.isTrial
+        // (item.isTrial returns false when isCancelled is true, losing the trial state)
+        if let t = item.trialEndDate, t > Date() {
+            isTrial = true
+            trialEndDate = t
+        } else if let t = item.trialEndDate {
+            trialEndDate = t
+        }
         if let u = item.activeUntilDate { activeUntilDate = u }
         if let c = item.cost { costText = String(format: "%.2f", c) }
         cost = item.cost
