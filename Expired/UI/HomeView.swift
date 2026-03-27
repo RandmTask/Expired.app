@@ -16,11 +16,17 @@ struct HomeView: View {
     @State private var searchText = ""
 
     // Sort & filter
-    enum SortOrder: String, CaseIterable { case renewalDate = "Renewal Date"; case name = "Name"; case cost = "Cost" }
+    enum SortOrder: String, CaseIterable {
+        case status      = "Status"
+        case category    = "Category"
+        case name        = "Name"
+        case renewalDate = "Renewal Date"
+        case price       = "Price"
+    }
     enum FilterOption: String, CaseIterable { case all = "All"; case autoRenew = "Auto-Renew"; case trials = "Trials"; case cancelled = "Cancelled"; case expired = "Expired" }
-    @AppStorage("homeSortOrder") private var sortOrderRaw: String = SortOrder.renewalDate.rawValue
+    @AppStorage("homeSortOrder") private var sortOrderRaw: String = SortOrder.status.rawValue
     @AppStorage("homeFilterOption") private var filterOptionRaw: String = FilterOption.all.rawValue
-    private var sortOrder: SortOrder { SortOrder(rawValue: sortOrderRaw) ?? .renewalDate }
+    private var sortOrder: SortOrder { SortOrder(rawValue: sortOrderRaw) ?? .status }
     private var filterOption: FilterOption { FilterOption(rawValue: filterOptionRaw) ?? .all }
 
     // MARK: - Filtered groups
@@ -29,9 +35,11 @@ struct HomeView: View {
 
     private func applySort(_ items: [SubscriptionItem]) -> [SubscriptionItem] {
         switch sortOrder {
-        case .renewalDate: return items.sorted { $0.nextRelevantDate < $1.nextRelevantDate }
+        case .status:      return items.sorted { $0.nextRelevantDate < $1.nextRelevantDate }
+        case .category:    return items.sorted { ($0.categoryRaw ?? "zzz").localizedCompare($1.categoryRaw ?? "zzz") == .orderedAscending }
         case .name:        return items.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
-        case .cost:        return items.sorted { ($0.monthlyCost ?? 0) > ($1.monthlyCost ?? 0) }
+        case .renewalDate: return items.sorted { $0.nextRelevantDate < $1.nextRelevantDate }
+        case .price:       return items.sorted { ($0.monthlyCost ?? 0) > ($1.monthlyCost ?? 0) }
         }
     }
 
@@ -94,9 +102,14 @@ struct HomeView: View {
     }
 
     private var allSectionsEmpty: Bool {
-        trialsEnding.isEmpty && dueSoon.isEmpty && cancelledActive.isEmpty &&
-        upcoming.isEmpty && expiredSubscriptions.isEmpty &&
-        urgentDocuments.isEmpty && upcomingDocuments.isEmpty
+        switch sortOrder {
+        case .status:
+            return trialsEnding.isEmpty && dueSoon.isEmpty && cancelledActive.isEmpty &&
+                   upcoming.isEmpty && expiredSubscriptions.isEmpty &&
+                   urgentDocuments.isEmpty && upcomingDocuments.isEmpty
+        default:
+            return visibleSubscriptions.isEmpty && urgentDocuments.isEmpty && upcomingDocuments.isEmpty
+        }
     }
 
     // Documents split by urgency
@@ -266,6 +279,19 @@ struct HomeView: View {
 
     @ViewBuilder
     private var contentSections: some View {
+        switch sortOrder {
+        case .status:
+            statusSections
+        case .category:
+            categorySections
+        default:
+            flatSections
+        }
+    }
+
+    /// Status-grouped view (original layout)
+    @ViewBuilder
+    private var statusSections: some View {
         if !trialsEnding.isEmpty {
             GlassSectionView(title: "Trials Ending", icon: "clock.badge.exclamationmark", accentColor: .purple) {
                 ForEach(trialsEnding) { itemRow($0) }
@@ -300,6 +326,90 @@ struct HomeView: View {
             GlassSectionView(title: "Documents", icon: "doc.text.fill", accentColor: .indigo) {
                 ForEach(upcomingDocuments) { itemRow($0) }
             }
+        }
+    }
+
+    private struct CategoryGroup: Identifiable {
+        let id: String
+        let title: String
+        let icon: String
+        let items: [SubscriptionItem]
+    }
+
+    private var categoryGroups: [CategoryGroup] {
+        let filtered = applyFilter(visibleItems.filter { $0.itemType == .subscription })
+        let builtInKeys = SubscriptionCategory.allCases.map { $0.rawValue }
+        let userKeys = UserCategoryStore.load().map { $0.name }
+        var groups: [CategoryGroup] = []
+        for key in (builtInKeys + userKeys) {
+            let items = filtered.filter { $0.categoryRaw == key }
+            guard !items.isEmpty else { continue }
+            let title: String
+            let icon: String
+            if let cat = SubscriptionCategory(rawValue: key) {
+                title = cat.displayName; icon = cat.icon
+            } else {
+                title = key; icon = UserCategoryStore.icon(for: key)
+            }
+            groups.append(CategoryGroup(id: key, title: title, icon: icon, items: items))
+        }
+        let uncatItems = filtered.filter { $0.categoryRaw == nil }
+        if !uncatItems.isEmpty {
+            groups.append(CategoryGroup(id: "__none__", title: "Uncategorised", icon: "square.grid.2x2", items: uncatItems))
+        }
+        return groups
+    }
+
+    /// Category-grouped view
+    @ViewBuilder
+    private var categorySections: some View {
+        ForEach(categoryGroups) { group in
+            GlassSectionView(title: group.title, icon: group.icon, accentColor: .blue) {
+                ForEach(group.items) { itemRow($0) }
+            }
+        }
+        if !urgentDocuments.isEmpty {
+            GlassSectionView(title: "Documents — Action Needed", icon: "exclamationmark.triangle.fill", accentColor: .orange) {
+                ForEach(urgentDocuments) { itemRow($0) }
+            }
+        }
+        if !upcomingDocuments.isEmpty {
+            GlassSectionView(title: "Documents", icon: "doc.text.fill", accentColor: .indigo) {
+                ForEach(upcomingDocuments) { itemRow($0) }
+            }
+        }
+    }
+
+    /// Flat single-section view for name/renewal date/price sorts
+    private var flatSortedSubscriptions: [SubscriptionItem] {
+        applySort(applyFilter(visibleItems.filter { $0.itemType == .subscription }))
+    }
+
+    @ViewBuilder
+    private var flatSections: some View {
+        if !flatSortedSubscriptions.isEmpty {
+            GlassSectionView(title: sortOrder.rawValue, icon: sortSectionIcon, accentColor: .blue) {
+                ForEach(flatSortedSubscriptions) { itemRow($0) }
+            }
+        }
+        if !urgentDocuments.isEmpty {
+            GlassSectionView(title: "Documents — Action Needed", icon: "exclamationmark.triangle.fill", accentColor: .orange) {
+                ForEach(urgentDocuments) { itemRow($0) }
+            }
+        }
+        if !upcomingDocuments.isEmpty {
+            GlassSectionView(title: "Documents", icon: "doc.text.fill", accentColor: .indigo) {
+                ForEach(upcomingDocuments) { itemRow($0) }
+            }
+        }
+    }
+
+    private var sortSectionIcon: String {
+        switch sortOrder {
+        case .name:        return "textformat.abc"
+        case .renewalDate: return "calendar"
+        case .price:       return "dollarsign.circle"
+        default:           return "list.bullet"
         }
     }
 

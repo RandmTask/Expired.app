@@ -723,10 +723,12 @@ struct SettingsView: View {
                                 HStack(spacing: 4) {
                                     Text(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
                                         .foregroundStyle(.secondary)
+                                        .fixedSize()
                                     Image(systemName: "chevron.up.chevron.down")
                                         .font(.system(size: 10, weight: .semibold))
                                         .foregroundStyle(.tertiary)
                                 }
+                                .animation(nil, value: appearanceMode)
                             }
                             .buttonStyle(.plain)
                         }
@@ -848,7 +850,9 @@ struct SettingsView: View {
 
     private func refreshAllFavicons() {
         let itemsWithURL = allItems.filter {
-            !$0.url.isEmpty && $0.iconSource != .customImage
+            !$0.url.isEmpty &&
+            $0.iconSource != .customImage &&
+            $0.iconSource != .appBundle
         }
         guard !itemsWithURL.isEmpty else { return }
         isRefreshingFavicons = true

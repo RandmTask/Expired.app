@@ -24,6 +24,8 @@ struct AddEditSubscriptionView: View {
     @State private var isTrial = false
     @State private var trialEndDate = Calendar.current.date(byAdding: .day, value: 14, to: Date()) ?? Date()
     @State private var activeUntilDate = Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date()
+    // Single date shown in the status row — doesn't change when chips are toggled
+    @State private var statusDate = Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date()
 
     // Icon
     @State private var iconData: Data? = nil
@@ -211,7 +213,7 @@ struct AddEditSubscriptionView: View {
 
     private var basicSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: itemType == .document ? "Document" : "Subscription")
+            SectionHeader(title: itemType == .document ? "Document" : "Details")
             FormCard {
                 VStack(spacing: 0) {
                     // Name + icon
@@ -339,6 +341,7 @@ struct AddEditSubscriptionView: View {
                                         Image(systemName: UserCategoryStore.icon(for: raw))
                                             .font(.system(size: 13))
                                         Text(SubscriptionCategory(rawValue: raw)?.displayName ?? raw)
+                                            .fixedSize()
                                     } else {
                                         Text("None")
                                             .foregroundStyle(.secondary)
@@ -348,6 +351,7 @@ struct AddEditSubscriptionView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 .foregroundStyle(selectedCategoryRaw != nil ? .primary : .secondary)
+                                .animation(nil, value: selectedCategoryRaw)
                             }
                             .menuStyle(.borderlessButton)
                         }
@@ -601,11 +605,9 @@ struct AddEditSubscriptionView: View {
 
                     FormDivider()
                     FormRow(label: isCancelled ? "Active Until" : isTrial ? "Trial Ends" : "Renews") {
-                        DatePicker("", selection: isCancelled ? $activeUntilDate : isTrial ? $trialEndDate : $nextRenewalDate,
-                                   displayedComponents: .date)
+                        DatePicker("", selection: $statusDate, displayedComponents: .date)
                             .labelsHidden()
                     }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
 
                     FormDivider()
                     // Amount row
@@ -867,6 +869,14 @@ struct AddEditSubscriptionView: View {
             trialEndDate = t
         }
         if let u = item.activeUntilDate { activeUntilDate = u }
+        // statusDate: show the most relevant date for the current status
+        if item.isCancelled, let u = item.activeUntilDate {
+            statusDate = u
+        } else if let t = item.trialEndDate, t > Date() {
+            statusDate = t
+        } else {
+            statusDate = item.nextRenewalDate
+        }
         if let c = item.cost { costText = CurrencyInfo.formatForEntry(c, code: item.currency) }
         cost = item.cost
         currency = item.currency
@@ -912,14 +922,14 @@ struct AddEditSubscriptionView: View {
             existing.url = isDoc ? "" : trimmedURL
             existing.iconData = iconData
             existing.iconSource = resolvedIconSource
-            existing.nextRenewalDate = nextRenewalDate
+            existing.nextRenewalDate = (!isDoc && !isCancelled && !isTrial) ? statusDate : nextRenewalDate
             existing.expiryDate = isDoc ? expiryDate : nil
             existing.validFromDate = isDoc ? validFromDate : nil
             existing.documentNumber = isDoc ? trimmedDocNum.isEmpty ? nil : trimmedDocNum : nil
             existing.isAutoRenew = isDoc ? false : isAutoRenew
             existing.isCancelled = isDoc ? false : isCancelled
-            existing.trialEndDate = (!isDoc && isTrial) ? trialEndDate : nil
-            existing.activeUntilDate = (!isDoc && isCancelled) ? activeUntilDate : nil
+            existing.trialEndDate = (!isDoc && isTrial) ? statusDate : nil
+            existing.activeUntilDate = (!isDoc && isCancelled) ? statusDate : nil
             existing.cost = isDoc ? nil : cost
             existing.currency = currency
             existing.billingCycle = billingCycle
@@ -940,12 +950,12 @@ struct AddEditSubscriptionView: View {
                 cost: isDoc ? nil : cost,
                 currency: currency,
                 billingCycle: billingCycle,
-                nextRenewalDate: nextRenewalDate,
-                trialEndDate: (!isDoc && isTrial) ? trialEndDate : nil,
+                nextRenewalDate: (!isDoc && !isCancelled && !isTrial) ? statusDate : nextRenewalDate,
+                trialEndDate: (!isDoc && isTrial) ? statusDate : nil,
                 expiryDate: isDoc ? expiryDate : nil,
                 isAutoRenew: isDoc ? false : isAutoRenew,
                 isCancelled: isDoc ? false : isCancelled,
-                activeUntilDate: (!isDoc && isCancelled) ? activeUntilDate : nil,
+                activeUntilDate: (!isDoc && isCancelled) ? statusDate : nil,
                 personName: trimmedPersonName,
                 paymentMethod: trimmedPayment,
                 emailUsed: trimmedEmail,
