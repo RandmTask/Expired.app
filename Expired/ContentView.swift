@@ -13,9 +13,6 @@ struct ContentView: View {
             Tab("Insights", systemImage: "chart.bar") {
                 InsightsView()
             }
-            Tab("Archive", systemImage: "archivebox") {
-                ArchiveView()
-            }
             Tab("Settings", systemImage: "gear") {
                 SettingsView()
             }
@@ -327,6 +324,51 @@ struct ArchiveView: View {
     }
 }
 
+// MARK: - Categories View
+
+struct CategoriesView: View {
+    @Query(filter: #Predicate<SubscriptionItem> { !$0.isArchived && $0.itemTypeRaw == "subscription" })
+    private var allSubscriptions: [SubscriptionItem]
+
+    private func count(for category: SubscriptionCategory) -> Int {
+        allSubscriptions.filter { $0.category == category }.count
+    }
+
+    private var uncategorisedCount: Int {
+        allSubscriptions.filter { $0.category == nil }.count
+    }
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(SubscriptionCategory.allCases, id: \.self) { cat in
+                    HStack {
+                        Label(cat.rawValue, systemImage: cat.icon)
+                        Spacer()
+                        let n = count(for: cat)
+                        if n > 0 {
+                            Text("\(n)")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                HStack {
+                    Label("Uncategorised", systemImage: "circle.dashed")
+                    Spacer()
+                    if uncategorisedCount > 0 {
+                        Text("\(uncategorisedCount)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } footer: {
+                Text("Assign categories when adding or editing a subscription.")
+            }
+        }
+        .navigationTitle("Categories")
+        .largeNavigationTitle()
+    }
+}
+
 // MARK: - Cross-platform helpers (shared across files)
 
 var groupedBackground: Color {
@@ -463,6 +505,11 @@ struct SettingsView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                    }
+                    NavigationLink {
+                        CategoriesView()
+                    } label: {
+                        Label("Categories", systemImage: "square.grid.2x2")
                     }
                     Button {
                         refreshAllFavicons()

@@ -60,7 +60,7 @@ struct SubscriptionRowView: View {
             }
         case .cancelledButActive(let until):
             HStack(spacing: 3) {
-                Image(systemName: "calendar.badge.minus").foregroundStyle(.orange)
+                Image(systemName: "calendar.badge.minus").foregroundStyle(.red)
                 Text("Active until \(until.formatted(date: .abbreviated, time: .omitted))")
             }
         case .expired:
@@ -231,7 +231,7 @@ struct StatusBadge: View {
         switch status {
         case .autoRenew:         return .green
         case .manualRenew:       return itemType == .document ? .indigo : .blue
-        case .cancelledButActive: return .orange
+        case .cancelledButActive: return .red
         case .expired:           return .red
         case .trial:             return .purple
         }

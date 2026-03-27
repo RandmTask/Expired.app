@@ -305,22 +305,14 @@ struct AddEditSubscriptionView: View {
                                 Button {
                                     category = nil
                                 } label: {
-                                    if category == nil {
-                                        Label("None", systemImage: "checkmark")
-                                    } else {
-                                        Text("None")
-                                    }
+                                    Label("None", systemImage: category == nil ? "checkmark" : "circle")
                                 }
                                 Divider()
                                 ForEach(SubscriptionCategory.allCases, id: \.self) { cat in
                                     Button {
                                         category = cat
                                     } label: {
-                                        if category == cat {
-                                            Label(cat.rawValue, systemImage: "checkmark")
-                                        } else {
-                                            Label(cat.rawValue, systemImage: cat.icon)
-                                        }
+                                        Label(cat.rawValue, systemImage: cat.icon)
                                     }
                                 }
                             } label: {
@@ -543,7 +535,7 @@ struct AddEditSubscriptionView: View {
             FormCard {
                 VStack(spacing: 0) {
                     // Three status chips on one row
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         StatusChip(
                             label: "Auto-Renews",
                             icon: "arrow.clockwise",
@@ -570,7 +562,7 @@ struct AddEditSubscriptionView: View {
                         StatusChip(
                             label: "Cancelled",
                             icon: "xmark",
-                            color: .orange,
+                            color: .red,
                             isOn: isCancelled
                         ) {
                             isCancelled.toggle()
@@ -741,17 +733,33 @@ struct AddEditSubscriptionView: View {
     // MARK: - Delete section
 
     private var deleteSection: some View {
-        Button(role: .destructive, action: deleteAndDismiss) {
-            HStack {
-                Spacer()
-                Label("Delete \(itemType.rawValue)", systemImage: "trash")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-                Spacer()
+        HStack(spacing: 12) {
+            // Archive button
+            Button(action: archiveAndDismiss) {
+                HStack {
+                    Spacer()
+                    Label("Archive", systemImage: "archivebox")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                }
             }
+            .padding(.vertical, 14)
+            .background(Color.indigo, in: RoundedRectangle(cornerRadius: 16))
+
+            // Delete button
+            Button(role: .destructive, action: deleteAndDismiss) {
+                HStack {
+                    Spacer()
+                    Label("Delete", systemImage: "trash")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                }
+            }
+            .padding(.vertical, 14)
+            .background(Color.red, in: RoundedRectangle(cornerRadius: 16))
         }
-        .padding(.vertical, 14)
-        .background(Color.red, in: RoundedRectangle(cornerRadius: 16))
     }
 
     // MARK: - Favicon fetch (debounced)
@@ -896,6 +904,14 @@ struct AddEditSubscriptionView: View {
         if let item {
             NotificationManager.shared.removeAll(for: item)
             modelContext.delete(item)
+        }
+        dismiss()
+    }
+
+    private func archiveAndDismiss() {
+        if let item {
+            item.isArchived = true
+            item.updatedAt = Date()
         }
         dismiss()
     }
