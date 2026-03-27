@@ -50,8 +50,9 @@ struct AddEditSubscriptionView: View {
     // Account
     @State private var personName = ""
 
-    // Category
-    @State private var category: SubscriptionCategory? = nil
+    // Category (stored as raw name string to support both built-in and user-defined categories)
+    @State private var selectedCategoryRaw: String? = nil
+    @State private var userCategories: [UserCategory] = []
 
     // Reminders & notes
     @State private var notifications: [NotificationRule] = []
@@ -63,6 +64,9 @@ struct AddEditSubscriptionView: View {
     // Confirmation dialogs
     @State private var showDeleteConfirmation = false
     @State private var showArchiveConfirmation = false
+
+    // Focus tracking for cost field formatting
+    @FocusState private var costFieldFocused: Bool
 
     // Persistent suggestion store (UserDefaults-backed)
     @AppStorage("savedNames")  private var savedNamesData:  Data = Data()
@@ -162,6 +166,7 @@ struct AddEditSubscriptionView: View {
         }
         .onAppear {
             if currency.isEmpty { currency = preferredCurrency }
+            userCategories = UserCategoryStore.load()
             populateFromItem()
         }
         .presentationDetents([.large])
@@ -310,24 +315,34 @@ struct AddEditSubscriptionView: View {
                         FormRow(label: "Category") {
                             Menu {
                                 Button {
-                                    category = nil
+                                    selectedCategoryRaw = nil
                                 } label: {
-                                    Label("None", systemImage: category == nil ? "checkmark" : "circle")
+                                    Label("None", systemImage: selectedCategoryRaw == nil ? "checkmark" : "circle")
                                 }
                                 Divider()
                                 ForEach(SubscriptionCategory.allCases, id: \.self) { cat in
                                     Button {
-                                        category = cat
+                                        selectedCategoryRaw = cat.rawValue
                                     } label: {
                                         Label(cat.rawValue, systemImage: cat.icon)
                                     }
                                 }
+                                if !userCategories.isEmpty {
+                                    Divider()
+                                    ForEach(userCategories) { cat in
+                                        Button {
+                                            selectedCategoryRaw = cat.name
+                                        } label: {
+                                            Label(cat.name, systemImage: cat.icon)
+                                        }
+                                    }
+                                }
                             } label: {
                                 HStack(spacing: 4) {
-                                    if let cat = category {
-                                        Image(systemName: cat.icon)
+                                    if let raw = selectedCategoryRaw {
+                                        Image(systemName: UserCategoryStore.icon(for: raw))
                                             .font(.system(size: 13))
-                                        Text(cat.rawValue)
+                                        Text(raw)
                                     } else {
                                         Text("None")
                                             .foregroundStyle(.secondary)
@@ -336,7 +351,7 @@ struct AddEditSubscriptionView: View {
                                         .font(.system(size: 10, weight: .bold))
                                         .foregroundStyle(.secondary)
                                 }
-                                .foregroundStyle(category != nil ? .primary : .secondary)
+                                .foregroundStyle(selectedCategoryRaw != nil ? .primary : .secondary)
                             }
                             .menuStyle(.borderlessButton)
                         }
@@ -600,34 +615,39 @@ struct AddEditSubscriptionView: View {
             SectionHeader(title: "Cost")
             FormCard {
                 VStack(spacing: 0) {
-                    // Amount row: "Amount   A$ 55.00   [A$AUD ▾]"
+                    // Amount row: "Amount   55.00   [A$AUD ▾]"
                     HStack {
                         Text("Amount")
                             .font(.system(size: 16))
                             .frame(minWidth: 80, alignment: .leading)
                             .foregroundStyle(.primary)
                         Spacer()
-                        HStack(spacing: 3) {
-                            Text(CurrencyInfo.symbol(for: currency))
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(.primary)
-                            TextField("0.00", text: $costText)
-                                .foregroundStyle(.primary)
-                                .trailingTextAlignment()
-                                .autocorrectionDisabled()
-                                .frame(minWidth: 60)
+                        TextField(CurrencyInfo.placeholder(for: currency), text: $costText)
+                            .foregroundStyle(.primary)
+                            .trailingTextAlignment()
+                            .autocorrectionDisabled()
+                            .frame(minWidth: 60)
+                            .focused($costFieldFocused)
 #if os(iOS)
-                                .keyboardType(.decimalPad)
+                            .keyboardType(.decimalPad)
 #endif
-                                .onChange(of: costText) { _, val in
-                                    cost = Double(val)
+                            .onChange(of: costText) { _, val in
+                                // Strip any non-numeric characters (except decimal point)
+                                let cleaned = val.filter { $0.isNumber || $0 == "." }
+                                if cleaned != val { costText = cleaned }
+                                cost = Double(cleaned)
+                            }
+                            .onChange(of: costFieldFocused) { _, isFocused in
+                                if !isFocused, let c = cost {
+                                    costText = CurrencyInfo.formatForEntry(c, code: currency)
                                 }
-                                .onSubmit {
-                                    if let c = cost {
-                                        costText = String(format: "%.2f", c)
-                                    }
+                            }
+                            .onChange(of: currency) { _, _ in
+                                // Reformat when currency changes (e.g. JPY drops decimals)
+                                if let c = cost {
+                                    costText = CurrencyInfo.formatForEntry(c, code: currency)
                                 }
-                        }
+                            }
                         Button {
                             showCurrencyPicker = true
                         } label: {
@@ -855,7 +875,7 @@ struct AddEditSubscriptionView: View {
             trialEndDate = t
         }
         if let u = item.activeUntilDate { activeUntilDate = u }
-        if let c = item.cost { costText = String(format: "%.2f", c) }
+        if let c = item.cost { costText = CurrencyInfo.formatForEntry(c, code: item.currency) }
         cost = item.cost
         currency = item.currency
         billingCycle = item.billingCycle
@@ -869,7 +889,7 @@ struct AddEditSubscriptionView: View {
         iconData = item.iconData
         iconSource = item.iconSource
         notifications = item.notificationsList
-        category = item.category
+        selectedCategoryRaw = item.categoryRaw
     }
 
     // MARK: - Save
@@ -917,7 +937,7 @@ struct AddEditSubscriptionView: View {
             existing.phoneNumber = trimmedPhone
             existing.notes = trimmedNotes
             existing.notifications = notifications
-            existing.category = isDoc ? nil : category
+            existing.categoryRaw = isDoc ? nil : selectedCategoryRaw
             existing.updatedAt = Date()
             savedItem = existing
         } else {
@@ -942,9 +962,9 @@ struct AddEditSubscriptionView: View {
                 url: isDoc ? "" : trimmedURL,
                 documentNumber: isDoc ? trimmedDocNum.isEmpty ? nil : trimmedDocNum : nil,
                 validFromDate: isDoc ? validFromDate : nil,
-                category: isDoc ? nil : category,
                 notifications: notifications
             )
+            newItem.categoryRaw = isDoc ? nil : selectedCategoryRaw
             newItem.iconData = iconData
             modelContext.insert(newItem)
             savedItem = newItem
@@ -1351,6 +1371,41 @@ struct FormDivider: View {
     var body: some View { Divider().padding(.leading, 16) }
 }
 
+// MARK: - User Category Store
+
+/// A user-defined category entry.
+struct UserCategory: Codable, Identifiable, Equatable {
+    var id: UUID = UUID()
+    var name: String
+    var icon: String
+
+    static let defaultIcon = "tag"
+}
+
+/// Manages custom categories stored in UserDefaults alongside the built-in enum cases.
+enum UserCategoryStore {
+    static let key = "userDefinedCategories"
+
+    static func load() -> [UserCategory] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let cats = try? JSONDecoder().decode([UserCategory].self, from: data)
+        else { return [] }
+        return cats
+    }
+
+    static func save(_ categories: [UserCategory]) {
+        if let data = try? JSONEncoder().encode(categories) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    /// Returns the icon for a given raw category name, checking built-in enum first then user-defined.
+    static func icon(for rawName: String) -> String {
+        if let builtin = SubscriptionCategory(rawValue: rawName) { return builtin.icon }
+        return load().first { $0.name == rawName }?.icon ?? UserCategory.defaultIcon
+    }
+}
+
 // MARK: - Currency Info
 
 enum CurrencyInfo {
@@ -1431,15 +1486,51 @@ enum CurrencyInfo {
         defaults.first { $0.code == code }?.symbol ?? code
     }
 
-    /// Formats an amount as "symbol + 2dp number", e.g. "A$55.00", "€12.99"
+    /// Currencies that have no sub-units (no decimal places).
+    static let noSubunits: Set<String> = [
+        "JPY",  // Japanese Yen
+        "KRW",  // South Korean Won
+        "IDR",  // Indonesian Rupiah
+        "CLP",  // Chilean Peso
+        "HUF",  // Hungarian Forint (rounds in practice)
+        "VND",  // Vietnamese Dong
+        "ISK",  // Icelandic Króna
+        "CRC",  // Costa Rican Colón
+        "UGX",  // Ugandan Shilling
+        "RWF",  // Rwandan Franc
+        "BIF",  // Burundian Franc
+        "GNF",  // Guinean Franc
+        "XAF",  // Central African CFA Franc
+        "XOF",  // West African CFA Franc
+        "XPF",  // CFP Franc
+        "MGA",  // Malagasy Ariary
+        "PYG",  // Paraguayan Guaraní
+    ]
+
+    /// Formats an amount with correct decimal places for the given currency.
     static func format(_ amount: Double, code: String) -> String {
         let sym = symbol(for: code)
-        // JPY, KRW, IDR, CLP, HUF have no sub-units — show 0dp
-        let noSubunits: Set<String> = ["JPY", "KRW", "IDR", "CLP", "HUF"]
         let formatted = noSubunits.contains(code)
             ? String(format: "%.0f", amount)
             : String(format: "%.2f", amount)
         return "\(sym)\(formatted)"
+    }
+
+    /// Correct decimal places for entry/display of a given currency (0 or 2).
+    static func decimalPlaces(for code: String) -> Int {
+        noSubunits.contains(code) ? 0 : 2
+    }
+
+    /// Formats a raw Double to the correct number of decimal places for entry.
+    static func formatForEntry(_ amount: Double, code: String) -> String {
+        noSubunits.contains(code)
+            ? String(format: "%.0f", amount)
+            : String(format: "%.2f", amount)
+    }
+
+    /// Placeholder text appropriate for the currency (e.g. "0" for JPY, "0.00" for USD).
+    static func placeholder(for code: String) -> String {
+        noSubunits.contains(code) ? "0" : "0.00"
     }
 
     /// Converts `amount` in `fromCode` to `toCode` using the USD-pivot rates.

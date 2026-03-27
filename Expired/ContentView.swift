@@ -418,12 +418,18 @@ struct CategoriesView: View {
     @Query(filter: #Predicate<SubscriptionItem> { !$0.isArchived && $0.itemTypeRaw == "subscription" })
     private var allSubscriptions: [SubscriptionItem]
 
-    private func count(for category: SubscriptionCategory) -> Int {
-        allSubscriptions.filter { $0.category == category }.count
+    @State private var userCategories: [UserCategory] = []
+    @State private var showingAdd = false
+    @State private var editingCategory: UserCategory? = nil
+    @State private var newCategoryName = ""
+    @State private var newCategoryIcon = UserCategory.defaultIcon
+
+    private func count(rawName: String) -> Int {
+        allSubscriptions.filter { $0.categoryRaw == rawName }.count
     }
 
     private var uncategorisedCount: Int {
-        allSubscriptions.filter { $0.category == nil }.count
+        allSubscriptions.filter { $0.categoryRaw == nil }.count
     }
 
     var body: some View {
@@ -433,13 +439,65 @@ struct CategoriesView: View {
                     HStack {
                         Label(cat.rawValue, systemImage: cat.icon)
                         Spacer()
-                        let n = count(for: cat)
+                        let n = count(rawName: cat.rawValue)
                         if n > 0 {
                             Text("\(n)")
                                 .foregroundStyle(.secondary)
                         }
                     }
                 }
+            } header: {
+                Text("Built-in")
+            }
+
+            Section {
+                ForEach($userCategories) { $cat in
+                    HStack {
+                        Label(cat.name, systemImage: cat.icon)
+                        Spacer()
+                        let n = count(rawName: cat.name)
+                        if n > 0 {
+                            Text("\(n)")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            userCategories.removeAll { $0.id == cat.id }
+                            UserCategoryStore.save(userCategories)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        Button {
+                            newCategoryName = cat.name
+                            newCategoryIcon = cat.icon
+                            editingCategory = cat
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        .tint(.blue)
+                    }
+                }
+                .onMove { source, destination in
+                    userCategories.move(fromOffsets: source, toOffset: destination)
+                    UserCategoryStore.save(userCategories)
+                }
+                Button {
+                    newCategoryName = ""
+                    newCategoryIcon = UserCategory.defaultIcon
+                    editingCategory = nil
+                    showingAdd = true
+                } label: {
+                    Label("Add Category", systemImage: "plus.circle.fill")
+                        .foregroundStyle(.blue)
+                }
+            } header: {
+                Text("Custom")
+            } footer: {
+                Text("Swipe left to edit or delete. Drag to reorder.")
+            }
+
+            Section {
                 HStack {
                     Label("Uncategorised", systemImage: "circle.dashed")
                     Spacer()
@@ -448,12 +506,110 @@ struct CategoriesView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-            } footer: {
-                Text("Assign categories when adding or editing a subscription.")
             }
         }
         .navigationTitle("Categories")
         .largeNavigationTitle()
+        .toolbar { EditButton() }
+        .onAppear { userCategories = UserCategoryStore.load() }
+        .sheet(isPresented: $showingAdd) {
+            CategoryEditSheet(
+                name: $newCategoryName,
+                icon: $newCategoryIcon,
+                title: editingCategory == nil ? "Add Category" : "Edit Category"
+            ) {
+                if let editing = editingCategory,
+                   let idx = userCategories.firstIndex(where: { $0.id == editing.id }) {
+                    userCategories[idx].name = newCategoryName
+                    userCategories[idx].icon = newCategoryIcon
+                } else {
+                    userCategories.append(UserCategory(name: newCategoryName, icon: newCategoryIcon))
+                }
+                UserCategoryStore.save(userCategories)
+            }
+        }
+        .onChange(of: editingCategory) { _, cat in
+            if cat != nil { showingAdd = true }
+        }
+    }
+}
+
+struct CategoryEditSheet: View {
+    @Binding var name: String
+    @Binding var icon: String
+    let title: String
+    let onSave: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    // A curated set of icons the user can pick for a custom category
+    private let iconOptions: [(String, String)] = [
+        ("tag", "Tag"),
+        ("star.fill", "Star"),
+        ("heart.fill", "Health"),
+        ("bolt.fill", "Power"),
+        ("house.fill", "Home"),
+        ("car.fill", "Transport"),
+        ("airplane", "Travel"),
+        ("fork.knife", "Food"),
+        ("book.fill", "Education"),
+        ("dumbbell.fill", "Sport"),
+        ("pawprint.fill", "Pets"),
+        ("leaf.fill", "Nature"),
+        ("person.fill", "Personal"),
+        ("briefcase.fill", "Work"),
+        ("camera.fill", "Photo"),
+        ("gamecontroller.fill", "Gaming"),
+        ("music.note", "Music"),
+        ("tv.fill", "TV"),
+        ("cloud.fill", "Cloud"),
+        ("lock.fill", "Security"),
+    ]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Name") {
+                    TextField("Category name", text: $name)
+                        .autocorrectionDisabled()
+                }
+                Section("Icon") {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 16) {
+                        ForEach(iconOptions, id: \.0) { iconName, _ in
+                            Button {
+                                icon = iconName
+                            } label: {
+                                Image(systemName: iconName)
+                                    .font(.system(size: 22))
+                                    .frame(width: 48, height: 48)
+                                    .foregroundStyle(icon == iconName ? .white : .primary)
+                                    .background(
+                                        icon == iconName ? Color.blue : Color.secondary.opacity(0.12),
+                                        in: RoundedRectangle(cornerRadius: 10)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+            .navigationTitle(title)
+            .inlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave()
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 
@@ -499,6 +655,8 @@ struct SettingsView: View {
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
     @AppStorage("appearanceMode") private var appearanceMode = 0
+    @AppStorage("notificationHour")   private var notificationHour: Int = 9
+    @AppStorage("notificationMinute") private var notificationMinute: Int = 0
     @State private var showRestartAlert = false
     @State private var showCurrencyPicker = false
     @State private var isSyncing = false
@@ -506,6 +664,14 @@ struct SettingsView: View {
     @State private var faviconRefreshProgress: (done: Int, total: Int) = (0, 0)
     @Query(filter: #Predicate<SubscriptionItem> { $0.isArchived }) private var archivedItems: [SubscriptionItem]
     @Query private var allItems: [SubscriptionItem]
+
+    /// A Date representing the stored notification hour/minute (today's date at that time).
+    private var notificationTime: Date {
+        Calendar.current.date(
+            bySettingHour: notificationHour, minute: notificationMinute, second: 0,
+            of: Date()
+        ) ?? Date()
+    }
 
     /// Best-guess currency from the device locale, falling back to USD.
     static var localeCurrencyCode: String {
@@ -570,6 +736,27 @@ struct SettingsView: View {
                     Text("Display")
                 } footer: {
                     Text("All subscription costs are converted to this currency when calculating totals. Exchange rates are approximate and updated periodically.")
+                }
+
+                Section {
+                    DatePicker(
+                        selection: Binding(
+                            get: { notificationTime },
+                            set: { newDate in
+                                let comps = Calendar.current.dateComponents([.hour, .minute], from: newDate)
+                                notificationHour   = comps.hour   ?? 9
+                                notificationMinute = comps.minute ?? 0
+                            }
+                        ),
+                        displayedComponents: .hourAndMinute
+                    ) {
+                        Label("Reminder Time", systemImage: "clock")
+                            .foregroundStyle(.primary, .secondary)
+                    }
+                } header: {
+                    Text("Notifications")
+                } footer: {
+                    Text("Reminders will be delivered at this time on the scheduled day.")
                 }
 
                 Section {

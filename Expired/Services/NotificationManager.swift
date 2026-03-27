@@ -73,9 +73,11 @@ final class NotificationManager {
         for rule in item.notificationsList {
             guard var fireDate = fireDate(baseDate: baseDate, rule: rule) else { continue }
 
-            // Always fire at 9am so the alert lands at a sensible time
+            // Fire at the user's preferred notification time (default 9:00 am)
+            let prefHour   = UserDefaults.standard.object(forKey: "notificationHour")   as? Int ?? 9
+            let prefMinute = UserDefaults.standard.object(forKey: "notificationMinute") as? Int ?? 0
             fireDate = Calendar.current.date(
-                bySettingHour: 9, minute: 0, second: 0, of: fireDate
+                bySettingHour: prefHour, minute: prefMinute, second: 0, of: fireDate
             ) ?? fireDate
 
             guard fireDate > Date() else { continue }
