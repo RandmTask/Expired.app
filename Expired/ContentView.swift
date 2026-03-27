@@ -391,7 +391,7 @@ struct SettingsView: View {
                         showCurrencyPicker = true
                     } label: {
                         HStack {
-                            Text("Base Currency")
+                            Label("Base Currency", systemImage: "dollarsign.circle")
                                 .foregroundStyle(.primary)
                             Spacer()
                             Text("\(CurrencyInfo.symbol(for: preferredCurrency)) \(preferredCurrency)")
@@ -409,6 +409,7 @@ struct SettingsView: View {
                     } label: {
                         Label("Appearance", systemImage: "paintbrush")
                     }
+                    .tint(.primary)
                 } header: {
                     Text("Display")
                 } footer: {

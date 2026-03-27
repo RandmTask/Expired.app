@@ -156,7 +156,7 @@ struct HomeView: View {
                 }
 #endif
             }
-            .navigationTitle("Expired")
+            .navigationTitle("")
             .largeNavigationTitle()
 #if os(iOS)
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search subscriptions")
@@ -169,7 +169,10 @@ struct HomeView: View {
                     }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    sortFilterMenu
+                    filterMenu
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    sortMenu
                 }
             }
             .sheet(isPresented: $showingAdd) { AddEditSubscriptionView(item: nil) }
@@ -177,15 +180,41 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Sort/Filter menu
+    // MARK: - Sort menu
 
-    private var sortFilterMenu: some View {
+    private var sortMenu: some View {
         Menu {
-            Section("Sort By") {
-                sortMenuItems
+            ForEach(SortOrder.allCases, id: \.self) { option in
+                Button {
+                    sortOrderRaw = option.rawValue
+                } label: {
+                    if sortOrder == option {
+                        Label(option.rawValue, systemImage: "checkmark")
+                    } else {
+                        Text(option.rawValue)
+                    }
+                }
             }
-            Section("Filter") {
-                filterMenuItems
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.system(size: 16, weight: .semibold))
+        }
+    }
+
+    // MARK: - Filter menu
+
+    private var filterMenu: some View {
+        Menu {
+            ForEach(FilterOption.allCases, id: \.self) { option in
+                Button {
+                    filterOptionRaw = option.rawValue
+                } label: {
+                    if filterOption == option {
+                        Label(option.rawValue, systemImage: "checkmark")
+                    } else {
+                        Text(option.rawValue)
+                    }
+                }
             }
         } label: {
             Image(systemName: filterOption == .all
@@ -193,23 +222,6 @@ struct HomeView: View {
                   : "line.3.horizontal.decrease.circle.fill")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(filterOption == .all ? Color.primary : Color.blue)
-        }
-    }
-
-    @ViewBuilder private var sortMenuItems: some View {
-        ForEach(SortOrder.allCases, id: \.self) { option in
-            Button(option.rawValue) { sortOrderRaw = option.rawValue }
-                .overlay(alignment: .trailing) {
-                    if sortOrder == option {
-                        Image(systemName: "checkmark").font(.caption)
-                    }
-                }
-        }
-    }
-
-    @ViewBuilder private var filterMenuItems: some View {
-        ForEach(FilterOption.allCases, id: \.self) { option in
-            Button(option.rawValue) { filterOptionRaw = option.rawValue }
         }
     }
 
