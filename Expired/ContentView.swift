@@ -437,7 +437,7 @@ struct CategoriesView: View {
             Section {
                 ForEach(SubscriptionCategory.allCases, id: \.self) { cat in
                     HStack {
-                        Label(cat.rawValue, systemImage: cat.icon)
+                        Label(cat.displayName, systemImage: cat.icon)
                         Spacer()
                         let n = count(rawName: cat.rawValue)
                         if n > 0 {

@@ -48,7 +48,7 @@ enum SubscriptionCategory: String, Codable, CaseIterable {
     var icon: String {
         switch self {
         case .streaming:  return "play.tv.fill"
-        case .music:      return "music.note"
+        case .music:      return "sparkles"
         case .software:   return "app.fill"
         case .fitness:    return "figure.run"
         case .gaming:     return "gamecontroller.fill"
@@ -57,6 +57,15 @@ enum SubscriptionCategory: String, Codable, CaseIterable {
         case .shopping:   return "bag.fill"
         case .utilities:  return "wrench.and.screwdriver.fill"
         case .other:      return "square.grid.2x2.fill"
+        }
+    }
+
+    /// Human-readable display name (kept separate from rawValue which is used for CloudKit storage)
+    var displayName: String {
+        switch self {
+        case .streaming:  return "Streaming & Music"
+        case .music:      return "AI Services"
+        default:          return rawValue
         }
     }
 }

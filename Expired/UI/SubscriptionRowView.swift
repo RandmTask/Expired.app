@@ -15,11 +15,11 @@ struct SubscriptionRowView: View {
     var body: some View {
         HStack(spacing: 14) {
             // Icon with urgency ring
-            UrgencyIconView(item: item, size: 48)
+            UrgencyIconView(item: item, size: 52)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.name)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.primary)
 
                 dateLabel
@@ -45,7 +45,7 @@ struct SubscriptionRowView: View {
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
         .glassEffect(in: .rect(cornerRadius: 20))
         .contentShape(RoundedRectangle(cornerRadius: 20))
     }

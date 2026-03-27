@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 import PhotosUI
 import UniformTypeIdentifiers
+import ImagePlayground
 
 struct AddEditSubscriptionView: View {
     @Environment(\.modelContext) private var modelContext
@@ -36,6 +37,8 @@ struct AddEditSubscriptionView: View {
     @State private var iconURLText = ""
     @State private var photoPickerItem: PhotosPickerItem? = nil
     @State private var isDropTargeted = false
+    @State private var showImagePlayground = false
+    @Environment(\.supportsImagePlayground) private var supportsImagePlayground
 
     // Cost & payment
     @State private var cost: Double? = nil
@@ -136,7 +139,6 @@ struct AddEditSubscriptionView: View {
                     itemTypeSection
                     basicSection
                     if itemType == .subscription { statusSection }
-                    if itemType == .subscription { costSection }
                     paymentSection
                     remindersSection
                     notesSection
@@ -213,15 +215,15 @@ struct AddEditSubscriptionView: View {
             FormCard {
                 VStack(spacing: 0) {
                     // Name + icon
-                    HStack(spacing: 12) {
+                    HStack(spacing: 14) {
                         iconView
                             .padding(.leading, 16)
                         TextField(itemType == .document ? "Document Name" : "Name", text: $name)
-                            .font(.system(size: 16))
+                            .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(.primary)
                             .submitLabel(.next)
                             .autocorrectionDisabled()
-                            .padding(.vertical, 14)
+                            .padding(.vertical, 18)
                             .padding(.trailing, 16)
                     }
 
@@ -306,12 +308,6 @@ struct AddEditSubscriptionView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 14)
                     } else {
-                        FormRow(label: isTrial ? "Trial Ends" : "Renews") {
-                            DatePicker("", selection: isTrial ? $trialEndDate : $nextRenewalDate,
-                                       displayedComponents: .date)
-                                .labelsHidden()
-                        }
-                        FormDivider()
                         FormRow(label: "Category") {
                             Menu {
                                 Button {
@@ -324,7 +320,7 @@ struct AddEditSubscriptionView: View {
                                     Button {
                                         selectedCategoryRaw = cat.rawValue
                                     } label: {
-                                        Label(cat.rawValue, systemImage: cat.icon)
+                                        Label(cat.displayName, systemImage: cat.icon)
                                     }
                                 }
                                 if !userCategories.isEmpty {
@@ -342,7 +338,7 @@ struct AddEditSubscriptionView: View {
                                     if let raw = selectedCategoryRaw {
                                         Image(systemName: UserCategoryStore.icon(for: raw))
                                             .font(.system(size: 13))
-                                        Text(raw)
+                                        Text(SubscriptionCategory(rawValue: raw)?.displayName ?? raw)
                                     } else {
                                         Text("None")
                                             .foregroundStyle(.secondary)
@@ -364,7 +360,7 @@ struct AddEditSubscriptionView: View {
     @ViewBuilder
     private var iconView: some View {
         iconContent
-            .frame(width: 52, height: 52)
+            .frame(width: 60, height: 60)
             .overlay(alignment: .bottomTrailing) {
                 // Small edit badge
                 if !isFetchingIcon {
@@ -386,6 +382,9 @@ struct AddEditSubscriptionView: View {
 #if os(iOS)
             .onTapGesture { showIconMenu = true }
             .confirmationDialog("Set Icon", isPresented: $showIconMenu, titleVisibility: .visible) {
+                if supportsImagePlayground {
+                    Button("Create with Image Playground") { showImagePlayground = true }
+                }
                 Button("Choose Photo") { showPhotoPicker = true }
                 Button("Choose File") { showFilePicker = true }
                 Button("Paste Image") { pasteImageFromClipboard() }
@@ -406,6 +405,12 @@ struct AddEditSubscriptionView: View {
                             photoPickerItem = nil
                         }
                     }
+                }
+            }
+            .imagePlaygroundSheet(isPresented: $showImagePlayground, concept: name.isEmpty ? "App icon" : name) { url in
+                if let data = try? Data(contentsOf: url) {
+                    iconData = data
+                    iconSource = .customImage
                 }
             }
 #else
@@ -549,11 +554,11 @@ struct AddEditSubscriptionView: View {
         }
     }
 
-    // MARK: - Status section
+    // MARK: - Status section (chips + date + cost)
 
     private var statusSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Status")
+            SectionHeader(title: "Subscription")
             FormCard {
                 VStack(spacing: 0) {
                     // Three status chips on one row
@@ -594,32 +599,19 @@ struct AddEditSubscriptionView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
 
-                    if isCancelled {
-                        FormDivider()
-                        FormRow(label: "Active Until") {
-                            DatePicker("", selection: $activeUntilDate, displayedComponents: .date)
-                                .labelsHidden()
-                        }
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    FormDivider()
+                    FormRow(label: isCancelled ? "Active Until" : isTrial ? "Trial Ends" : "Renews") {
+                        DatePicker("", selection: isCancelled ? $activeUntilDate : isTrial ? $trialEndDate : $nextRenewalDate,
+                                   displayedComponents: .date)
+                            .labelsHidden()
                     }
-                }
-                .animation(.spring(duration: 0.25), value: isCancelled)
-            }
-        }
-    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
 
-    // MARK: - Cost section
-
-    private var costSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Cost")
-            FormCard {
-                VStack(spacing: 0) {
-                    // Amount row: "Amount   55.00   [A$AUD ▾]"
+                    FormDivider()
+                    // Amount row
                     HStack {
                         Text("Amount")
                             .font(.system(size: 16))
-                            .frame(minWidth: 80, alignment: .leading)
                             .foregroundStyle(.primary)
                         Spacer()
                         TextField(CurrencyInfo.placeholder(for: currency), text: $costText)
@@ -632,7 +624,6 @@ struct AddEditSubscriptionView: View {
                             .keyboardType(.decimalPad)
 #endif
                             .onChange(of: costText) { _, val in
-                                // Strip any non-numeric characters (except decimal point)
                                 let cleaned = val.filter { $0.isNumber || $0 == "." }
                                 if cleaned != val { costText = cleaned }
                                 cost = Double(cleaned)
@@ -643,7 +634,6 @@ struct AddEditSubscriptionView: View {
                                 }
                             }
                             .onChange(of: currency) { _, _ in
-                                // Reformat when currency changes (e.g. JPY drops decimals)
                                 if let c = cost {
                                     costText = CurrencyInfo.formatForEntry(c, code: currency)
                                 }
@@ -669,6 +659,7 @@ struct AddEditSubscriptionView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
+
                     FormDivider()
                     FormRow(label: "Billing") {
                         Picker("", selection: $billingCycle) {
@@ -677,6 +668,7 @@ struct AddEditSubscriptionView: View {
                         .pickerStyle(.menu)
                     }
                 }
+                .animation(.spring(duration: 0.25), value: isCancelled)
             }
         }
     }
@@ -1357,8 +1349,8 @@ struct FormRow<Content: View>: View {
         HStack {
             Text(label)
                 .font(.system(size: 16))
-                .frame(minWidth: 80, alignment: .leading)
                 .foregroundStyle(.primary)
+                .fixedSize()
             Spacer()
             content.foregroundStyle(.primary)
         }
