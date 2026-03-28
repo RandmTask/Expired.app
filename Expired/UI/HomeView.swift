@@ -249,6 +249,9 @@ struct HomeView: View {
             Image(systemName: "arrow.up.arrow.down")
                 .font(.system(size: 16, weight: .semibold))
         }
+#if os(macOS)
+        .menuIndicator(.hidden)
+#endif
     }
 
     // MARK: - Filter menu
@@ -273,6 +276,9 @@ struct HomeView: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(filterOption == .all ? Color.primary : Color.blue)
         }
+#if os(macOS)
+        .menuIndicator(.hidden)
+#endif
     }
 
     // MARK: - Content sections

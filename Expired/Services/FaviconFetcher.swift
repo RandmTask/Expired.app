@@ -20,13 +20,9 @@ struct FaviconFetcher {
 
         // Pre-check: App Store URLs — fetch actual app artwork via iTunes API
         if host == "apps.apple.com" || host == "itunes.apple.com" {
-            // Extract numeric app ID from path e.g. /us/app/infuse/id1136220934
-            if let idRange = normalised.range(of: #"/id(\d+)"#, options: .regularExpression) {
-                let idSegment = String(normalised[idRange])   // e.g. "/id1136220934"
-                let appID = idSegment.dropFirst(3)            // drop "/id", keep digits
-                if let data = await fetchAppStoreArtwork(appID: String(appID)), isImage(data) {
-                    return data
-                }
+            if let appID = Self.appStoreID(from: normalised),
+               let data = await fetchAppStoreArtwork(appID: appID), isImage(data) {
+                return data
             }
             // If extraction failed, fall through to normal strategies
         }
@@ -70,6 +66,30 @@ struct FaviconFetcher {
             return nil
         }
         return data
+    }
+
+    /// Returns the app name from the iTunes lookup API for the given App Store app ID.
+    static func fetchAppStoreName(appID: String) async -> String? {
+        guard !appID.isEmpty,
+              let url = URL(string: "https://itunes.apple.com/lookup?id=\(appID)") else { return nil }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else { return nil }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let results = json["results"] as? [[String: Any]],
+              let first = results.first,
+              let trackName = first["trackName"] as? String else { return nil }
+        return trackName
+    }
+
+    /// Extracts the numeric App Store app ID from an apps.apple.com URL, if present.
+    static func appStoreID(from urlString: String) -> String? {
+        guard let idRange = urlString.range(of: #"/id(\d+)"#, options: .regularExpression) else { return nil }
+        let idSegment = String(urlString[idRange])   // e.g. "/id1136220934"
+        let appID = String(idSegment.dropFirst(3))   // drop "/id"
+        return appID.isEmpty ? nil : appID
     }
 
     /// Calls the iTunes lookup API and returns the 512px artwork for the given App Store app ID.

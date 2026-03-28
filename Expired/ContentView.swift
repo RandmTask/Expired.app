@@ -2,19 +2,35 @@ import SwiftUI
 import SwiftData
 
 struct ContentView: View {
+    @State private var selectedTab = 0
+    @State private var settingsNavID = UUID()
+
     var body: some View {
-        TabView {
-            Tab("Subscriptions", systemImage: "creditcard") {
+        TabView(selection: Binding(
+            get: { selectedTab },
+            set: { newTab in
+                if selectedTab == 3 && newTab != 3 {
+                    // Leaving Settings → reset nav so returning always shows root
+                    settingsNavID = UUID()
+                } else if newTab == 3 && selectedTab == 3 {
+                    // Re-tapping Settings while already on it → also reset to root
+                    settingsNavID = UUID()
+                }
+                selectedTab = newTab
+            }
+        )) {
+            Tab("Subscriptions", systemImage: "creditcard", value: 0) {
                 HomeView()
             }
-            Tab("Timeline", systemImage: "calendar") {
+            Tab("Timeline", systemImage: "calendar", value: 1) {
                 TimelineView()
             }
-            Tab("Insights", systemImage: "chart.bar") {
+            Tab("Insights", systemImage: "chart.bar", value: 2) {
                 InsightsView()
             }
-            Tab("Settings", systemImage: "gear") {
+            Tab("Settings", systemImage: "gear", value: 3) {
                 SettingsView()
+                    .id(settingsNavID)
             }
         }
 #if os(iOS)
@@ -177,7 +193,7 @@ struct InsightsView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     // Period picker
-                    Picker("Period", selection: $costPeriod) {
+                    Picker("", selection: $costPeriod) {
                         ForEach(CostPeriod.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
@@ -370,36 +386,7 @@ struct ArchiveView: View {
                 } else if visibleItems.isEmpty {
                     ContentUnavailableView.search
                 } else {
-                    List {
-                        ForEach(visibleItems) { item in
-                            SubscriptionRowView(item: item)
-                                .onTapGesture { editingItem = item }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    Button(role: .destructive) {
-                                        modelContext.delete(item)
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
-                                }
-                                .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                    Button {
-                                        withAnimation {
-                                            item.isArchived = false
-                                            item.updatedAt = Date()
-                                        }
-                                    } label: {
-                                        Label("Restore", systemImage: "arrow.uturn.left")
-                                    }
-                                    .tint(.green)
-                                }
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                        }
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .background(groupedBackground.ignoresSafeArea())
+                    archiveList
                 }
             }
             .navigationTitle("Archive")
@@ -409,6 +396,48 @@ struct ArchiveView: View {
 #endif
             .sheet(item: $editingItem) { AddEditSubscriptionView(item: $0) }
         }
+    }
+
+    private var archiveList: some View {
+        List {
+            Section {
+                ForEach(visibleItems) { item in
+                    SubscriptionRowView(item: item)
+                        .onTapGesture { editingItem = item }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                modelContext.delete(item)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button {
+                                withAnimation {
+                                    item.isArchived = false
+                                    item.updatedAt = Date()
+                                }
+                            } label: {
+                                Label("Restore", systemImage: "arrow.uturn.left")
+                            }
+                            .tint(.green)
+                        }
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                }
+            } header: {
+                Text("\(visibleItems.count) item\(visibleItems.count == 1 ? "" : "s")")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .tracking(0.4)
+                    .textCase(nil)
+                    .padding(.top, 4)
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(groupedBackground.ignoresSafeArea())
     }
 }
 
@@ -428,89 +457,107 @@ struct CategoriesView: View {
         allSubscriptions.filter { $0.categoryRaw == rawName }.count
     }
 
-    private var uncategorisedCount: Int {
-        allSubscriptions.filter { $0.categoryRaw == nil }.count
-    }
-
     var body: some View {
-        List {
-            Section {
-                ForEach(SubscriptionCategory.allCases, id: \.self) { cat in
-                    HStack {
-                        Label(cat.displayName, systemImage: cat.icon)
-                        Spacer()
-                        let n = count(rawName: cat.rawValue)
-                        if n > 0 {
-                            Text("\(n)")
-                                .foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Built-in categories (exclude .other — redundant with Custom section)
+                let builtInCats = SubscriptionCategory.allCases.filter { $0 != .other }
+                categoriesSection(title: "Built-in", icon: "square.grid.2x2") {
+                    ForEach(builtInCats, id: \.self) { cat in
+                        categoryRow(
+                            label: cat.displayName,
+                            icon: cat.icon,
+                            count: count(rawName: cat.rawValue)
+                        )
+                        if cat != builtInCats.last {
+                            FormDivider()
                         }
                     }
                 }
-            } header: {
-                Text("Built-in")
-            }
 
-            Section {
-                ForEach($userCategories) { $cat in
-                    HStack {
-                        Label(cat.name, systemImage: cat.icon)
-                        Spacer()
-                        let n = count(rawName: cat.name)
-                        if n > 0 {
-                            Text("\(n)")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            userCategories.removeAll { $0.id == cat.id }
-                            UserCategoryStore.save(userCategories)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                        Button {
-                            newCategoryName = cat.name
-                            newCategoryIcon = cat.icon
-                            editingCategory = cat
-                        } label: {
-                            Label("Edit", systemImage: "pencil")
-                        }
-                        .tint(.blue)
-                    }
-                }
-                .onMove { source, destination in
-                    userCategories.move(fromOffsets: source, toOffset: destination)
-                    UserCategoryStore.save(userCategories)
-                }
-                Button {
-                    newCategoryName = ""
-                    newCategoryIcon = UserCategory.defaultIcon
-                    editingCategory = nil
-                    showingAdd = true
-                } label: {
-                    Label("Add Category", systemImage: "plus.circle.fill")
-                        .foregroundStyle(.blue)
-                }
-            } header: {
-                Text("Custom")
-            } footer: {
-                Text("Swipe left to edit or delete. Drag to reorder.")
-            }
-
-            Section {
-                HStack {
-                    Label("Uncategorised", systemImage: "circle.dashed")
-                    Spacer()
-                    if uncategorisedCount > 0 {
-                        Text("\(uncategorisedCount)")
+                // Custom categories
+                categoriesSection(title: "Custom", icon: "tag") {
+                    if userCategories.isEmpty {
+                        Text("No custom categories yet")
+                            .font(.system(size: 15))
                             .foregroundStyle(.secondary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                    } else {
+                        ForEach(userCategories) { cat in
+                            HStack(spacing: 12) {
+                                Image(systemName: cat.icon)
+                                    .font(.system(size: 16))
+                                    .frame(width: 22, alignment: .center)
+                                Text(cat.name)
+                                    .font(.system(size: 16))
+                                Spacer()
+                                let n = count(rawName: cat.name)
+                                if n > 0 {
+                                    Text("\(n)")
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(.secondary)
+                                }
+                                // Edit / delete buttons
+                                Button {
+                                    newCategoryName = cat.name
+                                    newCategoryIcon = cat.icon
+                                    editingCategory = cat
+                                } label: {
+                                    Image(systemName: "pencil.circle.fill")
+                                        .font(.system(size: 20))
+                                        .foregroundStyle(.blue.opacity(0.8))
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.leading, 8)
+                                Button {
+                                    withAnimation {
+                                        userCategories.removeAll { $0.id == cat.id }
+                                        UserCategoryStore.save(userCategories)
+                                    }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 20))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.leading, 4)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            if cat.id != userCategories.last?.id {
+                                FormDivider()
+                            }
+                        }
                     }
+                    FormDivider()
+                    Button {
+                        newCategoryName = ""
+                        newCategoryIcon = UserCategory.defaultIcon
+                        editingCategory = nil
+                        showingAdd = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 16))
+                                .frame(width: 22, alignment: .center)
+                            Text("Add Category")
+                                .font(.system(size: 16))
+                        }
+                        .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
                 }
+
+
             }
+            .padding(16)
         }
+        .background(groupedBackground.ignoresSafeArea())
         .navigationTitle("Categories")
         .largeNavigationTitle()
-        .toolbar { EditButton() }
         .onAppear { userCategories = UserCategoryStore.load() }
         .sheet(isPresented: $showingAdd) {
             CategoryEditSheet(
@@ -531,6 +578,53 @@ struct CategoriesView: View {
         .onChange(of: editingCategory) { _, cat in
             if cat != nil { showingAdd = true }
         }
+    }
+
+    @ViewBuilder
+    private func categoriesSection<Content: View>(
+        title: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Section pill header
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .bold))
+                Text(title.uppercased())
+                    .font(.system(size: 11, weight: .bold))
+                    .tracking(0.6)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Color.secondary.opacity(0.12), in: Capsule())
+            .padding(.horizontal, 4)
+
+            VStack(spacing: 0) {
+                content()
+            }
+            .glassEffect(in: .rect(cornerRadius: 20))
+        }
+    }
+
+    @ViewBuilder
+    private func categoryRow(label: String, icon: String, count: Int) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16))
+                .frame(width: 22, alignment: .center)
+            Text(label)
+                .font(.system(size: 16))
+            Spacer()
+            if count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
     }
 }
 
@@ -665,12 +759,38 @@ struct SettingsView: View {
     @Query(filter: #Predicate<SubscriptionItem> { $0.isArchived }) private var archivedItems: [SubscriptionItem]
     @Query private var allItems: [SubscriptionItem]
 
+    private static let kvHourKey   = "notificationHour"
+    private static let kvMinuteKey = "notificationMinute"
+
     /// A Date representing the stored notification hour/minute (today's date at that time).
     private var notificationTime: Date {
         Calendar.current.date(
             bySettingHour: notificationHour, minute: notificationMinute, second: 0,
             of: Date()
         ) ?? Date()
+    }
+
+    /// Writes notification time to both @AppStorage (local) and iCloud KV store (cross-device).
+    /// Minutes are snapped to the nearest 15-minute interval (0, 15, 30, 45).
+    private func saveNotificationTime(_ date: Date) {
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+        let hour   = comps.hour   ?? 9
+        let rawMin = comps.minute ?? 0
+        let minute = (rawMin / 15) * 15   // snap down to nearest quarter-hour
+        notificationHour   = hour
+        notificationMinute = minute
+        let kv = NSUbiquitousKeyValueStore.default
+        kv.set(Int64(hour),   forKey: Self.kvHourKey)
+        kv.set(Int64(minute), forKey: Self.kvMinuteKey)
+        kv.synchronize()
+    }
+
+    /// Pulls the notification time from iCloud KV store into @AppStorage.
+    private func pullNotificationTimeFromKVStore() {
+        let kv = NSUbiquitousKeyValueStore.default
+        guard kv.object(forKey: Self.kvHourKey) != nil else { return }
+        notificationHour   = Int(kv.longLong(forKey: Self.kvHourKey))
+        notificationMinute = Int(kv.longLong(forKey: Self.kvMinuteKey))
     }
 
     /// Best-guess currency from the device locale, falling back to USD.
@@ -680,15 +800,36 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    // Base currency row — taps open the full currency picker
-                    Button {
-                        showCurrencyPicker = true
-                    } label: {
-                        HStack {
-                            Label("Base Currency", systemImage: "dollarsign.circle")
-                                .foregroundStyle(.primary, .secondary)
+#if os(macOS)
+            macSettingsBody
+#else
+            iosSettingsBody
+#endif
+        }
+        .onAppear {
+            NSUbiquitousKeyValueStore.default.synchronize()
+            pullNotificationTimeFromKVStore()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSUbiquitousKeyValueStore.didChangeExternallyNotification)) { note in
+            guard let keys = (note.userInfo?[NSUbiquitousKeyValueStoreChangedKeysKey] as? [String]) else { return }
+            if keys.contains(Self.kvHourKey) || keys.contains(Self.kvMinuteKey) {
+                pullNotificationTimeFromKVStore()
+            }
+        }
+    }
+
+    // MARK: - macOS Settings (card layout matching iOS form style)
+
+#if os(macOS)
+    private var macSettingsBody: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+
+                // DISPLAY
+                settingsSection(title: "Display", icon: "paintbrush") {
+                    Button { showCurrencyPicker = true } label: {
+                        settingsRow {
+                            macSettingsLabel("Currency", icon: "dollarsign.circle")
                             Spacer()
                             Text("\(CurrencyInfo.symbol(for: preferredCurrency)) \(preferredCurrency)")
                                 .foregroundStyle(.secondary)
@@ -697,139 +838,129 @@ struct SettingsView: View {
                                 .foregroundStyle(.tertiary)
                         }
                     }
-                    .foregroundStyle(.primary)
-                    // Appearance row — custom button to avoid Picker opacity bug when alerts appear
-                    Button {
-                        appearanceMode = (appearanceMode + 1) % 3
-                    } label: {
-                        HStack {
-                            Label("Appearance", systemImage: "paintbrush")
-                                .foregroundStyle(.primary, .secondary)
-                            Spacer()
-                            Menu {
-                                Button { appearanceMode = 0 } label: {
-                                    if appearanceMode == 0 { Label("System", systemImage: "checkmark") }
-                                    else { Text("System") }
-                                }
-                                Button { appearanceMode = 1 } label: {
-                                    if appearanceMode == 1 { Label("Light", systemImage: "checkmark") }
-                                    else { Text("Light") }
-                                }
-                                Button { appearanceMode = 2 } label: {
-                                    if appearanceMode == 2 { Label("Dark", systemImage: "checkmark") }
-                                    else { Text("Dark") }
-                                }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize()
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.system(size: 10, weight: .semibold))
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .animation(nil, value: appearanceMode)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
                     .buttonStyle(.plain)
-                } header: {
-                    Text("Display")
-                } footer: {
-                    Text("All subscription costs are converted to this currency when calculating totals. Exchange rates are approximate and updated periodically.")
+
+                    FormDivider()
+
+                    settingsRow {
+                        macSettingsLabel("Appearance", icon: "paintbrush")
+                        Spacer()
+                        Menu {
+                            Button { appearanceMode = 0 } label: {
+                                if appearanceMode == 0 { Label("System", systemImage: "checkmark") }
+                                else { Text("System") }
+                            }
+                            Button { appearanceMode = 1 } label: {
+                                if appearanceMode == 1 { Label("Light", systemImage: "checkmark") }
+                                else { Text("Light") }
+                            }
+                            Button { appearanceMode = 2 } label: {
+                                if appearanceMode == 2 { Label("Dark", systemImage: "checkmark") }
+                                else { Text("Dark") }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize()
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .animation(nil, value: appearanceMode)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                    }
                 }
 
-                Section {
-                    HStack {
-                        Label("Reminder Time", systemImage: "clock")
-                            .foregroundStyle(.primary, .secondary)
+                // NOTIFICATIONS
+                settingsSection(title: "Notifications", icon: "bell") {
+                    settingsRow {
+                        macSettingsLabel("Reminder", icon: "clock")
                         Spacer()
                         DatePicker(
                             "",
-                            selection: Binding(
-                                get: { notificationTime },
-                                set: { newDate in
-                                    let comps = Calendar.current.dateComponents([.hour, .minute], from: newDate)
-                                    notificationHour   = comps.hour   ?? 9
-                                    notificationMinute = comps.minute ?? 0
-                                }
-                            ),
+                            selection: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }),
                             displayedComponents: .hourAndMinute
                         )
                         .labelsHidden()
-                        .fixedSize()
+                        .datePickerStyle(.field)
                     }
-                } header: {
-                    Text("Notifications")
-                } footer: {
-                    Text("Reminders will be delivered at this time on the scheduled day.")
                 }
 
-                Section {
-                    Toggle(isOn: $iCloudSyncEnabled) {
-                        Label("iCloud Sync", systemImage: "icloud")
-                            .foregroundStyle(.primary, .secondary)
+                // SYNC
+                settingsSection(title: "Sync", icon: "icloud") {
+                    settingsRow {
+                        macSettingsLabel("iCloud Sync", icon: "icloud")
+                        Spacer()
+                        Toggle("", isOn: $iCloudSyncEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .tint(.green)
+                            .onChange(of: iCloudSyncEnabled) { _, _ in showRestartAlert = true }
                     }
-                    .onChange(of: iCloudSyncEnabled) { _, _ in
-                        showRestartAlert = true
-                    }
-#if os(macOS)
-                    // macOS has no pull-to-refresh; this nudges CloudKit to process pending changes.
+
+                    FormDivider()
+
                     Button {
                         guard !isSyncing else { return }
                         isSyncing = true
                         NotificationCenter.default.post(name: .expiredManualSync, object: nil)
-                        // Brief visual feedback — CloudKit is async and has no completion callback
                         Task {
                             try? await Task.sleep(for: .seconds(2))
                             isSyncing = false
                         }
                     } label: {
-                        HStack {
-                            Label("Sync Now", systemImage: isSyncing ? "arrow.triangle.2.circlepath" : "arrow.clockwise.icloud")
-                                .foregroundStyle(.primary, .secondary)
-                            if isSyncing {
-                                Spacer()
-                                ProgressView().controlSize(.small)
-                            }
+                        settingsRow {
+                            macSettingsLabel("Sync Now", icon: isSyncing ? "arrow.triangle.2.circlepath" : "arrow.clockwise.icloud")
+                            Spacer()
+                            if isSyncing { ProgressView().controlSize(.small) }
                         }
                     }
+                    .buttonStyle(.plain)
                     .disabled(!iCloudSyncEnabled || isSyncing)
-#endif
-                } header: {
-                    Text("Sync")
-                } footer: {
-                    Text("When enabled, your data syncs across all devices signed into the same iCloud account. Requires an iCloud account and internet connection. Restart the app after changing this setting.")
                 }
-                Section("Data") {
-                    NavigationLink {
-                        ArchiveView()
-                    } label: {
-                        HStack {
-                            Label("Archive", systemImage: "archivebox")
-                                .foregroundStyle(.primary, .secondary)
+
+                // DATA
+                settingsSection(title: "Data", icon: "folder") {
+                    NavigationLink { ArchiveView() } label: {
+                        settingsRow {
+                            macSettingsLabel("Archive", icon: "archivebox")
                             Spacer()
                             if !archivedItems.isEmpty {
                                 Text("\(archivedItems.count)")
                                     .foregroundStyle(.secondary)
                             }
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.tertiary)
                         }
                     }
-                    NavigationLink {
-                        CategoriesView()
-                    } label: {
-                        Label("Categories", systemImage: "square.grid.2x2")
-                            .foregroundStyle(.primary, .secondary)
+                    .buttonStyle(.plain)
+
+                    FormDivider()
+
+                    NavigationLink { CategoriesView() } label: {
+                        settingsRow {
+                            macSettingsLabel("Categories", icon: "square.grid.2x2")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
                     }
-                    Button {
-                        refreshAllFavicons()
-                    } label: {
-                        HStack {
-                            Label("Refresh All Icons", systemImage: "arrow.clockwise.circle")
-                                .foregroundStyle(.primary)
+                    .buttonStyle(.plain)
+
+                    FormDivider()
+
+                    Button { refreshAllFavicons() } label: {
+                        settingsRow {
+                            macSettingsLabel("Refresh Icons", icon: "arrow.clockwise.circle")
+                                .foregroundStyle(isRefreshingFavicons ? Color.secondary : Color.blue)
+                            Spacer()
                             if isRefreshingFavicons {
-                                Spacer()
                                 if faviconRefreshProgress.total > 0 {
                                     Text("\(faviconRefreshProgress.done)/\(faviconRefreshProgress.total)")
                                         .foregroundStyle(.secondary)
@@ -839,17 +970,214 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    .buttonStyle(.plain)
                     .disabled(isRefreshingFavicons)
                 }
+
+                Spacer(minLength: 40)
             }
-            .navigationTitle("Settings")
-            .largeNavigationTitle()
-            .currencyPickerPresentation(isPresented: $showCurrencyPicker, selectedCode: $preferredCurrency)
-            .alert("Restart Required", isPresented: $showRestartAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("Please restart the app for the iCloud sync change to take effect.")
+            .padding(24)
+        }
+        .background(groupedBackground.ignoresSafeArea())
+        .navigationTitle("Settings")
+        .currencyPickerPresentation(isPresented: $showCurrencyPicker, selectedCode: $preferredCurrency)
+        .alert("Restart Required", isPresented: $showRestartAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Please restart the app for the iCloud sync change to take effect.")
+        }
+    }
+
+    /// Consistent icon + label row element with fixed icon width for alignment.
+    @ViewBuilder
+    private func macSettingsLabel(_ title: String, icon: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 15))
+                .frame(width: 20, alignment: .center)
+                .foregroundStyle(.secondary)
+            Text(title)
+                .font(.system(size: 15))
+                .foregroundStyle(.primary)
+        }
+    }
+
+    /// A card-style section with a small header pill and a `FormCard`-style glass container.
+    private func settingsSection<Content: View>(
+        title: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .bold))
+                Text(title.uppercased())
+                    .font(.system(size: 11, weight: .bold))
+                    .tracking(0.6)
             }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Color.secondary.opacity(0.12), in: Capsule())
+            .padding(.horizontal, 4)
+
+            VStack(spacing: 0) {
+                content()
+            }
+            .glassEffect(in: .rect(cornerRadius: 20))
+        }
+    }
+
+    /// A standard settings row with consistent padding.
+    private func settingsRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        HStack {
+            content()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .contentShape(Rectangle())
+    }
+#endif
+
+    // MARK: - iOS Settings (List-based)
+
+    private var iosSettingsBody: some View {
+        List {
+            Section {
+                Button {
+                    showCurrencyPicker = true
+                } label: {
+                    HStack {
+                        Label("Currency", systemImage: "dollarsign.circle")
+                            .foregroundStyle(.primary, .secondary)
+                        Spacer()
+                        Text("\(CurrencyInfo.symbol(for: preferredCurrency)) \(preferredCurrency)")
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .foregroundStyle(.primary)
+                Button {
+                    appearanceMode = (appearanceMode + 1) % 3
+                } label: {
+                    HStack {
+                        Label("Appearance", systemImage: "paintbrush")
+                            .foregroundStyle(.primary, .secondary)
+                        Spacer()
+                        Menu {
+                            Button { appearanceMode = 0 } label: {
+                                if appearanceMode == 0 { Label("System", systemImage: "checkmark") }
+                                else { Text("System") }
+                            }
+                            Button { appearanceMode = 1 } label: {
+                                if appearanceMode == 1 { Label("Light", systemImage: "checkmark") }
+                                else { Text("Light") }
+                            }
+                            Button { appearanceMode = 2 } label: {
+                                if appearanceMode == 2 { Label("Dark", systemImage: "checkmark") }
+                                else { Text("Dark") }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize()
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .animation(nil, value: appearanceMode)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .buttonStyle(.plain)
+            } header: {
+                Text("Display")
+            } footer: {
+                Text("All subscription costs are converted to this currency when calculating totals. Exchange rates are approximate and updated periodically.")
+            }
+
+            Section {
+                DatePicker(
+                    selection: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }),
+                    displayedComponents: .hourAndMinute
+                ) {
+                    Label("Reminder", systemImage: "clock")
+                        .foregroundStyle(.primary, .secondary)
+                }
+                .datePickerStyle(.compact)
+            } header: {
+                Text("Notifications")
+            } footer: {
+                Text("Reminders will be delivered at this time on the scheduled day.")
+            }
+
+            Section {
+                Toggle(isOn: $iCloudSyncEnabled) {
+                    Label("iCloud Sync", systemImage: "icloud")
+                        .foregroundStyle(.primary, .secondary)
+                }
+                .onChange(of: iCloudSyncEnabled) { _, _ in
+                    showRestartAlert = true
+                }
+            } header: {
+                Text("Sync")
+            } footer: {
+                Text("When enabled, your data syncs across all devices signed into the same iCloud account. Requires an iCloud account and internet connection. Restart the app after changing this setting.")
+            }
+
+            Section("Data") {
+                NavigationLink {
+                    ArchiveView()
+                } label: {
+                    HStack {
+                        Label("Archive", systemImage: "archivebox")
+                            .foregroundStyle(.primary, .secondary)
+                        Spacer()
+                        if !archivedItems.isEmpty {
+                            Text("\(archivedItems.count)")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                NavigationLink {
+                    CategoriesView()
+                } label: {
+                    Label("Categories", systemImage: "square.grid.2x2")
+                        .foregroundStyle(.primary, .secondary)
+                }
+                Button {
+                    refreshAllFavicons()
+                } label: {
+                    HStack {
+                        Label("Refresh Icons", systemImage: "arrow.clockwise.circle")
+                            .foregroundStyle(.blue)
+                        if isRefreshingFavicons {
+                            Spacer()
+                            if faviconRefreshProgress.total > 0 {
+                                Text("\(faviconRefreshProgress.done)/\(faviconRefreshProgress.total)")
+                                    .foregroundStyle(.secondary)
+                                    .font(.system(size: 13))
+                            }
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isRefreshingFavicons)
+            }
+        }
+        .navigationTitle("Settings")
+        .largeNavigationTitle()
+        .currencyPickerPresentation(isPresented: $showCurrencyPicker, selectedCode: $preferredCurrency)
+        .alert("Restart Required", isPresented: $showRestartAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Please restart the app for the iCloud sync change to take effect.")
         }
     }
 

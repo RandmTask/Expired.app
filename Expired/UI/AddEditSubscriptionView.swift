@@ -236,7 +236,7 @@ struct AddEditSubscriptionView: View {
                                 .font(.system(size: 16))
                                 .frame(minWidth: 80, alignment: .leading)
                                 .foregroundStyle(.primary)
-                            TextField("netflix.com", text: $url)
+                            TextField("eg. netflix.com or App Store URL", text: $url)
                                 .foregroundStyle(.primary)
                                 .trailingTextAlignment()
                                 .autocorrectionDisabled()
@@ -804,6 +804,29 @@ struct AddEditSubscriptionView: View {
             }
             guard !Task.isCancelled else { return }
             await MainActor.run { isFetchingIcon = true }
+
+            // For App Store URLs: also populate the name field if it's empty
+            let normalised = trimmed.lowercased().hasPrefix("http") ? trimmed : "https://\(trimmed)"
+            if let host = URLComponents(string: normalised)?.host,
+               (host == "apps.apple.com" || host == "itunes.apple.com"),
+               let appID = FaviconFetcher.appStoreID(from: normalised) {
+                async let artworkFetch = FaviconFetcher.fetch(from: trimmed)
+                async let nameFetch = FaviconFetcher.fetchAppStoreName(appID: appID)
+                let (data, appName) = await (artworkFetch, nameFetch)
+                await MainActor.run {
+                    if let data {
+                        iconData = data
+                        iconSource = .favicon
+                    }
+                    // Only auto-fill name if the user hasn't typed one yet
+                    if let appName, name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        name = appName
+                    }
+                    isFetchingIcon = false
+                }
+                return
+            }
+
             let data = await FaviconFetcher.fetch(from: trimmed)
             await MainActor.run {
                 if let data {
@@ -993,11 +1016,11 @@ struct AccountField: View {
     @State private var showAddNew = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center) {
                 Text(label)
                     .font(.system(size: 16))
-                    .frame(minWidth: 80, alignment: .leading)
+                    .fixedSize()
                     .foregroundStyle(.primary)
 
                 if suggestions.isEmpty {
@@ -1035,6 +1058,9 @@ struct AccountField: View {
                         }
                     }
                     .menuStyle(.borderlessButton)
+#if os(macOS)
+                    .menuIndicator(.hidden)
+#endif
                 }
 
                 // Trailing action: × clears when filled (red), + opens sheet when empty
