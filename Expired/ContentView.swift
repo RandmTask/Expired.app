@@ -145,22 +145,51 @@ struct InsightsView: View {
     }
     private var yearlyTotal: Double { monthlyTotal * 12 }
 
-    /// Year-to-date: monthly total × months elapsed this year (including partial current month)
+    /// Year-to-date: per-item cost from the later of (Jan 1 or effectiveStartDate) to today.
+    /// Accurately reflects when each subscription actually started within this year.
     private var ytdTotal: Double {
         let now = Date()
         let cal = Calendar.current
-        let dayOfYear = cal.ordinality(of: .day, in: .year, for: now) ?? 1
-        let daysInYear = cal.range(of: .day, in: .year, for: now)?.count ?? 365
-        let yearFraction = Double(dayOfYear) / Double(daysInYear)
-        return yearlyTotal * yearFraction
+        guard let jan1 = cal.date(from: cal.dateComponents([.year], from: now)) else { return 0 }
+        return allItems.reduce(0) { sum, item in
+            guard let monthly = item.monthlyCostConverted(to: preferredCurrency) else { return sum }
+            // Start of billing this year: later of Jan 1 and effectiveStartDate
+            let billingFrom = max(jan1, item.effectiveStartDate)
+            // End of billing: today (or the date it stopped, for cancelled/expired items)
+            let billingTo = billingEndDate(for: item, cap: now)
+            guard billingFrom < billingTo else { return sum }
+            let days = cal.dateComponents([.day], from: billingFrom, to: billingTo).day ?? 0
+            // Convert day fraction to months (average 30.44 days/month)
+            let months = Double(days) / 30.4375
+            return sum + monthly * months
+        }
     }
 
-    /// Lifetime: sum of (monthly cost × months since createdAt) for each item
+    /// Lifetime: per-item cost from effectiveStartDate to today (or until it stopped).
     private var lifetimeTotal: Double {
-        activeItems.reduce(0) { sum, item in
+        let now = Date()
+        return allItems.reduce(0) { sum, item in
             guard let monthly = item.monthlyCostConverted(to: preferredCurrency) else { return sum }
-            let months = max(1, Calendar.current.dateComponents([.month], from: item.createdAt, to: Date()).month ?? 1)
-            return sum + monthly * Double(months)
+            let billingFrom = item.effectiveStartDate
+            let billingTo = billingEndDate(for: item, cap: now)
+            guard billingFrom < billingTo else { return sum }
+            let days = Calendar.current.dateComponents([.day], from: billingFrom, to: billingTo).day ?? 0
+            let months = Double(days) / 30.4375
+            return sum + monthly * months
+        }
+    }
+
+    /// Returns the effective billing end date for cost calculation purposes.
+    /// For expired/cancelled items, uses the date they stopped; otherwise uses `cap` (today).
+    private func billingEndDate(for item: SubscriptionItem, cap: Date) -> Date {
+        switch item.status {
+        case .expired:
+            // Use nextRelevantDate (when it expired) if it's in the past, otherwise cap
+            return min(item.nextRelevantDate, cap)
+        case .cancelledButActive(let until):
+            return min(until, cap)
+        default:
+            return cap
         }
     }
 
@@ -251,11 +280,27 @@ struct InsightsView: View {
 
     private func periodCost(for item: SubscriptionItem) -> Double {
         guard let monthly = item.monthlyCostConverted(to: preferredCurrency) else { return 0 }
-        if costPeriod == .lifetime {
-            let months = max(1, Calendar.current.dateComponents([.month], from: item.createdAt, to: Date()).month ?? 1)
-            return monthly * Double(months)
+        let now = Date()
+        let cal = Calendar.current
+        switch costPeriod {
+        case .monthly:
+            return monthly
+        case .annual:
+            return monthly * 12.0
+        case .ytd:
+            guard let jan1 = cal.date(from: cal.dateComponents([.year], from: now)) else { return 0 }
+            let billingFrom = max(jan1, item.effectiveStartDate)
+            let billingTo = billingEndDate(for: item, cap: now)
+            guard billingFrom < billingTo else { return 0 }
+            let days = cal.dateComponents([.day], from: billingFrom, to: billingTo).day ?? 0
+            return monthly * (Double(days) / 30.4375)
+        case .lifetime:
+            let billingFrom = item.effectiveStartDate
+            let billingTo = billingEndDate(for: item, cap: now)
+            guard billingFrom < billingTo else { return monthly }
+            let days = cal.dateComponents([.day], from: billingFrom, to: billingTo).day ?? 0
+            return monthly * max(1, Double(days) / 30.4375)
         }
-        return monthly * periodMultiplier
     }
 
     private var costBreakdown: some View {
@@ -301,6 +346,7 @@ struct GlassInsightCard: View {
             Image(systemName: icon)
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(color)
+                .frame(height: 22, alignment: .center)
             Text(value)
                 .font(.system(size: 22, weight: .bold, design: .rounded))
                 .foregroundStyle(.primary)
@@ -443,141 +489,522 @@ struct ArchiveView: View {
 
 // MARK: - Categories View
 
+/// Unified item type for the merged built-in + custom categories list.
+private enum CategoryListItem: Identifiable {
+    case builtIn(SubscriptionCategory)
+    case custom(UserCategory)
+
+    var id: String {
+        switch self {
+        case .builtIn(let c): return "builtin-\(c.rawValue)"
+        case .custom(let c):  return "custom-\(c.id.uuidString)"
+        }
+    }
+}
+
 struct CategoriesView: View {
     @Query(filter: #Predicate<SubscriptionItem> { !$0.isArchived && $0.itemTypeRaw == "subscription" })
     private var allSubscriptions: [SubscriptionItem]
 
-    @State private var userCategories: [UserCategory] = []
+    // Built-in visibility
+    @State private var hiddenBuiltIn: Set<String> = BuiltInCategoryStore.hiddenRawValues()
+
+    // Unified ordered list (built-in + custom interleaved) — populated in onAppear
+    @State private var unifiedCategories: [CategoryListItem] = []
+
+    // Custom categories sheet state
     @State private var showingAdd = false
     @State private var editingCategory: UserCategory? = nil
     @State private var newCategoryName = ""
     @State private var newCategoryIcon = UserCategory.defaultIcon
+    @State private var newCategoryDescription = ""
+
+    // Edit mode for reordering (iOS)
+    @State private var isEditing = false
 
     private func count(rawName: String) -> Int {
         allSubscriptions.filter { $0.categoryRaw == rawName }.count
     }
 
+    /// Build the unified list, respecting the saved interleaved order when available.
+    private func buildUnified() -> [CategoryListItem] {
+        let builtInMap: [String: SubscriptionCategory] = Dictionary(
+            uniqueKeysWithValues: SubscriptionCategory.allCases.map { ($0.rawValue, $0) }
+        )
+        let customMap: [String: UserCategory] = Dictionary(
+            uniqueKeysWithValues: UserCategoryStore.load().map { ($0.id.uuidString, $0) }
+        )
+
+        // If a unified order was saved, reconstruct from it
+        if let tags = BuiltInCategoryStore.loadUnifiedOrder(), !tags.isEmpty {
+            var result: [CategoryListItem] = []
+            for tag in tags {
+                if tag.hasPrefix("builtin:") {
+                    let raw = String(tag.dropFirst(8))
+                    if let cat = builtInMap[raw] { result.append(.builtIn(cat)) }
+                } else if tag.hasPrefix("custom:") {
+                    let uuid = String(tag.dropFirst(7))
+                    if let cat = customMap[uuid] { result.append(.custom(cat)) }
+                }
+            }
+            // Append any new built-ins not yet in the saved list
+            let seenBuiltIns = Set(result.compactMap { if case .builtIn(let c) = $0 { return c.rawValue } else { return nil } })
+            for cat in BuiltInCategoryStore.allOrdered() where !seenBuiltIns.contains(cat.rawValue) {
+                result.append(.builtIn(cat))
+            }
+            // Append any new custom categories not yet in the saved list
+            let seenCustoms = Set(result.compactMap { if case .custom(let c) = $0 { return c.id.uuidString } else { return nil } })
+            for cat in UserCategoryStore.load() where !seenCustoms.contains(cat.id.uuidString) {
+                result.append(.custom(cat))
+            }
+            return result
+        }
+
+        // First-launch fallback: built-ins first, then customs
+        let builtIns = BuiltInCategoryStore.allOrdered().map { CategoryListItem.builtIn($0) }
+        let customs  = UserCategoryStore.load().map { CategoryListItem.custom($0) }
+        return builtIns + customs
+    }
+
+    /// Persist the current unified order (interleaved tags + separate stores).
+    private func saveUnified() {
+        // Save the interleaved tag sequence so the exact position survives navigation
+        let tags: [String] = unifiedCategories.map { item in
+            switch item {
+            case .builtIn(let c): return "builtin:\(c.rawValue)"
+            case .custom(let c):  return "custom:\(c.id.uuidString)"
+            }
+        }
+        BuiltInCategoryStore.saveUnifiedOrder(tags)
+
+        // Also keep the separate stores up to date (used elsewhere in the app)
+        let builtInOrder = unifiedCategories.compactMap { if case .builtIn(let c) = $0 { return c.rawValue } else { return nil } }
+        let customItems  = unifiedCategories.compactMap { if case .custom(let c) = $0 { return c } else { return nil } }
+        BuiltInCategoryStore.saveOrder(builtInOrder)
+        UserCategoryStore.save(customItems)
+    }
+
     var body: some View {
+#if os(iOS)
+        iOSBody
+#else
+        macOSBody
+#endif
+    }
+
+#if os(iOS)
+    // MARK: iOS body — List is the root scroll container
+
+    private var iOSBody: some View {
+        List {
+            Section {
+                ForEach(unifiedCategories) { item in
+                    Group {
+                        switch item {
+                        case .builtIn(let cat):
+                            builtInRow(cat)
+                        case .custom(let cat):
+                            customCategoryRow(cat)
+                        }
+                    }
+                    .listRowSeparator(.hidden)
+                }
+                .onMove { from, to in
+                    unifiedCategories.move(fromOffsets: from, toOffset: to)
+                    saveUnified()
+                }
+                .onDelete { offsets in
+                    // Only delete custom rows; ignore built-in deletions
+                    let toRemove = offsets.filter {
+                        if case .custom = unifiedCategories[$0] { return true }
+                        return false
+                    }
+                    guard !toRemove.isEmpty else { return }
+                    unifiedCategories.remove(atOffsets: IndexSet(toRemove))
+                    saveUnified()
+                }
+            }
+
+            Section {
+                Button {
+                    newCategoryName = ""
+                    newCategoryIcon = UserCategory.defaultIcon
+                    newCategoryDescription = ""
+                    editingCategory = nil
+                    showingAdd = true
+                } label: {
+                    Label("Add Category", systemImage: "plus.circle.fill")
+                        .foregroundStyle(.blue)
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(groupedBackground.ignoresSafeArea())
+        .navigationTitle("Categories")
+        .largeNavigationTitle()
+        .environment(\.editMode, isEditing ? .constant(.active) : .constant(.inactive))
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(isEditing ? "Done" : "Edit") {
+                    withAnimation { isEditing.toggle() }
+                }
+                .fontWeight(isEditing ? .semibold : .regular)
+            }
+        }
+        .onAppear {
+            hiddenBuiltIn = BuiltInCategoryStore.hiddenRawValues()
+            // Only rebuild from disk on first load; preserve in-memory ordering after that
+            // so user drag positions aren't lost when navigating away and back
+            if unifiedCategories.isEmpty {
+                unifiedCategories = buildUnified()
+            }
+        }
+        .sheet(isPresented: $showingAdd, onDismiss: { editingCategory = nil }) {
+            CategoryEditSheet(
+                name: $newCategoryName,
+                icon: $newCategoryIcon,
+                description: $newCategoryDescription,
+                title: editingCategory == nil ? "Add Category" : "Edit Category"
+            ) {
+                if let editing = editingCategory,
+                   let idx = unifiedCategories.firstIndex(where: {
+                       if case .custom(let c) = $0 { return c.id == editing.id }
+                       return false
+                   }) {
+                    let updated = UserCategory(
+                        id: editing.id,
+                        name: newCategoryName,
+                        icon: newCategoryIcon,
+                        description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
+                    )
+                    unifiedCategories[idx] = .custom(updated)
+                } else {
+                    unifiedCategories.append(.custom(UserCategory(
+                        name: newCategoryName,
+                        icon: newCategoryIcon,
+                        description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
+                    )))
+                }
+                saveUnified()
+            }
+        }
+        .onChange(of: editingCategory) { _, cat in
+            if cat != nil { showingAdd = true }
+        }
+    }
+#else
+    // MARK: macOS body
+
+    private var macOSBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                // Built-in categories (exclude .other — redundant with Custom section)
-                let builtInCats = SubscriptionCategory.allCases.filter { $0 != .other }
-                categoriesSection(title: "Built-in", icon: "square.grid.2x2") {
-                    ForEach(builtInCats, id: \.self) { cat in
-                        categoryRow(
-                            label: cat.displayName,
-                            icon: cat.icon,
-                            count: count(rawName: cat.rawValue)
-                        )
-                        if cat != builtInCats.last {
-                            FormDivider()
-                        }
-                    }
-                }
-
-                // Custom categories
-                categoriesSection(title: "Custom", icon: "tag") {
-                    if userCategories.isEmpty {
-                        Text("No custom categories yet")
-                            .font(.system(size: 15))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 14)
-                    } else {
-                        ForEach(userCategories) { cat in
-                            HStack(spacing: 12) {
-                                Image(systemName: cat.icon)
-                                    .font(.system(size: 16))
-                                    .frame(width: 22, alignment: .center)
-                                Text(cat.name)
-                                    .font(.system(size: 16))
-                                Spacer()
-                                let n = count(rawName: cat.name)
-                                if n > 0 {
-                                    Text("\(n)")
-                                        .font(.system(size: 15))
-                                        .foregroundStyle(.secondary)
-                                }
-                                // Edit / delete buttons
-                                Button {
-                                    newCategoryName = cat.name
-                                    newCategoryIcon = cat.icon
-                                    editingCategory = cat
-                                } label: {
-                                    Image(systemName: "pencil.circle.fill")
-                                        .font(.system(size: 20))
-                                        .foregroundStyle(.blue.opacity(0.8))
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.leading, 8)
-                                Button {
-                                    withAnimation {
-                                        userCategories.removeAll { $0.id == cat.id }
-                                        UserCategoryStore.save(userCategories)
-                                    }
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 20))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.leading, 4)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            if cat.id != userCategories.last?.id {
-                                FormDivider()
-                            }
-                        }
-                    }
-                    FormDivider()
-                    Button {
-                        newCategoryName = ""
-                        newCategoryIcon = UserCategory.defaultIcon
-                        editingCategory = nil
-                        showingAdd = true
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.system(size: 16))
-                                .frame(width: 22, alignment: .center)
-                            Text("Add Category")
-                                .font(.system(size: 16))
-                        }
-                        .foregroundStyle(.blue)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
-                }
-
-
+                builtInSection
+                customSection
             }
             .padding(16)
         }
         .background(groupedBackground.ignoresSafeArea())
         .navigationTitle("Categories")
         .largeNavigationTitle()
-        .onAppear { userCategories = UserCategoryStore.load() }
-        .sheet(isPresented: $showingAdd) {
+        .onAppear {
+            hiddenBuiltIn = BuiltInCategoryStore.hiddenRawValues()
+            unifiedCategories = buildUnified()
+        }
+        .sheet(isPresented: $showingAdd, onDismiss: { editingCategory = nil }) {
             CategoryEditSheet(
                 name: $newCategoryName,
                 icon: $newCategoryIcon,
+                description: $newCategoryDescription,
                 title: editingCategory == nil ? "Add Category" : "Edit Category"
             ) {
                 if let editing = editingCategory,
-                   let idx = userCategories.firstIndex(where: { $0.id == editing.id }) {
-                    userCategories[idx].name = newCategoryName
-                    userCategories[idx].icon = newCategoryIcon
+                   let idx = unifiedCategories.firstIndex(where: {
+                       if case .custom(let c) = $0 { return c.id == editing.id }
+                       return false
+                   }) {
+                    let updated = UserCategory(
+                        id: editing.id,
+                        name: newCategoryName,
+                        icon: newCategoryIcon,
+                        description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
+                    )
+                    unifiedCategories[idx] = .custom(updated)
                 } else {
-                    userCategories.append(UserCategory(name: newCategoryName, icon: newCategoryIcon))
+                    unifiedCategories.append(.custom(UserCategory(
+                        name: newCategoryName,
+                        icon: newCategoryIcon,
+                        description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
+                    )))
                 }
-                UserCategoryStore.save(userCategories)
+                saveUnified()
             }
         }
         .onChange(of: editingCategory) { _, cat in
             if cat != nil { showingAdd = true }
         }
+    }
+#endif
+
+    // MARK: Built-in Section (macOS + helper for iOS row)
+
+    @ViewBuilder
+    private func builtInRow(_ cat: SubscriptionCategory) -> some View {
+        let isHidden = hiddenBuiltIn.contains(cat.rawValue)
+        HStack(spacing: 12) {
+            Image(systemName: cat.icon)
+                .font(.system(size: 16))
+                .frame(width: 22, alignment: .center)
+                .foregroundStyle(isHidden ? .tertiary : .primary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(cat.displayName)
+                    .font(.system(size: 16))
+                    .foregroundStyle(isHidden ? .secondary : .primary)
+                Text(cat.examples)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            let n = count(rawName: cat.rawValue)
+            if n > 0 {
+                Text("\(n)")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+            }
+            // Visibility toggle
+            Button {
+                withAnimation {
+                    if isHidden {
+                        hiddenBuiltIn.remove(cat.rawValue)
+                    } else {
+                        hiddenBuiltIn.insert(cat.rawValue)
+                    }
+                    BuiltInCategoryStore.setHidden(cat.rawValue, hidden: !isHidden)
+                }
+            } label: {
+                Image(systemName: isHidden ? "eye.slash" : "eye")
+                    .font(.system(size: 16))
+                    .foregroundStyle(isHidden ? Color.secondary.opacity(0.4) : Color.blue)
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 8)
+        }
+    }
+
+#if os(macOS)
+    @ViewBuilder
+    private func builtInRow(_ cat: SubscriptionCategory, index: Int, total: Int) -> some View {
+        let isHidden = hiddenBuiltIn.contains(cat.rawValue)
+        HStack(spacing: 12) {
+            Image(systemName: cat.icon)
+                .font(.system(size: 16))
+                .frame(width: 22, alignment: .center)
+                .foregroundStyle(isHidden ? .tertiary : .primary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(cat.displayName)
+                    .font(.system(size: 16))
+                    .foregroundStyle(isHidden ? .secondary : .primary)
+                Text(cat.examples)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            let n = count(rawName: cat.rawValue)
+            if n > 0 {
+                Text("\(n)")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+            }
+            // Up/down reorder buttons (moves within the unified list)
+            VStack(spacing: 2) {
+                Button {
+                    guard index > 0 else { return }
+                    // Find this item's index in the unified list and move up
+                    if let uIdx = unifiedCategories.firstIndex(where: {
+                        if case .builtIn(let c) = $0 { return c.rawValue == cat.rawValue }
+                        return false
+                    }), uIdx > 0 {
+                        unifiedCategories.move(fromOffsets: IndexSet(integer: uIdx), toOffset: uIdx - 1)
+                        saveUnified()
+                    }
+                } label: {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(index == 0 ? Color.secondary.opacity(0.3) : Color.secondary)
+                .disabled(index == 0)
+
+                Button {
+                    guard index < total - 1 else { return }
+                    if let uIdx = unifiedCategories.firstIndex(where: {
+                        if case .builtIn(let c) = $0 { return c.rawValue == cat.rawValue }
+                        return false
+                    }), uIdx < unifiedCategories.count - 1 {
+                        unifiedCategories.move(fromOffsets: IndexSet(integer: uIdx), toOffset: uIdx + 2)
+                        saveUnified()
+                    }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(index == total - 1 ? Color.secondary.opacity(0.3) : Color.secondary)
+                .disabled(index == total - 1)
+            }
+            .padding(.leading, 4)
+
+            // Visibility toggle
+            Button {
+                withAnimation {
+                    let isHidden = hiddenBuiltIn.contains(cat.rawValue)
+                    if isHidden {
+                        hiddenBuiltIn.remove(cat.rawValue)
+                    } else {
+                        hiddenBuiltIn.insert(cat.rawValue)
+                    }
+                    BuiltInCategoryStore.setHidden(cat.rawValue, hidden: !isHidden)
+                }
+            } label: {
+                Image(systemName: hiddenBuiltIn.contains(cat.rawValue) ? "eye.slash" : "eye")
+                    .font(.system(size: 16))
+                    .foregroundStyle(hiddenBuiltIn.contains(cat.rawValue) ? Color.secondary.opacity(0.4) : Color.blue)
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 4)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+#endif
+
+#if os(macOS)
+    // MARK: macOS Sections
+
+    @ViewBuilder
+    private var builtInSection: some View {
+        let orderedBuiltIn = unifiedCategories.compactMap { if case .builtIn(let c) = $0 { return c } else { return nil } }
+        categoriesSection(title: "Built-in", icon: "square.grid.2x2") {
+            ForEach(Array(orderedBuiltIn.enumerated()), id: \.element.rawValue) { idx, cat in
+                builtInRow(cat, index: idx, total: orderedBuiltIn.count)
+                if idx < orderedBuiltIn.count - 1 {
+                    FormDivider()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var customSection: some View {
+        let customItems = unifiedCategories.compactMap { if case .custom(let c) = $0 { return c } else { return nil } }
+        categoriesSection(title: "Custom", icon: "tag") {
+            if customItems.isEmpty {
+                Text("No custom categories yet")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+            } else {
+                ForEach(customItems) { cat in
+                    customCategoryRow(cat)
+                    if cat.id != customItems.last?.id {
+                        FormDivider()
+                    }
+                }
+            }
+            FormDivider()
+            Button {
+                newCategoryName = ""
+                newCategoryIcon = UserCategory.defaultIcon
+                newCategoryDescription = ""
+                editingCategory = nil
+                showingAdd = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 16))
+                        .frame(width: 22, alignment: .center)
+                    Text("Add Category")
+                        .font(.system(size: 16))
+                }
+                .foregroundStyle(.blue)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+        }
+    }
+#endif
+
+    @ViewBuilder
+    private func customCategoryRow(_ cat: UserCategory) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: cat.icon)
+                .font(.system(size: 16))
+                .frame(width: 22, alignment: .center)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(cat.name)
+                    .font(.system(size: 16))
+                if let desc = cat.description, !desc.isEmpty {
+                    Text(desc)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            let n = count(rawName: cat.name)
+            if n > 0 {
+                Text("\(n)")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+            }
+            Button {
+                newCategoryName = cat.name
+                newCategoryIcon = cat.icon
+                newCategoryDescription = cat.description ?? ""
+                editingCategory = cat
+            } label: {
+                Image(systemName: "pencil.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.blue.opacity(0.8))
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 8)
+            Button {
+                withAnimation {
+                    unifiedCategories.removeAll {
+                        if case .custom(let c) = $0 { return c.id == cat.id }
+                        return false
+                    }
+                    saveUnified()
+                }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func categoriesSectionHeader(title: String, icon: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .bold))
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .bold))
+                .tracking(0.6)
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Color.secondary.opacity(0.12), in: Capsule())
+        .padding(.horizontal, 4)
     }
 
     @ViewBuilder
@@ -587,50 +1014,19 @@ struct CategoriesView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Section pill header
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .bold))
-                Text(title.uppercased())
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(0.6)
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Color.secondary.opacity(0.12), in: Capsule())
-            .padding(.horizontal, 4)
-
+            categoriesSectionHeader(title: title, icon: icon)
             VStack(spacing: 0) {
                 content()
             }
             .glassEffect(in: .rect(cornerRadius: 20))
         }
     }
-
-    @ViewBuilder
-    private func categoryRow(label: String, icon: String, count: Int) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 16))
-                .frame(width: 22, alignment: .center)
-            Text(label)
-                .font(.system(size: 16))
-            Spacer()
-            if count > 0 {
-                Text("\(count)")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-    }
 }
 
 struct CategoryEditSheet: View {
     @Binding var name: String
     @Binding var icon: String
+    @Binding var description: String
     let title: String
     let onSave: () -> Void
     @Environment(\.dismiss) private var dismiss
@@ -664,6 +1060,10 @@ struct CategoryEditSheet: View {
             Form {
                 Section("Name") {
                     TextField("Category name", text: $name)
+                        .autocorrectionDisabled()
+                }
+                Section("Description") {
+                    TextField("Optional — e.g. Work tools, Side projects…", text: $description)
                         .autocorrectionDisabled()
                 }
                 Section("Icon") {
@@ -1102,14 +1502,19 @@ struct SettingsView: View {
             }
 
             Section {
-                DatePicker(
-                    selection: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }),
-                    displayedComponents: .hourAndMinute
-                ) {
+                HStack {
                     Label("Reminder", systemImage: "clock")
                         .foregroundStyle(.primary, .secondary)
+                    Spacer()
+                    DatePicker(
+                        "",
+                        selection: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }),
+                        displayedComponents: .hourAndMinute
+                    )
+                    .labelsHidden()
+                    .datePickerStyle(.compact)
+                    .fixedSize()
                 }
-                .datePickerStyle(.compact)
             } header: {
                 Text("Notifications")
             } footer: {

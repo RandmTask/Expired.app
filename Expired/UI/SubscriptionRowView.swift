@@ -231,7 +231,7 @@ struct StatusBadge: View {
         switch status {
         case .autoRenew:         return .green
         case .manualRenew:       return itemType == .document ? .indigo : .blue
-        case .cancelledButActive: return .red
+        case .cancelledButActive: return .orange
         case .expired:           return .red
         case .trial:             return .purple
         }

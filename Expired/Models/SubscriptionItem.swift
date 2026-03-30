@@ -17,55 +17,76 @@ enum ItemType: String, Codable, CaseIterable {
 }
 
 enum BillingCycle: String, Codable, CaseIterable {
-    case weekly = "Weekly"
+    case weekly  = "Weekly"
     case monthly = "Monthly"
-    case yearly = "Yearly"
-    case custom = "Custom"
+    case yearly  = "Yearly"
+    case oneOff  = "One-off"
+    case custom  = "Custom"
 
     var monthlyMultiplier: Double {
         switch self {
-        case .weekly: return 52.0 / 12.0
+        case .weekly:  return 52.0 / 12.0
         case .monthly: return 1.0
-        case .yearly: return 1.0 / 12.0
-        case .custom: return 1.0
+        case .yearly:  return 1.0 / 12.0
+        case .oneOff:  return 0.0   // non-recurring; cost is total, not per-month
+        case .custom:  return 1.0
         }
     }
 }
 
 /// User-defined category for grouping subscriptions.
 enum SubscriptionCategory: String, Codable, CaseIterable {
-    case streaming  = "Streaming"
-    case music      = "Music"
-    case software   = "Software"
-    case fitness    = "Fitness"
-    case gaming     = "Gaming"
-    case finance    = "Finance"
-    case news       = "News"
-    case shopping   = "Shopping"
-    case utilities  = "Utilities"
-    case other      = "Other"
+    case streaming      = "Streaming"
+    case ai             = "AI Tools"
+    case cloud          = "Digital Utilities & Cloud"
+    case productivity   = "Work & Productivity"
+    case gaming         = "Gaming"
+    case shopping       = "Shopping & Delivery"
+    case health         = "Health & Fitness"
+    case apps           = "Apps & Software"
+    case professional   = "Professional & Business"
+    case financial      = "Financial"
+    case lifestyle      = "Personal & Lifestyle"
+    case utilities      = "Utilities"
+    case other          = "Other"
 
     var icon: String {
         switch self {
-        case .streaming:  return "play.tv.fill"
-        case .music:      return "sparkles"
-        case .software:   return "app.fill"
-        case .fitness:    return "figure.run"
-        case .gaming:     return "gamecontroller.fill"
-        case .finance:    return "dollarsign.circle.fill"
-        case .news:       return "newspaper.fill"
-        case .shopping:   return "bag.fill"
-        case .utilities:  return "wrench.and.screwdriver.fill"
-        case .other:      return "square.grid.2x2.fill"
+        case .streaming:    return "play.tv.fill"
+        case .ai:           return "sparkles"
+        case .cloud:        return "cloud.fill"
+        case .productivity: return "briefcase.fill"
+        case .gaming:       return "gamecontroller.fill"
+        case .shopping:     return "bag.fill"
+        case .health:       return "figure.run"
+        case .apps:         return "app.fill"
+        case .professional: return "person.2.fill"
+        case .financial:    return "dollarsign.circle.fill"
+        case .lifestyle:    return "book.fill"
+        case .utilities:    return "bolt.fill"
+        case .other:        return "square.grid.2x2.fill"
         }
     }
 
-    /// Human-readable display name (kept separate from rawValue which is used for CloudKit storage)
-    var displayName: String {
+    /// Human-readable display name (same as rawValue for these categories)
+    var displayName: String { rawValue }
+
+    /// Example services shown in Categories settings view only
+    var examples: String {
         switch self {
-        case .streaming:  return "Streaming & Music"
-        case .music:      return "AI Services"
-        default:          return rawValue
+        case .streaming:    return "Netflix, Disney+, Spotify, Apple Music"
+        case .ai:           return "ChatGPT, Claude, Gemini, Perplexity"
+        case .cloud:        return "iCloud+, Tailscale, Dropbox, Google One"
+        case .productivity: return "Notion, Microsoft 365, Todoist, Zoom"
+        case .gaming:       return "Xbox Game Pass, PlayStation Plus, Steam"
+        case .shopping:     return "Amazon, HelloFresh, Deliveroo"
+        case .health:       return "Whoop, Oura, MyFitnessPal"
+        case .apps:         return "1Password, Keyboard Maestro, Flightradar24"
+        case .professional: return "LinkedIn, Adobe CC, Canva"
+        case .financial:    return "Rocket Money, Quickbooks, Bloomberg"
+        case .lifestyle:    return "Audible, NYTimes, MasterClass, Skillshare"
+        case .utilities:    return "Internet, Mobile, Electricity, Starling"
+        case .other:        return "Patreon, Substack, Newsletters, Donations"
         }
     }
 }
@@ -190,6 +211,8 @@ final class SubscriptionItem {
     var validFromDate: Date? = nil
     /// Stored as optional String for CloudKit compatibility with older records.
     var categoryRaw: String? = nil
+    /// User-specified subscription start date. Nil means unknown; use createdAt as fallback for cost calculations.
+    var startDate: Date? = nil
     var isArchived: Bool = false
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
@@ -248,6 +271,7 @@ final class SubscriptionItem {
         documentNumber: String? = nil,
         validFromDate: Date? = nil,
         category: SubscriptionCategory? = nil,
+        startDate: Date? = nil,
         notifications: [NotificationRule] = []
     ) {
         self.id = id
@@ -274,6 +298,7 @@ final class SubscriptionItem {
         self.documentNumber = documentNumber
         self.validFromDate = validFromDate
         self.categoryRaw = category?.rawValue
+        self.startDate = startDate
         self.createdAt = Date()
         self.updatedAt = Date()
         self.notifications = notifications
@@ -336,10 +361,22 @@ final class SubscriptionItem {
         return .normal
     }
 
+    // MARK: - Start Date
+
+    /// The best known start date: user-set startDate if available, otherwise createdAt.
+    /// Used for lifetime and YTD cost calculations to accurately reflect real spend duration.
+    var effectiveStartDate: Date {
+        // Use startDate if set and it's in the past (sanity check)
+        if let sd = startDate, sd <= Date() { return sd }
+        return createdAt
+    }
+
     // MARK: - Cost Normalization
 
     var monthlyCost: Double? {
         guard let cost = cost else { return nil }
+        // One-off payments have no recurring monthly cost
+        guard billingCycle != .oneOff else { return nil }
         return cost * billingCycle.monthlyMultiplier
     }
 

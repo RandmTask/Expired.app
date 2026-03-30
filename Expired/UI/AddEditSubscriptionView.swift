@@ -57,6 +57,10 @@ struct AddEditSubscriptionView: View {
     @State private var selectedCategoryRaw: String? = nil
     @State private var userCategories: [UserCategory] = []
 
+    // Start date (optional — nil means not set)
+    @State private var startDate: Date? = nil
+    @State private var startDateValue: Date = Date()
+
     // Reminders & notes
     @State private var notifications: [NotificationRule] = []
     @State private var notes = ""
@@ -152,6 +156,7 @@ struct AddEditSubscriptionView: View {
             .scrollEdgeEffectStyle(.soft, for: .top)
 #if os(iOS)
             .scrollDismissesKeyboard(.interactively)
+            .onTapGesture { hideKeyboard() }
 #endif
             .navigationTitle(isEditing ? "Edit" : (itemType == .document ? "Add Document" : "Add Subscription"))
             .inlineNavigationTitle()
@@ -258,6 +263,7 @@ struct AddEditSubscriptionView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 14)
+                        .contentShape(Rectangle())
 
                         FormDivider()
                     }
@@ -308,25 +314,25 @@ struct AddEditSubscriptionView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 14)
                     } else {
-                        FormRow(label: "Category") {
+                        // Category row — matches AccountField layout exactly
+                        HStack(alignment: .center) {
+                            Text("Category")
+                                .font(.system(size: 16))
+                                .fixedSize()
+                                .foregroundStyle(.primary)
                             Menu {
-                                Button {
-                                    selectedCategoryRaw = nil
-                                } label: {
-                                    Label("None", systemImage: selectedCategoryRaw == nil ? "checkmark" : "circle")
-                                }
-                                Divider()
-                                ForEach(SubscriptionCategory.allCases, id: \.self) { cat in
-                                    Button {
-                                        selectedCategoryRaw = cat.rawValue
-                                    } label: {
-                                        Label(cat.displayName, systemImage: cat.icon)
-                                    }
-                                }
-                                if !userCategories.isEmpty {
-                                    Divider()
-                                    ForEach(userCategories) { cat in
+                                ForEach(BuiltInCategoryStore.unifiedVisibleItems()) { item in
+                                    switch item {
+                                    case .builtIn(let cat):
                                         Button {
+                                            hideKeyboard()
+                                            selectedCategoryRaw = cat.rawValue
+                                        } label: {
+                                            Label(cat.displayName, systemImage: cat.icon)
+                                        }
+                                    case .custom(let cat):
+                                        Button {
+                                            hideKeyboard()
                                             selectedCategoryRaw = cat.name
                                         } label: {
                                             Label(cat.name, systemImage: cat.icon)
@@ -334,25 +340,72 @@ struct AddEditSubscriptionView: View {
                                     }
                                 }
                             } label: {
-                                HStack(spacing: 4) {
-                                    if let raw = selectedCategoryRaw {
+                                if let raw = selectedCategoryRaw {
+                                    HStack(spacing: 4) {
                                         Image(systemName: UserCategoryStore.icon(for: raw))
                                             .font(.system(size: 13))
                                         Text(SubscriptionCategory(rawValue: raw)?.displayName ?? raw)
-                                            .fixedSize()
-                                    } else {
-                                        Text("None")
-                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
                                     }
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(.secondary)
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
+                                } else {
+                                    Text("None")
+                                        .foregroundStyle(.secondary.opacity(0.35))
+                                        .frame(maxWidth: .infinity, alignment: .trailing)
                                 }
-                                .foregroundStyle(selectedCategoryRaw != nil ? .primary : .secondary)
-                                .animation(nil, value: selectedCategoryRaw)
                             }
                             .menuStyle(.borderlessButton)
+#if os(macOS)
+                            .menuIndicator(.hidden)
+#endif
+                            // Trailing action: × clears when filled, + opens menu when empty
+                            if selectedCategoryRaw != nil {
+                                Button {
+                                    withAnimation { selectedCategoryRaw = nil }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 18))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.leading, 6)
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                // + button also opens the menu (matches AccountField blue +)
+                                Menu {
+                                    ForEach(BuiltInCategoryStore.unifiedVisibleItems()) { item in
+                                        switch item {
+                                        case .builtIn(let cat):
+                                            Button {
+                                                hideKeyboard()
+                                                selectedCategoryRaw = cat.rawValue
+                                            } label: {
+                                                Label(cat.displayName, systemImage: cat.icon)
+                                            }
+                                        case .custom(let cat):
+                                            Button {
+                                                hideKeyboard()
+                                                selectedCategoryRaw = cat.name
+                                            } label: {
+                                                Label(cat.name, systemImage: cat.icon)
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.system(size: 18))
+                                        .foregroundStyle(.blue.opacity(0.8))
+                                        .padding(.leading, 6)
+                                }
+                                .menuStyle(.borderlessButton)
+#if os(macOS)
+                                .menuIndicator(.hidden)
+#endif
+                            }
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+
                     }
                 }
             }
@@ -570,10 +623,89 @@ struct AddEditSubscriptionView: View {
                     .padding(.vertical, 14)
 
                     FormDivider()
-                    FormRow(label: isCancelled ? "Active Until" : isTrial ? "Trial Ends" : "Renews") {
+                    HStack {
+                        Text(isCancelled ? "Active Until" : isTrial ? "Trial Ends" : "Renews")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.primary)
+                            .fixedSize()
+                        Spacer()
                         DatePicker("", selection: $statusDate, displayedComponents: .date)
                             .labelsHidden()
+                        // Quick-pick + button: bump the renewal date forward
+                        Menu {
+                            Button("+1 Week") {
+                                statusDate = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: statusDate) ?? statusDate
+                            }
+                            Button("+1 Month") {
+                                statusDate = Calendar.current.date(byAdding: .month, value: 1, to: statusDate) ?? statusDate
+                            }
+                            Button("+3 Months") {
+                                statusDate = Calendar.current.date(byAdding: .month, value: 3, to: statusDate) ?? statusDate
+                            }
+                            Button("+6 Months") {
+                                statusDate = Calendar.current.date(byAdding: .month, value: 6, to: statusDate) ?? statusDate
+                            }
+                            Button("+1 Year") {
+                                statusDate = Calendar.current.date(byAdding: .year, value: 1, to: statusDate) ?? statusDate
+                            }
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 18))
+                                .foregroundStyle(.blue.opacity(0.8))
+                                .padding(.leading, 6)
+                        }
+                        .menuStyle(.borderlessButton)
+#if os(macOS)
+                        .menuIndicator(.hidden)
+#endif
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+
+                    FormDivider()
+
+                    // Start Date — optional, for accurate lifetime cost tracking
+                    HStack {
+                        Text("Start Date")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        if startDate != nil {
+                            DatePicker("", selection: Binding(
+                                get: { startDateValue },
+                                set: { startDateValue = $0; startDate = $0 }
+                            ), in: ...Date(), displayedComponents: .date)
+                                .labelsHidden()
+#if os(macOS)
+                                .datePickerStyle(.field)
+#endif
+                            Button {
+                                withAnimation { startDate = nil }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                                    .font(.system(size: 18))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.leading, 6)
+                        } else {
+                            Text("Not set")
+                                .foregroundStyle(.tertiary)
+                            Button {
+                                withAnimation { startDate = startDateValue }
+                            } label: {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.system(size: 18))
+                                    .foregroundStyle(.blue.opacity(0.8))
+                                    .padding(.leading, 6)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .frame(minHeight: 50)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 0)
+                    .contentShape(Rectangle())
 
                     FormDivider()
                     // Amount row
@@ -791,6 +923,12 @@ struct AddEditSubscriptionView: View {
 
     // MARK: - Favicon fetch (debounced)
 
+    private func hideKeyboard() {
+#if os(iOS)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+#endif
+    }
+
     private func scheduleFaviconFetch(_ input: String, delay: Bool = true) {
         faviconFetchTask?.cancel()
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -881,6 +1019,10 @@ struct AddEditSubscriptionView: View {
         iconSource = item.iconSource
         notifications = item.notificationsList
         selectedCategoryRaw = item.categoryRaw
+        if let sd = item.startDate {
+            startDate = sd
+            startDateValue = sd
+        }
     }
 
     // MARK: - Save
@@ -929,6 +1071,7 @@ struct AddEditSubscriptionView: View {
             existing.notes = trimmedNotes
             existing.notifications = notifications
             existing.categoryRaw = isDoc ? nil : selectedCategoryRaw
+            existing.startDate = isDoc ? nil : startDate
             existing.updatedAt = Date()
             savedItem = existing
         } else {
@@ -953,6 +1096,7 @@ struct AddEditSubscriptionView: View {
                 url: isDoc ? "" : trimmedURL,
                 documentNumber: isDoc ? trimmedDocNum.isEmpty ? nil : trimmedDocNum : nil,
                 validFromDate: isDoc ? validFromDate : nil,
+                startDate: isDoc ? nil : startDate,
                 notifications: notifications
             )
             newItem.categoryRaw = isDoc ? nil : selectedCategoryRaw
@@ -1029,7 +1173,7 @@ struct AccountField: View {
                         showAddNew = true
                     } label: {
                         Text(text.isEmpty ? placeholder : text)
-                            .foregroundStyle(text.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
+                            .foregroundStyle(text.isEmpty ? AnyShapeStyle(Color.secondary.opacity(0.35)) : AnyShapeStyle(Color.primary))
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }
                     .buttonStyle(.plain)
@@ -1050,7 +1194,7 @@ struct AccountField: View {
                     } label: {
                         HStack(spacing: 4) {
                             Text(text.isEmpty ? placeholder : text)
-                                .foregroundStyle(text.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
+                                .foregroundStyle(text.isEmpty ? AnyShapeStyle(Color.secondary.opacity(0.35)) : AnyShapeStyle(Color.primary))
                                 .frame(maxWidth: .infinity, alignment: .trailing)
                             Image(systemName: "chevron.up.chevron.down")
                                 .font(.system(size: 10, weight: .semibold))
@@ -1358,6 +1502,7 @@ struct FormRow<Content: View>: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
+        .contentShape(Rectangle())
     }
 }
 
@@ -1372,6 +1517,7 @@ struct UserCategory: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String
     var icon: String
+    var description: String? = nil
 
     static let defaultIcon = "tag"
 }
@@ -1397,6 +1543,125 @@ enum UserCategoryStore {
     static func icon(for rawName: String) -> String {
         if let builtin = SubscriptionCategory(rawValue: rawName) { return builtin.icon }
         return load().first { $0.name == rawName }?.icon ?? UserCategory.defaultIcon
+    }
+}
+
+// MARK: - Built-in Category Preferences Store
+
+/// Persists visibility and display order for built-in SubscriptionCategory cases.
+enum BuiltInCategoryStore {
+    private static let hiddenKey        = "builtInCategoryHidden"
+    private static let orderKey         = "builtInCategoryOrder"
+    /// Stores the full interleaved order as tagged strings, e.g. ["builtin:streaming", "custom:uuid-xxxx"]
+    static let unifiedOrderKey          = "unifiedCategoryOrder"
+
+    // MARK: Unified interleaved order
+
+    static func saveUnifiedOrder(_ tags: [String]) {
+        UserDefaults.standard.set(tags, forKey: unifiedOrderKey)
+    }
+
+    static func loadUnifiedOrder() -> [String]? {
+        UserDefaults.standard.stringArray(forKey: unifiedOrderKey)
+    }
+
+    // MARK: Visibility
+
+    /// Returns the set of rawValues that are hidden in the category picker.
+    static func hiddenRawValues() -> Set<String> {
+        let arr = UserDefaults.standard.stringArray(forKey: hiddenKey) ?? []
+        return Set(arr)
+    }
+
+    static func setHidden(_ rawValue: String, hidden: Bool) {
+        var current = hiddenRawValues()
+        if hidden { current.insert(rawValue) } else { current.remove(rawValue) }
+        UserDefaults.standard.set(Array(current), forKey: hiddenKey)
+    }
+
+    // MARK: Order
+
+    /// Returns the ordered list of rawValues. Missing cases are appended at the end.
+    static func orderedRawValues() -> [String] {
+        let saved = UserDefaults.standard.stringArray(forKey: orderKey) ?? []
+        let all = SubscriptionCategory.allCases.map { $0.rawValue }
+        // Preserve saved order, then append any new cases not yet in saved list
+        var result = saved.filter { raw in all.contains(raw) }
+        for raw in all where !result.contains(raw) { result.append(raw) }
+        return result
+    }
+
+    static func saveOrder(_ rawValues: [String]) {
+        UserDefaults.standard.set(rawValues, forKey: orderKey)
+    }
+
+    // MARK: Convenience
+
+    /// Ordered, visible built-in categories for use in the category picker.
+    static func visibleCategories() -> [SubscriptionCategory] {
+        let hidden = hiddenRawValues()
+        return orderedRawValues().compactMap { SubscriptionCategory(rawValue: $0) }
+            .filter { !hidden.contains($0.rawValue) }
+    }
+
+    /// All categories in display order (visible + hidden), for the settings management view.
+    static func allOrdered() -> [SubscriptionCategory] {
+        orderedRawValues().compactMap { SubscriptionCategory(rawValue: $0) }
+    }
+
+    /// Represents a single item in the unified (interleaved) category picker list.
+    enum UnifiedCategoryItem: Identifiable {
+        case builtIn(SubscriptionCategory)
+        case custom(UserCategory)
+        var id: String {
+            switch self {
+            case .builtIn(let c): return "builtin-\(c.rawValue)"
+            case .custom(let c):  return "custom-\(c.id.uuidString)"
+            }
+        }
+    }
+
+    /// Returns the interleaved, visible categories in the order the user arranged them.
+    /// Hidden built-in categories are excluded. Respects the unified order key if present.
+    static func unifiedVisibleItems() -> [UnifiedCategoryItem] {
+        let hidden = hiddenRawValues()
+        let customMap: [String: UserCategory] = Dictionary(
+            uniqueKeysWithValues: UserCategoryStore.load().map { ($0.id.uuidString, $0) }
+        )
+        let builtInMap: [String: SubscriptionCategory] = Dictionary(
+            uniqueKeysWithValues: SubscriptionCategory.allCases.map { ($0.rawValue, $0) }
+        )
+
+        if let tags = loadUnifiedOrder(), !tags.isEmpty {
+            var result: [UnifiedCategoryItem] = []
+            for tag in tags {
+                if tag.hasPrefix("builtin:") {
+                    let raw = String(tag.dropFirst(8))
+                    if let cat = builtInMap[raw], !hidden.contains(raw) {
+                        result.append(.builtIn(cat))
+                    }
+                } else if tag.hasPrefix("custom:") {
+                    let uuid = String(tag.dropFirst(7))
+                    if let cat = customMap[uuid] { result.append(.custom(cat)) }
+                }
+            }
+            // Append any new built-ins not yet in the saved list
+            let seenBuiltIns = Set(result.compactMap { if case .builtIn(let c) = $0 { return c.rawValue } else { return nil } })
+            for cat in allOrdered() where !seenBuiltIns.contains(cat.rawValue) && !hidden.contains(cat.rawValue) {
+                result.append(.builtIn(cat))
+            }
+            // Append any new customs not yet in the saved list
+            let seenCustoms = Set(result.compactMap { if case .custom(let c) = $0 { return c.id.uuidString } else { return nil } })
+            for cat in UserCategoryStore.load() where !seenCustoms.contains(cat.id.uuidString) {
+                result.append(.custom(cat))
+            }
+            return result
+        }
+
+        // Fallback: built-ins first, then customs
+        let builtIns = visibleCategories().map { UnifiedCategoryItem.builtIn($0) }
+        let customs  = UserCategoryStore.load().map { UnifiedCategoryItem.custom($0) }
+        return builtIns + customs
     }
 }
 

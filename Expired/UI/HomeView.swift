@@ -26,6 +26,7 @@ struct HomeView: View {
     enum FilterOption: String, CaseIterable { case all = "All"; case autoRenew = "Auto-Renew"; case trials = "Trials"; case cancelled = "Cancelled"; case expired = "Expired" }
     @AppStorage("homeSortOrder") private var sortOrderRaw: String = SortOrder.status.rawValue
     @AppStorage("homeFilterOption") private var filterOptionRaw: String = FilterOption.all.rawValue
+    @AppStorage("homeHideExpired") private var hideExpired: Bool = false
     private var sortOrder: SortOrder { SortOrder(rawValue: sortOrderRaw) ?? .status }
     private var filterOption: FilterOption { FilterOption(rawValue: filterOptionRaw) ?? .all }
 
@@ -44,13 +45,18 @@ struct HomeView: View {
     }
 
     private func applyFilter(_ items: [SubscriptionItem]) -> [SubscriptionItem] {
+        var result: [SubscriptionItem]
         switch filterOption {
-        case .all:        return items
-        case .autoRenew:  return items.filter { $0.isAutoRenew && !$0.isCancelled && !$0.isTrial }
-        case .trials:     return items.filter { $0.isTrial }
-        case .cancelled:  return items.filter { if case .cancelledButActive = $0.status { return true }; return false }
-        case .expired:    return items.filter { if case .expired = $0.status { return true }; return false }
+        case .all:        result = items
+        case .autoRenew:  result = items.filter { $0.isAutoRenew && !$0.isCancelled && !$0.isTrial }
+        case .trials:     result = items.filter { $0.isTrial }
+        case .cancelled:  result = items.filter { if case .cancelledButActive = $0.status { return true }; return false }
+        case .expired:    result = items.filter { if case .expired = $0.status { return true }; return false }
         }
+        if hideExpired && filterOption != .expired {
+            result = result.filter { if case .expired = $0.status { return false }; return true }
+        }
+        return result
     }
 
     private var visibleItems: [SubscriptionItem] {
@@ -155,24 +161,46 @@ struct HomeView: View {
                             .transition(.opacity.combined(with: .move(edge: .top)))
                         }
 
-                        // Active filter chip
-                        if filterOption != .all {
-                            HStack {
-                                Label(filterOption.rawValue, systemImage: "line.3.horizontal.decrease.circle.fill")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(.white)
-                                Button {
-                                    filterOptionRaw = FilterOption.all.rawValue
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 11, weight: .bold))
-                                        .foregroundStyle(.white.opacity(0.8))
+                        // Active filter chips
+                        if filterOption != .all || hideExpired {
+                            HStack(spacing: 8) {
+                                if filterOption != .all {
+                                    HStack {
+                                        Label(filterOption.rawValue, systemImage: "line.3.horizontal.decrease.circle.fill")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(.white)
+                                        Button {
+                                            filterOptionRaw = FilterOption.all.rawValue
+                                        } label: {
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 11, weight: .bold))
+                                                .foregroundStyle(.white.opacity(0.8))
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color.blue, in: Capsule())
                                 }
-                                .buttonStyle(.plain)
+                                if hideExpired {
+                                    HStack {
+                                        Label("Hiding Expired", systemImage: "eye.slash")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(.white)
+                                        Button {
+                                            hideExpired = false
+                                        } label: {
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 11, weight: .bold))
+                                                .foregroundStyle(.white.opacity(0.8))
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color.secondary.opacity(0.5), in: Capsule())
+                                }
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.blue, in: Capsule())
                             .padding(.horizontal)
                         }
 
@@ -269,12 +297,20 @@ struct HomeView: View {
                     }
                 }
             }
+            Divider()
+            Button {
+                hideExpired.toggle()
+            } label: {
+                Label(
+                    hideExpired ? "Show Expired" : "Hide Expired",
+                    systemImage: hideExpired ? "eye" : "eye.slash"
+                )
+            }
         } label: {
-            Image(systemName: filterOption == .all
-                  ? "line.3.horizontal.decrease.circle"
-                  : "line.3.horizontal.decrease.circle.fill")
+            let isActive = filterOption != .all || hideExpired
+            Image(systemName: isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(filterOption == .all ? Color.primary : Color.blue)
+                .foregroundStyle(isActive ? Color.blue : Color.primary)
         }
 #if os(macOS)
         .menuIndicator(.hidden)
@@ -309,7 +345,7 @@ struct HomeView: View {
             }
         }
         if !cancelledActive.isEmpty {
-            GlassSectionView(title: "Cancelled but Active", icon: "calendar.badge.minus", accentColor: .red) {
+            GlassSectionView(title: "Cancelled but Active", icon: "calendar.badge.minus", accentColor: .orange) {
                 ForEach(cancelledActive) { itemRow($0) }
             }
         }
@@ -344,7 +380,8 @@ struct HomeView: View {
 
     private var categoryGroups: [CategoryGroup] {
         let filtered = applyFilter(visibleItems.filter { $0.itemType == .subscription })
-        let builtInKeys = SubscriptionCategory.allCases.map { $0.rawValue }
+        // Use user-defined order for built-in categories
+        let builtInKeys = BuiltInCategoryStore.orderedRawValues()
         let userKeys = UserCategoryStore.load().map { $0.name }
         var groups: [CategoryGroup] = []
         for key in (builtInKeys + userKeys) {
