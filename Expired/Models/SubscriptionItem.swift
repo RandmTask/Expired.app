@@ -20,7 +20,7 @@ enum BillingCycle: String, Codable, CaseIterable {
     case weekly  = "Weekly"
     case monthly = "Monthly"
     case yearly  = "Yearly"
-    case oneOff  = "One-off"
+    case oneOff  = "One-time"
     case custom  = "Custom"
 
     var monthlyMultiplier: Double {
@@ -111,9 +111,31 @@ enum IconSource: String, Codable {
 
 enum NotificationOffsetType: String, Codable, CaseIterable {
     case daysBefore = "Days Before"
+    case daysAfter = "Days After"
     case weeksBefore = "Weeks Before"
+    case weeksAfter = "Weeks After"
     case monthsBefore = "Months Before"
+    case monthsAfter = "Months After"
     case exactDate = "On Date"
+
+    func displayLabel(value: Int) -> String {
+        switch self {
+        case .daysBefore:
+            return value == 1 ? "Day Before" : "Days Before"
+        case .daysAfter:
+            return value == 1 ? "Day After" : "Days After"
+        case .weeksBefore:
+            return value == 1 ? "Week Before" : "Weeks Before"
+        case .weeksAfter:
+            return value == 1 ? "Week After" : "Weeks After"
+        case .monthsBefore:
+            return value == 1 ? "Month Before" : "Months Before"
+        case .monthsAfter:
+            return value == 1 ? "Month After" : "Months After"
+        case .exactDate:
+            return "On Date"
+        }
+    }
 }
 
 enum SubscriptionStatus {
@@ -154,6 +176,7 @@ final class NotificationRule {
     var offsetTypeRaw: String = NotificationOffsetType.daysBefore.rawValue
     var value: Int = 1
     var isCritical: Bool = false
+    var customDate: Date? = nil
 
     /// Back-reference required by CloudKit (inverse relationship).
     var item: SubscriptionItem?
@@ -162,12 +185,14 @@ final class NotificationRule {
         id: UUID = UUID(),
         offsetType: NotificationOffsetType = .daysBefore,
         value: Int = 1,
-        isCritical: Bool = false
+        isCritical: Bool = false,
+        customDate: Date? = nil
     ) {
         self.id = id
         self.offsetTypeRaw = offsetType.rawValue
         self.value = value
         self.isCritical = isCritical
+        self.customDate = customDate
     }
 
     var offsetType: NotificationOffsetType {
@@ -179,11 +204,20 @@ final class NotificationRule {
         switch offsetType {
         case .daysBefore:
             return value == 1 ? "1 day before" : "\(value) days before"
+        case .daysAfter:
+            return value == 1 ? "1 day after" : "\(value) days after"
         case .weeksBefore:
             return value == 1 ? "1 week before" : "\(value) weeks before"
+        case .weeksAfter:
+            return value == 1 ? "1 week after" : "\(value) weeks after"
         case .monthsBefore:
             return value == 1 ? "1 month before" : "\(value) months before"
+        case .monthsAfter:
+            return value == 1 ? "1 month after" : "\(value) months after"
         case .exactDate:
+            if let customDate {
+                return "On \(customDate.formatted(date: .abbreviated, time: .omitted))"
+            }
             return "On the date"
         }
     }

@@ -120,12 +120,18 @@ final class NotificationManager {
         switch rule.offsetType {
         case .daysBefore:
             return Calendar.current.date(byAdding: .day, value: -rule.value, to: baseDate)
+        case .daysAfter:
+            return Calendar.current.date(byAdding: .day, value: rule.value, to: baseDate)
         case .weeksBefore:
             return Calendar.current.date(byAdding: .day, value: -(rule.value * 7), to: baseDate)
+        case .weeksAfter:
+            return Calendar.current.date(byAdding: .day, value: rule.value * 7, to: baseDate)
         case .monthsBefore:
             return Calendar.current.date(byAdding: .month, value: -rule.value, to: baseDate)
+        case .monthsAfter:
+            return Calendar.current.date(byAdding: .month, value: rule.value, to: baseDate)
         case .exactDate:
-            return baseDate
+            return rule.customDate ?? baseDate
         }
     }
 

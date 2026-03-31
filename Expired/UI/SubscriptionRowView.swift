@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SubscriptionRowView: View {
     let item: SubscriptionItem
+    var showsDaysUntilBadge: Bool = false
 
     private var urgencyAccent: Color {
         switch item.urgency {
@@ -30,14 +31,18 @@ struct SubscriptionRowView: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 5) {
-                if item.itemType == .subscription, let cost = item.cost {
-                    Text(CurrencyInfo.format(cost, code: item.currency))
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(.primary)
-                    if item.billingCycle != .oneOff {
-                        Text(item.billingCycle.shortSuffix)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                if item.itemType == .subscription {
+                    if showsDaysUntilBadge {
+                        DaysCountdownBadge(days: item.daysUntilRenewal, urgency: item.urgency)
+                    } else if let cost = item.cost {
+                        Text(CurrencyInfo.format(cost, code: item.currency))
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundStyle(.primary)
+                        if item.billingCycle != .oneOff {
+                            Text(item.billingCycle.shortSuffix)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 } else if item.itemType == .document {
                     // Days countdown badge for documents

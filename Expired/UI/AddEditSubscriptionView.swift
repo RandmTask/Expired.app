@@ -833,7 +833,10 @@ struct AddEditSubscriptionView: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Reminders")
             FormCard {
-                RemindersEditorView(notifications: $notifications)
+                RemindersEditorView(
+                    notifications: $notifications,
+                    baseDate: itemType == .document ? expiryDate : statusDate
+                )
             }
         }
     }
