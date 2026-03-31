@@ -30,13 +30,15 @@ struct SubscriptionRowView: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 5) {
-                if item.itemType == .subscription, let monthly = item.monthlyCost {
-                    Text(CurrencyInfo.format(monthly, code: item.currency))
+                if item.itemType == .subscription, let cost = item.cost {
+                    Text(CurrencyInfo.format(cost, code: item.currency))
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary)
-                    Text("/ mo")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
+                    if item.billingCycle != .oneOff {
+                        Text(item.billingCycle.shortSuffix)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
                 } else if item.itemType == .document {
                     // Days countdown badge for documents
                     DaysCountdownBadge(days: item.daysUntilRenewal, urgency: item.urgency)

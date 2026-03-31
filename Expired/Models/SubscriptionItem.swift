@@ -32,6 +32,17 @@ enum BillingCycle: String, Codable, CaseIterable {
         case .custom:  return 1.0
         }
     }
+
+    /// Short period label for display in list rows (e.g. "/yr", "/mo").
+    var shortSuffix: String {
+        switch self {
+        case .weekly:  return "/wk"
+        case .monthly: return "/mo"
+        case .yearly:  return "/yr"
+        case .oneOff:  return ""
+        case .custom:  return "/mo"
+        }
+    }
 }
 
 /// User-defined category for grouping subscriptions.
