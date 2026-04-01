@@ -52,7 +52,7 @@ struct TimelineView: View {
         case heatmap    = "Heatmap"
         case swimLane   = "Swim Lane"
         case spendSpike = "Spend Spike"
-        case strip      = "Month Strip"
+        case strip      = "Two Weeks"
 
         var icon: String {
             switch self {
@@ -61,7 +61,7 @@ struct TimelineView: View {
             case .heatmap:    return "square.grid.3x3.fill"
             case .swimLane:   return "chart.bar.xaxis"
             case .spendSpike: return "chart.bar.fill"
-            case .strip:      return "rectangle.split.3x1"
+            case .strip:      return "rectangle.split.2x1"
             }
         }
     }
@@ -163,7 +163,7 @@ struct TimelineRow: View {
                 }
             }
             .frame(width: 10)
-            SubscriptionRowView(item: item, showsDaysUntilBadge: true)
+            SubscriptionRowView(item: item)
         }
         .frame(minHeight: 60)
     }
@@ -642,13 +642,19 @@ struct SwimLaneView: View {
             VStack(spacing: 0) {
                 // Header row
                 HStack {
-                    Text("Subscription")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.tertiary)
+                    Color.clear
                         .frame(width: 120, alignment: .leading)
-                    Text("Days until renewal →")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.tertiary)
+                    HStack(spacing: 5) {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("RENEWAL DATE")
+                            .font(.system(size: 11, weight: .bold))
+                            .tracking(0.6)
+                    }
+                    .foregroundStyle(Color.blue)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.blue.opacity(0.12), in: Capsule())
                     Spacer()
                 }
                 .padding(.horizontal, horizPadding)
@@ -883,7 +889,7 @@ struct SpendSpikeView: View {
     }
 }
 
-// MARK: - Option 5: Rolling Month Strip
+// MARK: - Option 5: Two-Week Strip
 
 struct MonthStripView: View {
     let items: [SubscriptionItem]
@@ -915,7 +921,7 @@ struct MonthStripView: View {
             let periodLength = resolvedPeriodLength(isLandscape: isLandscape)
             let periods = buildPeriods(length: periodLength, count: 12)
             let spacing: CGFloat = 6
-            let horizontalPadding: CGFloat = 14
+            let horizontalPadding: CGFloat = 8
             let cardWidth = floor((geo.size.width - horizontalPadding * 2 - spacing * CGFloat(periodLength - 1)) / CGFloat(periodLength))
             let currentPeriod = periods.first(where: { $0.id == currentPeriodID }) ?? periods.first
 
@@ -944,8 +950,8 @@ struct MonthStripView: View {
                         .tag(period.id)
                     }
                 }
-                .tabViewStyle(.page(indexDisplayMode: .automatic))
-                .frame(height: 130)
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(width: geo.size.width, height: 130)
                 .onChange(of: currentPeriodID) { _, _ in
                     selectedDay = nil
                 }
@@ -1110,7 +1116,6 @@ struct MonthStripCard: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(bgColor))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(borderColor, lineWidth: 1))
         .opacity(isPast && !isSelected ? 0.55 : 1.0)
-        .scaleEffect(isSelected ? 1.02 : 1.0)
         .animation(.spring(duration: 0.2), value: isSelected)
     }
 }
@@ -2632,4 +2637,3 @@ extension View {
 #endif
     }
 }
-

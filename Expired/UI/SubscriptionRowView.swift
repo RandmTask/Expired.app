@@ -62,24 +62,38 @@ struct SubscriptionRowView: View {
         switch item.status {
         case .trial(let endsOn):
             HStack(spacing: 3) {
-                Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.purple)
+                Image(systemName: "clock.badge.exclamationmark")
+                    .foregroundStyle(dateIconColor)
                 Text("Trial ends \(endsOn, style: .relative)")
             }
         case .cancelledButActive(let until):
             HStack(spacing: 3) {
-                Image(systemName: "calendar.badge.minus").foregroundStyle(.red)
+                Image(systemName: "calendar.badge.minus")
+                    .foregroundStyle(dateIconColor)
                 Text("Active until \(until.formatted(date: .abbreviated, time: .omitted))")
             }
         case .expired:
             HStack(spacing: 3) {
-                Image(systemName: "xmark.circle").foregroundStyle(.red)
+                Image(systemName: "xmark.circle")
+                    .foregroundStyle(dateIconColor)
                 Text("Expired")
             }
         default:
             HStack(spacing: 3) {
                 Image(systemName: item.itemType == .document ? "doc.text" : "calendar")
+                    .foregroundStyle(dateIconColor)
                 Text(item.nextRelevantDate, style: .date)
             }
+        }
+    }
+
+    private var dateIconColor: Color {
+        switch item.status {
+        case .autoRenew:         return .green
+        case .manualRenew:       return .blue
+        case .cancelledButActive: return .orange
+        case .expired:           return .red
+        case .trial:             return .purple
         }
     }
 }

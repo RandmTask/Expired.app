@@ -3,6 +3,11 @@ import SwiftData
 import PhotosUI
 import UniformTypeIdentifiers
 import ImagePlayground
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 struct AddEditSubscriptionView: View {
     @Environment(\.modelContext) private var modelContext
@@ -40,6 +45,21 @@ struct AddEditSubscriptionView: View {
     @State private var showImagePlayground = false
     @Environment(\.supportsImagePlayground) private var supportsImagePlayground
 
+    // App catalog (inline search)
+    @State private var appCatalog: [AppCatalogEntry] = []
+    @State private var appMatches: [AppCatalogEntry] = []
+    @State private var appStoreQuery = ""
+    @State private var appStoreResults: [AppStoreSearchResult] = []
+    @State private var isSearchingAppStore = false
+    @State private var appStoreSearchError: String? = nil
+    @State private var isApplyingCatalogMatch = false
+    @State private var selectionPulse = false
+    @State private var appStoreSearchTask: Task<Void, Never>? = nil
+    @State private var showInlineResults = false
+    @State private var appStoreLimit = 12
+    @State private var appStoreTotal = 0
+    @State private var appStoreLastQuery = ""
+
     // Cost & payment
     @State private var cost: Double? = nil
     @State private var costText = ""
@@ -74,6 +94,8 @@ struct AddEditSubscriptionView: View {
 
     // Focus tracking for cost field formatting
     @FocusState private var costFieldFocused: Bool
+    @FocusState private var nameFieldFocused: Bool
+    @FocusState private var urlFieldFocused: Bool
 
     // Persistent suggestion store (UserDefaults-backed)
     @AppStorage("savedNames")  private var savedNamesData:  Data = Data()
@@ -82,6 +104,31 @@ struct AddEditSubscriptionView: View {
     @AppStorage("savedPhones") private var savedPhonesData: Data = Data()
 
     private var isEditing: Bool { item != nil }
+
+    private struct AppCatalogEntry: Codable, Identifiable {
+        let name: String
+        let appStoreId: String
+        let category: String?
+        let iconName: String?
+
+        var id: String { appStoreId }
+    }
+
+    private struct AppStoreSearchResponse: Codable {
+        let resultCount: Int
+        let results: [AppStoreSearchResult]
+    }
+
+    private struct AppStoreSearchResult: Codable, Identifiable {
+        let trackId: Int
+        let trackName: String
+        let trackViewUrl: String
+        let primaryGenreName: String?
+        let artworkUrl100: String?
+        let currency: String?
+
+        var id: Int { trackId }
+    }
 
     // MARK: - Suggestions
 
@@ -175,6 +222,8 @@ struct AddEditSubscriptionView: View {
             if currency.isEmpty { currency = preferredCurrency }
             userCategories = UserCategoryStore.load()
             populateFromItem()
+            if appCatalog.isEmpty { appCatalog = loadAppCatalog() }
+            updateAppMatches(for: name)
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
@@ -228,8 +277,18 @@ struct AddEditSubscriptionView: View {
                             .foregroundStyle(.primary)
                             .submitLabel(.next)
                             .autocorrectionDisabled()
+                            .focused($nameFieldFocused)
+                            .onChange(of: name) { _, newValue in
+                                handleNameChange(newValue)
+                            }
                             .padding(.vertical, 18)
                             .padding(.trailing, 16)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { nameFieldFocused = true }
+
+                    if itemType == .subscription {
+                        appSearchResultsView
                     }
 
                     FormDivider()
@@ -245,12 +304,14 @@ struct AddEditSubscriptionView: View {
                                 .foregroundStyle(.primary)
                                 .trailingTextAlignment()
                                 .autocorrectionDisabled()
+                                .focused($urlFieldFocused)
 #if os(iOS)
                                 .keyboardType(.URL)
                                 .textInputAutocapitalization(.never)
 #endif
                                 .onSubmit { scheduleFaviconFetch(url, delay: false) }
                                 .onChange(of: url) { _, newValue in
+                                    if isApplyingCatalogMatch { return }
                                     scheduleFaviconFetch(newValue, delay: true)
                                 }
                             if isFetchingIcon {
@@ -413,6 +474,350 @@ struct AddEditSubscriptionView: View {
     }
 
     @ViewBuilder
+    private var appSearchResultsView: some View {
+        let query = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasQuery = query.count >= 2
+        if !hasQuery || !showInlineResults {
+            EmptyView()
+        } else {
+            VStack(spacing: 0) {
+            if appMatches.isEmpty && appStoreResults.isEmpty && !isSearchingAppStore {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkle.magnifyingglass")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text("No app matches — keep typing or add as custom")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            }
+
+            if !appMatches.isEmpty {
+                inlineSectionHeader(title: "Catalog")
+                ForEach(appMatches.prefix(6)) { entry in
+                    Button {
+                        applyAppMatch(entry)
+                    } label: {
+                        HStack(spacing: 10) {
+                            AppCatalogIconView(
+                                iconName: entry.iconName,
+                                appStoreId: entry.appStoreId,
+                                title: entry.name
+                            )
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.name)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                if let category = entry.category {
+                                    Text(category)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Text("Use")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.blue)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if entry.id != appMatches.prefix(6).last?.id {
+                        FormDivider()
+                    }
+                }
+            }
+
+            if isSearchingAppStore || !appStoreResults.isEmpty {
+                if !appMatches.isEmpty { FormDivider() }
+                inlineSectionHeader(title: "App Store")
+                if isSearchingAppStore {
+                    HStack(spacing: 8) {
+                        ProgressView().scaleEffect(0.8)
+                        Text("Searching App Store…")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                }
+                ForEach(appStoreResults.prefix(6)) { result in
+                    Button {
+                        applyAppStoreResult(result)
+                    } label: {
+                        HStack(spacing: 10) {
+                            AppStoreResultIcon(urlString: result.artworkUrl100, title: result.trackName)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(result.trackName)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                if let genre = result.primaryGenreName {
+                                    Text(genre)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Text("Use")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.blue)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if result.id != appStoreResults.prefix(6).last?.id {
+                        FormDivider()
+                    }
+                }
+                if shouldShowLoadMore {
+                    FormDivider()
+                    Button {
+                        loadMoreAppStoreResults()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.blue)
+                            Text("Load more results")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.blue)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            FormDivider()
+            Button {
+                showInlineResults = false
+                appMatches = []
+                appStoreResults = []
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text("Add as custom entry")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.bottom, 6)
+    }
+    }
+
+    private struct AppCatalogIconView: View {
+        let iconName: String?
+        let appStoreId: String
+        let title: String
+
+        var body: some View {
+            let assetName = iconName ?? appStoreId
+            if let image = AppCatalogIconView.platformImage(named: assetName) {
+                Image(platformImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 28, height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.secondary.opacity(0.12))
+                    Text(AddEditSubscriptionView.initials(from: title))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 28, height: 28)
+            }
+        }
+
+        #if os(iOS)
+        private static func platformImage(named name: String) -> UIImage? {
+            UIImage(named: name)
+        }
+        #else
+        private static func platformImage(named name: String) -> NSImage? {
+            NSImage(named: NSImage.Name(name))
+        }
+        #endif
+    }
+
+    private struct UnifiedAppSearchSheet: View {
+        @Binding var query: String
+        let catalogResults: [AppCatalogEntry]
+        let appStoreResults: [AppStoreSearchResult]
+        let isSearching: Bool
+        let errorMessage: String?
+        let onSearch: (String) -> Void
+        let onSelectCatalog: (AppCatalogEntry) -> Void
+        let onSelectAppStore: (AppStoreSearchResult) -> Void
+        @Environment(\.dismiss) private var dismiss
+
+        var body: some View {
+            NavigationStack {
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField("Search App Store", text: $query)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onSubmit { onSearch(query) }
+                        if isSearching {
+                            ProgressView().scaleEffect(0.8)
+                        } else {
+                            Button("Go") { onSearch(query) }
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 8)
+                    }
+
+                    List {
+                        if !catalogResults.isEmpty {
+                            Section("Catalog") {
+                                ForEach(catalogResults.prefix(6)) { entry in
+                                    Button {
+                                        onSelectCatalog(entry)
+                                    } label: {
+                                        HStack(spacing: 12) {
+                                            AppCatalogIconView(
+                                                iconName: entry.iconName,
+                                                appStoreId: entry.appStoreId,
+                                                title: entry.name
+                                            )
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(entry.name)
+                                                    .font(.system(size: 14, weight: .semibold))
+                                                if let category = entry.category {
+                                                    Text(category)
+                                                        .font(.system(size: 12))
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+                                            Spacer()
+                                            Text("Catalog")
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundStyle(.secondary)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 3)
+                                                .background(Color.secondary.opacity(0.12), in: Capsule())
+                                        }
+                                        .padding(.vertical, 6)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                        Section("App Store") {
+                            if isSearching {
+                                HStack {
+                                    ProgressView().scaleEffect(0.8)
+                                    Text("Searching…")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else if appStoreResults.isEmpty {
+                                Text("No App Store results")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                ForEach(appStoreResults) { result in
+                                    Button {
+                                        onSelectAppStore(result)
+                                    } label: {
+                                        HStack(spacing: 12) {
+                                            AppStoreResultIcon(urlString: result.artworkUrl100, title: result.trackName)
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(result.trackName)
+                                                    .font(.system(size: 14, weight: .semibold))
+                                                if let genre = result.primaryGenreName {
+                                                    Text(genre)
+                                                        .font(.system(size: 12))
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+                                            Spacer()
+                                        }
+                                        .padding(.vertical, 6)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+                    .listStyle(.plain)
+                }
+                .navigationTitle("Search Apps")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { dismiss() }
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private struct AppStoreResultIcon: View {
+        let urlString: String?
+        let title: String
+
+        var body: some View {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.secondary.opacity(0.15))
+                if let urlString, let url = URL(string: urlString) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().scaledToFill()
+                        default:
+                            Text(AddEditSubscriptionView.initials(from: title))
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } else {
+                    Text(AddEditSubscriptionView.initials(from: title))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 36, height: 36)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    @ViewBuilder
     private var iconView: some View {
         iconContent
             .frame(width: 60, height: 60)
@@ -423,6 +828,13 @@ struct AddEditSubscriptionView: View {
                         .font(.system(size: 16))
                         .foregroundStyle(.white, Color.blue)
                         .offset(x: 4, y: 4)
+                }
+            }
+            .overlay {
+                if selectionPulse {
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.blue.opacity(0.6), lineWidth: 2)
+                        .transition(.opacity)
                 }
             }
             .overlay {
@@ -979,6 +1391,264 @@ struct AddEditSubscriptionView: View {
         }
     }
 
+    // MARK: - App Catalog
+
+    private func loadAppCatalog() -> [AppCatalogEntry] {
+        let bundle = Bundle.main
+        let urlCandidates: [URL?] = [
+            bundle.url(forResource: "AppCatalog", withExtension: "json"),
+            bundle.url(forResource: "AppCatalog", withExtension: "json", subdirectory: "Resources"),
+            bundle.bundleURL.appendingPathComponent("AppCatalog.json"),
+            bundle.bundleURL.appendingPathComponent("Resources/AppCatalog.json")
+        ]
+        let url = urlCandidates.compactMap { $0 }.first
+        guard let url,
+              let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([AppCatalogEntry].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    private func updateAppMatches(for query: String) {
+        if appCatalog.isEmpty {
+            appCatalog = loadAppCatalog()
+        }
+        guard itemType == .subscription else {
+            appMatches = []
+            return
+        }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else {
+            appMatches = []
+            return
+        }
+        let q = trimmed.lowercased()
+        appMatches = appCatalog.filter { entry in
+            entry.name.lowercased().contains(q)
+        }
+    }
+
+    private func inlineSectionHeader(title: String) -> some View {
+        HStack(spacing: 6) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .bold))
+                .tracking(0.6)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+    }
+
+    private var shouldShowLoadMore: Bool {
+        !isSearchingAppStore && appStoreResults.count >= appStoreLimit
+    }
+
+    private func handleNameChange(_ value: String) {
+        guard !isApplyingCatalogMatch, itemType == .subscription else { return }
+        updateAppMatches(for: value)
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else {
+            appStoreSearchTask?.cancel()
+            appStoreResults = []
+            isSearchingAppStore = false
+            showInlineResults = false
+            return
+        }
+
+        appStoreQuery = trimmed
+        showInlineResults = true
+        appStoreLimit = 12
+        appStoreLastQuery = trimmed
+        scheduleAppStoreSearch(for: trimmed)
+    }
+
+    private func scheduleAppStoreSearch(for query: String) {
+        appStoreSearchTask?.cancel()
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        appStoreSearchTask = Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            await searchAppStore(query: trimmed)
+        }
+    }
+
+    private func applyAppMatch(_ entry: AppCatalogEntry) {
+        isApplyingCatalogMatch = true
+        defer { isApplyingCatalogMatch = false }
+
+        name = entry.name
+        url = appStoreURL(for: entry.appStoreId)
+        if let category = entry.category {
+            selectedCategoryRaw = category
+        }
+
+        if let data = appCatalogIconData(named: entry.iconName, appStoreId: entry.appStoreId) {
+            iconData = data
+            iconSource = .appBundle
+        } else {
+            iconData = nil
+            iconSource = .system
+        }
+
+        showInlineResults = false
+        appMatches = []
+        appStoreResults = []
+        updateAppMatches(for: name)
+        pulseSelection()
+    }
+
+    private func appCatalogIconData(named name: String?, appStoreId: String) -> Data? {
+        let assetName = name ?? appStoreId
+        if let data = loadBundleImageData(named: assetName, subdirectory: "AppCatalogIcons") {
+            return data
+        }
+        #if os(iOS)
+        if let image = UIImage(named: assetName) { return image.pngData() }
+        #else
+        if let image = NSImage(named: NSImage.Name(assetName)),
+           let tiffData = image.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiffData) {
+            return bitmap.representation(using: .png, properties: [:])
+        }
+        #endif
+        return nil
+    }
+
+    private func loadBundleImageData(named name: String, subdirectory: String) -> Data? {
+        let exts = ["png", "jpg", "jpeg"]
+        for ext in exts {
+            if let url = Bundle.main.url(forResource: name, withExtension: ext, subdirectory: subdirectory),
+               let data = try? Data(contentsOf: url) {
+                return data
+            }
+        }
+        return nil
+    }
+
+    private func appStoreURL(for appStoreId: String) -> String {
+        let region = Locale.current.region?.identifier.lowercased() ?? "us"
+        return "https://apps.apple.com/\(region)/app/id\(appStoreId)"
+    }
+
+    private func searchAppStore(query: String, offset: Int = 0) async {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://itunes.apple.com/search?term=\(encoded)&entity=software&limit=\(appStoreLimit)&offset=\(offset)") else {
+            await MainActor.run {
+                appStoreResults = []
+                appStoreTotal = 0
+                appStoreSearchError = nil
+            }
+            return
+        }
+        await MainActor.run {
+            isSearchingAppStore = true
+            appStoreSearchError = nil
+        }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let decoded = try JSONDecoder().decode(AppStoreSearchResponse.self, from: data)
+            await MainActor.run {
+                if offset == 0 {
+                    appStoreResults = decoded.results
+                } else {
+                    appStoreResults.append(contentsOf: decoded.results)
+                }
+                appStoreTotal = decoded.resultCount
+                isSearchingAppStore = false
+            }
+        } catch {
+            await MainActor.run {
+                appStoreResults = []
+                appStoreTotal = 0
+                isSearchingAppStore = false
+                appStoreSearchError = "Unable to search App Store right now."
+            }
+        }
+    }
+
+    private func loadMoreAppStoreResults() {
+        guard !isSearchingAppStore else { return }
+        appStoreLimit += 12
+        Task { await searchAppStore(query: appStoreQuery, offset: 0) }
+    }
+
+    private func applyAppStoreResult(_ result: AppStoreSearchResult) {
+        isApplyingCatalogMatch = true
+        defer { isApplyingCatalogMatch = false }
+
+        name = result.trackName
+        url = result.trackViewUrl
+        currency = result.currency ?? currency
+        if let genre = result.primaryGenreName {
+            selectedCategoryRaw = mapAppStoreGenreToCategory(genre)
+        }
+
+        if let art = result.artworkUrl100, let artURL = URL(string: art) {
+            Task {
+                if let (data, _) = try? await URLSession.shared.data(from: artURL) {
+                    await MainActor.run {
+                        iconData = data
+                        iconSource = .customImage
+                    }
+                }
+            }
+        }
+
+        showInlineResults = false
+        appMatches = []
+        appStoreResults = []
+        updateAppMatches(for: name)
+        pulseSelection()
+    }
+
+    private func pulseSelection() {
+        withAnimation(.spring(duration: 0.25)) {
+            selectionPulse = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                selectionPulse = false
+            }
+        }
+    }
+
+    private func mapAppStoreGenreToCategory(_ genre: String) -> String {
+        let lower = genre.lowercased()
+        if lower.contains("music") || lower.contains("video") || lower.contains("entertainment") {
+            return SubscriptionCategory.streaming.rawValue
+        }
+        if lower.contains("business") || lower.contains("productivity") {
+            return SubscriptionCategory.productivity.rawValue
+        }
+        if lower.contains("health") || lower.contains("fitness") {
+            return SubscriptionCategory.health.rawValue
+        }
+        if lower.contains("finance") {
+            return SubscriptionCategory.financial.rawValue
+        }
+        if lower.contains("utilities") || lower.contains("cloud") {
+            return SubscriptionCategory.cloud.rawValue
+        }
+        if lower.contains("education") || lower.contains("books") {
+            return SubscriptionCategory.lifestyle.rawValue
+        }
+        return SubscriptionCategory.apps.rawValue
+    }
+
+    private static func initials(from title: String) -> String {
+        let parts = title
+            .split(separator: " ")
+            .prefix(2)
+            .map { String($0.prefix(1)).uppercased() }
+        return parts.joined()
+    }
+
     // MARK: - Populate
 
     private func populateFromItem() {
@@ -1046,7 +1716,7 @@ struct AddEditSubscriptionView: View {
         // Normalise cost to 2dp
         if let c = cost { cost = (c * 100).rounded() / 100 }
 
-        let resolvedIconSource: IconSource = (iconData != nil) ? .favicon : .system
+        let resolvedIconSource: IconSource = (iconData != nil) ? iconSource : .system
         let isDoc = itemType == .document
 
         let savedItem: SubscriptionItem

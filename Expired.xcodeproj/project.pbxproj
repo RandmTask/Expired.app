@@ -7,10 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		7E1C305F2F7CA8410086563F /* AppCatalog.json in Resources */ = {isa = PBXBuildFile; fileRef = 7E1C305E2F7C17E10086563F /* AppCatalog.json */; };
 		7EEA5B7F2F752B8800DF89FC /* CloudKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7EEA5B7E2F752B8800DF89FC /* CloudKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		7E1C305E2F7C17E10086563F /* AppCatalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = AppCatalog.json; sourceTree = "<group>"; };
 		7EEA5B592F7395E200DF89FC /* Expired.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Expired.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7EEA5B7E2F752B8800DF89FC /* CloudKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CloudKit.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.2.sdk/System/Library/Frameworks/CloudKit.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
@@ -48,12 +50,29 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		7E1C305D2F7C17B40086563F /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				7E1C305E2F7C17E10086563F /* AppCatalog.json */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		7E1C30602F7CD0E40086563F /* AppCatalogIcons */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = AppCatalogIcons;
+			sourceTree = "<group>";
+		};
 		7EEA5B502F7395E200DF89FC = {
 			isa = PBXGroup;
 			children = (
 				7EEA5B5B2F7395E200DF89FC /* Expired */,
 				7EEA5B7D2F752B8700DF89FC /* Frameworks */,
 				7EEA5B5A2F7395E200DF89FC /* Products */,
+				7E1C305D2F7C17B40086563F /* Resources */,
+				7E1C30602F7CD0E40086563F /* AppCatalogIcons */,
 			);
 			sourceTree = "<group>";
 		};
@@ -137,6 +156,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7E1C305F2F7CA8410086563F /* AppCatalog.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
