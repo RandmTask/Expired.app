@@ -45,18 +45,17 @@ struct AddEditSubscriptionView: View {
     @State private var showImagePlayground = false
     @Environment(\.supportsImagePlayground) private var supportsImagePlayground
 
-    // App catalog (inline search)
-    @State private var appCatalog: [AppCatalogEntry] = []
-    @State private var appMatches: [AppCatalogEntry] = []
+    // App Store search
     @State private var showAppStoreSearchSheet = false
     @State private var appStoreQuery = ""
     @State private var appStoreResults: [AppStoreSearchResult] = []
     @State private var isSearchingAppStore = false
     @State private var appStoreSearchError: String? = nil
     @State private var isApplyingCatalogMatch = false
+    @State private var suppressNextFaviconFetch = false
     @State private var selectionPulse = false
     @State private var appStoreSearchTask: Task<Void, Never>? = nil
-    @State private var appStoreLimit = 12
+    @State private var appStoreLimit = 15
     @State private var appStoreTotal = 0
     @State private var appStoreLastFetchCount = 0
     @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
@@ -105,15 +104,6 @@ struct AddEditSubscriptionView: View {
     @AppStorage("savedPhones") private var savedPhonesData: Data = Data()
 
     private var isEditing: Bool { item != nil }
-
-    private struct AppCatalogEntry: Codable, Identifiable {
-        let name: String
-        let appStoreId: String
-        let category: String?
-        let iconName: String?
-
-        var id: String { appStoreId }
-    }
 
     private struct AppStoreSearchResponse: Codable {
         let resultCount: Int
@@ -257,8 +247,6 @@ struct AddEditSubscriptionView: View {
             if currency.isEmpty { currency = preferredCurrency }
             userCategories = UserCategoryStore.load()
             populateFromItem()
-            if appCatalog.isEmpty { appCatalog = loadAppCatalog() }
-            updateAppMatches(for: name)
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
@@ -347,6 +335,10 @@ struct AddEditSubscriptionView: View {
                                 .onSubmit { scheduleFaviconFetch(url, delay: false) }
                                 .onChange(of: url) { _, newValue in
                                     if isApplyingCatalogMatch { return }
+                                    if suppressNextFaviconFetch {
+                                        suppressNextFaviconFetch = false
+                                        return
+                                    }
                                     if iconData != nil, (iconSource == .customImage || iconSource == .appBundle) { return }
                                     scheduleFaviconFetch(newValue, delay: true)
                                 }
@@ -514,38 +506,9 @@ struct AddEditSubscriptionView: View {
         let query = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let canSearch = query.count >= 2
         VStack(spacing: 0) {
-            if !appMatches.isEmpty {
-                inlineSectionHeader(title: "Catalog")
-                ForEach(Array(appMatches.prefix(6))) { entry in
-                    Button {
-                        applyAppCatalogMatch(entry)
-                    } label: {
-                        HStack(spacing: 12) {
-                            AppCatalogIconView(iconName: entry.iconName, appStoreId: entry.appStoreId, title: entry.name)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(entry.name)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(.primary)
-                                if let category = entry.category {
-                                    Text(category)
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            Spacer()
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-                FormDivider()
-            }
-
             Button {
                 appStoreQuery = query
-                appStoreLimit = 12
+                appStoreLimit = 15
                 appStoreResults = []
                 appStoreTotal = 0
                 appStoreLastFetchCount = 0
@@ -565,90 +528,8 @@ struct AddEditSubscriptionView: View {
             }
             .buttonStyle(.plain)
             .disabled(!canSearch)
-
-            FormDivider()
-            Button {
-                appStoreResults = []
-                appStoreTotal = 0
-                appStoreLastFetchCount = 0
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus.circle")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text("Add as custom entry")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-            }
-            .buttonStyle(.plain)
         }
         .padding(.bottom, 6)
-    }
-
-    private struct AppCatalogIconView: View {
-        let iconName: String?
-        let appStoreId: String
-        let title: String
-
-        var body: some View {
-            let assetName = iconName ?? appStoreId
-            if let data = Self.loadBundleImageData(named: assetName, subdirectory: "AppCatalogIcons"),
-               let image = AppCatalogIconView.platformImage(data: data) {
-                Image(platformImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 28, height: 28)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else if let image = AppCatalogIconView.platformImage(named: assetName) {
-                Image(platformImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 28, height: 28)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.secondary.opacity(0.12))
-                    Text(AddEditSubscriptionView.initials(from: title))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(width: 28, height: 28)
-            }
-        }
-
-        private static func loadBundleImageData(named name: String, subdirectory: String) -> Data? {
-            let exts = ["png", "jpg", "jpeg"]
-            for ext in exts {
-                if let url = Bundle.main.url(forResource: name, withExtension: ext, subdirectory: subdirectory),
-                   let data = try? Data(contentsOf: url) {
-                    return data
-                }
-            }
-            return nil
-        }
-
-        #if os(iOS)
-        private static func platformImage(named name: String) -> UIImage? {
-            UIImage(named: name)
-        }
-
-        private static func platformImage(data: Data) -> UIImage? {
-            UIImage(data: data)
-        }
-        #else
-        private static func platformImage(named name: String) -> NSImage? {
-            NSImage(named: NSImage.Name(name))
-        }
-
-        private static func platformImage(data: Data) -> NSImage? {
-            NSImage(data: data)
-        }
-        #endif
     }
 
     private struct AppStoreSearchSheet: View {
@@ -675,8 +556,14 @@ struct AddEditSubscriptionView: View {
                         if isSearching {
                             ProgressView().scaleEffect(0.8)
                         } else {
-                            Button("Go") { onSearch(query) }
-                                .font(.system(size: 13, weight: .semibold))
+                            Button {
+                                onSearch(query)
+                            } label: {
+                                Image(systemName: "arrow.up.circle.fill")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(.blue)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, 16)
@@ -1364,62 +1251,12 @@ struct AddEditSubscriptionView: View {
 
     // MARK: - App Catalog
 
-    private func loadAppCatalog() -> [AppCatalogEntry] {
-        let bundle = Bundle.main
-        let urlCandidates: [URL?] = [
-            bundle.url(forResource: "AppCatalog", withExtension: "json"),
-            bundle.url(forResource: "AppCatalog", withExtension: "json", subdirectory: "Resources"),
-            bundle.bundleURL.appendingPathComponent("AppCatalog.json"),
-            bundle.bundleURL.appendingPathComponent("Resources/AppCatalog.json")
-        ]
-        let url = urlCandidates.compactMap { $0 }.first
-        guard let url,
-              let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode([AppCatalogEntry].self, from: data) else {
-            return []
-        }
-        return decoded
-    }
-
-    private func updateAppMatches(for query: String) {
-        if appCatalog.isEmpty {
-            appCatalog = loadAppCatalog()
-        }
-        guard itemType == .subscription else {
-            appMatches = []
-            return
-        }
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 2 else {
-            appMatches = []
-            return
-        }
-        let q = trimmed.lowercased()
-        appMatches = appCatalog.filter { entry in
-            entry.name.lowercased().contains(q)
-        }
-    }
-
-    private func inlineSectionHeader(title: String) -> some View {
-        HStack(spacing: 6) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .bold))
-                .tracking(0.6)
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
-    }
-
     private var shouldShowLoadMore: Bool {
         !isSearchingAppStore && appStoreLastFetchCount == appStoreLimit
     }
 
     private func handleNameChange(_ value: String) {
         guard !isApplyingCatalogMatch, itemType == .subscription else { return }
-        updateAppMatches(for: value)
 
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else {
@@ -1441,59 +1278,6 @@ struct AddEditSubscriptionView: View {
             guard !Task.isCancelled else { return }
             await searchAppStore(query: trimmed)
         }
-    }
-
-    private func applyAppMatch(_ entry: AppCatalogEntry) {
-        isApplyingCatalogMatch = true
-        defer { isApplyingCatalogMatch = false }
-
-        name = entry.name
-        url = appStoreURL(for: entry.appStoreId)
-        if let category = entry.category {
-            selectedCategoryRaw = category
-        }
-
-        if let data = appCatalogIconData(named: entry.iconName, appStoreId: entry.appStoreId) {
-            iconData = data
-            iconSource = .appBundle
-        } else {
-            iconData = nil
-            iconSource = .system
-        }
-
-        appMatches = []
-        appStoreResults = []
-        appStoreLastFetchCount = 0
-        updateAppMatches(for: name)
-        pulseSelection()
-    }
-
-    private func appCatalogIconData(named name: String?, appStoreId: String) -> Data? {
-        let assetName = name ?? appStoreId
-        if let data = loadBundleImageData(named: assetName, subdirectory: "AppCatalogIcons") {
-            return data
-        }
-        #if os(iOS)
-        if let image = UIImage(named: assetName) { return image.pngData() }
-        #else
-        if let image = NSImage(named: NSImage.Name(assetName)),
-           let tiffData = image.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiffData) {
-            return bitmap.representation(using: .png, properties: [:])
-        }
-        #endif
-        return nil
-    }
-
-    private func loadBundleImageData(named name: String, subdirectory: String) -> Data? {
-        let exts = ["png", "jpg", "jpeg"]
-        for ext in exts {
-            if let url = Bundle.main.url(forResource: name, withExtension: ext, subdirectory: subdirectory),
-               let data = try? Data(contentsOf: url) {
-                return data
-            }
-        }
-        return nil
     }
 
     private var appStoreRegionCode: String {
@@ -1554,49 +1338,6 @@ struct AddEditSubscriptionView: View {
         Task { await searchAppStore(query: appStoreQuery, offset: appStoreResults.count) }
     }
 
-    private func applyAppCatalogMatch(_ entry: AppCatalogEntry) {
-        isApplyingCatalogMatch = true
-        defer { isApplyingCatalogMatch = false }
-
-        name = entry.name
-        url = appStoreURL(for: entry.appStoreId)
-        if let category = entry.category {
-            selectedCategoryRaw = category
-        }
-        if let data = appCatalogIconData(named: entry.iconName, appStoreId: entry.appStoreId) {
-            iconData = data
-            iconSource = .appBundle
-        }
-
-        appMatches = []
-        appStoreResults = []
-        appStoreLastFetchCount = 0
-        updateAppMatches(for: name)
-        pulseSelection()
-
-        Task {
-            if let detail = await fetchAppStoreDetails(appStoreId: entry.appStoreId) {
-                await MainActor.run {
-                    currency = detail.currency ?? currency
-                    url = detail.trackViewUrl
-                    if selectedCategoryRaw == nil, let genre = detail.primaryGenreName {
-                        selectedCategoryRaw = mapAppStoreGenreToCategory(genre)
-                    }
-                    if iconData == nil, let art = detail.artworkUrl100, let artURL = URL(string: art) {
-                        Task {
-                            if let (data, _) = try? await URLSession.shared.data(from: artURL) {
-                                await MainActor.run {
-                                    iconData = data
-                                    iconSource = .customImage
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     private func fetchAppStoreDetails(appStoreId: String) async -> AppStoreSearchResult? {
         guard let url = URL(string: "https://itunes.apple.com/lookup?id=\(appStoreId)&country=\(appStoreRegionCode)") else {
             return nil
@@ -1613,6 +1354,9 @@ struct AddEditSubscriptionView: View {
     private func applyAppStoreResult(_ result: AppStoreSearchResult) {
         isApplyingCatalogMatch = true
         defer { isApplyingCatalogMatch = false }
+
+        suppressNextFaviconFetch = true
+        iconSource = .customImage
 
         name = result.trackName
         url = result.trackViewUrl
@@ -1632,9 +1376,7 @@ struct AddEditSubscriptionView: View {
             }
         }
 
-        appMatches = []
         appStoreResults = []
-        updateAppMatches(for: name)
         pulseSelection()
     }
 

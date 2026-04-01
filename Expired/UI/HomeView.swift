@@ -39,7 +39,13 @@ struct HomeView: View {
         case .status:      return items.sorted { $0.nextRelevantDate < $1.nextRelevantDate }
         case .category:    return items.sorted { ($0.categoryRaw ?? "zzz").localizedCompare($1.categoryRaw ?? "zzz") == .orderedAscending }
         case .name:        return items.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
-        case .renewalDate: return items.sorted { $0.nextRelevantDate < $1.nextRelevantDate }
+        case .renewalDate:
+            return items.sorted { lhs, rhs in
+                let lhsExpired = { if case .expired = lhs.status { return true } else { return false } }()
+                let rhsExpired = { if case .expired = rhs.status { return true } else { return false } }()
+                if lhsExpired != rhsExpired { return !lhsExpired }
+                return lhs.nextRelevantDate < rhs.nextRelevantDate
+            }
         case .price:       return items.sorted { ($0.monthlyCost ?? 0) > ($1.monthlyCost ?? 0) }
         }
     }

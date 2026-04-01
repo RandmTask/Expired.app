@@ -90,7 +90,7 @@ struct TimelineView: View {
                     case .timeline:   classicTimelineView
                     case .calendar:   CalendarGridView(items: allItems, currency: preferredCurrency)
                     case .heatmap:    HeatmapView(items: allItems, currency: preferredCurrency)
-                    case .swimLane:   SwimLaneView(items: upcoming)
+                    case .swimLane:   SwimLaneView(items: allItems)
                     case .spendSpike: SpendSpikeView(items: allItems, currency: preferredCurrency)
                     case .strip:      MonthStripView(items: allItems, currency: preferredCurrency)
                     }
@@ -632,9 +632,20 @@ struct SwimLaneView: View {
     let items: [SubscriptionItem]
     private let laneHeight: CGFloat = 52
     private let horizPadding: CGFloat = 16
+    private let nameColumnWidth: CGFloat = 168
+
+    private var activeItems: [SubscriptionItem] {
+        items.filter { if case .expired = $0.status { return false }; return true }
+            .sorted { $0.nextRelevantDate < $1.nextRelevantDate }
+    }
+
+    private var expiredItems: [SubscriptionItem] {
+        items.filter { if case .expired = $0.status { return true }; return false }
+            .sorted { $0.nextRelevantDate < $1.nextRelevantDate }
+    }
 
     private var maxDays: Int {
-        items.map(\.daysUntilRenewal).max().map { max($0, 1) } ?? 1
+        activeItems.map(\.daysUntilRenewal).max().map { max($0, 1) } ?? 1
     }
 
     var body: some View {
@@ -642,8 +653,6 @@ struct SwimLaneView: View {
             VStack(spacing: 0) {
                 // Header row
                 HStack {
-                    Color.clear
-                        .frame(width: 120, alignment: .leading)
                     HStack(spacing: 5) {
                         Image(systemName: "calendar")
                             .font(.system(size: 11, weight: .bold))
@@ -655,14 +664,33 @@ struct SwimLaneView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Color.blue.opacity(0.12), in: Capsule())
+                    .frame(width: nameColumnWidth, alignment: .leading)
                     Spacer()
                 }
                 .padding(.horizontal, horizPadding)
                 .padding(.vertical, 8)
 
-                ForEach(items) { item in
-                    SwimLaneRow(item: item, maxDays: maxDays, laneHeight: laneHeight)
+                ForEach(activeItems) { item in
+                    SwimLaneRow(item: item, maxDays: maxDays, laneHeight: laneHeight, nameColumnWidth: nameColumnWidth)
                 }
+
+                if !expiredItems.isEmpty {
+                    HStack {
+                        Text("EXPIRED")
+                            .font(.system(size: 11, weight: .bold))
+                            .tracking(0.6)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, horizPadding)
+                    .padding(.top, 14)
+                    .padding(.bottom, 6)
+
+                    ForEach(expiredItems) { item in
+                        SwimLaneRow(item: item, maxDays: maxDays, laneHeight: laneHeight, nameColumnWidth: nameColumnWidth)
+                    }
+                }
+
                 Spacer(minLength: 100)
             }
             .padding(.top, 8)
@@ -675,9 +703,13 @@ struct SwimLaneRow: View {
     let item: SubscriptionItem
     let maxDays: Int
     let laneHeight: CGFloat
+    let nameColumnWidth: CGFloat
 
     private var days: Int { max(item.daysUntilRenewal, 0) }
-    private var fraction: Double { maxDays > 0 ? Double(days) / Double(maxDays) : 0 }
+    private var fraction: Double {
+        if case .expired = item.status { return 0 }
+        return maxDays > 0 ? Double(days) / Double(maxDays) : 0
+    }
 
     private var barColor: Color {
         switch item.urgency {
@@ -686,6 +718,11 @@ struct SwimLaneRow: View {
         case .expired:  return .secondary
         case .normal:   return .blue
         }
+    }
+
+    private var labelText: String {
+        if case .expired = item.status { return "Expired" }
+        return days == 0 ? "Today" : "\(days)d"
     }
 
     var body: some View {
@@ -697,7 +734,7 @@ struct SwimLaneRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
             }
-            .frame(width: 120, alignment: .leading)
+            .frame(width: nameColumnWidth, alignment: .leading)
 
             // Bar track
             GeometryReader { geo in
@@ -710,16 +747,18 @@ struct SwimLaneRow: View {
                         .frame(maxHeight: .infinity, alignment: .center)
 
                     // Fill
-                    Capsule()
-                        .fill(LinearGradient(
-                            colors: [barColor.opacity(0.7), barColor],
-                            startPoint: .leading, endPoint: .trailing
-                        ))
-                        .frame(width: max(8, geo.size.width * fraction), height: 8)
-                        .frame(maxHeight: .infinity, alignment: .center)
+                    if fraction > 0 {
+                        Capsule()
+                            .fill(LinearGradient(
+                                colors: [barColor.opacity(0.7), barColor],
+                                startPoint: .leading, endPoint: .trailing
+                            ))
+                            .frame(width: max(8, geo.size.width * fraction), height: 8)
+                            .frame(maxHeight: .infinity, alignment: .center)
+                    }
 
                     // Days label at end of bar
-                    Text(days == 0 ? "Today" : "\(days)d")
+                    Text(labelText)
                         .font(.system(size: 10, weight: .bold, design: .rounded))
                         .foregroundStyle(barColor)
                         .offset(x: max(8, geo.size.width * fraction) + 4)
