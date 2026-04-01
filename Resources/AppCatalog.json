@@ -1,0 +1,162 @@
+[
+    {
+        "name": "Netflix",
+        "appStoreURL": "https://apps.apple.com/us/app/netflix/id363590051",
+        "appStoreId": "363590051",
+        "category": "Streaming",
+        "currency": "USD",
+        "iconName": "netflix"
+    },
+    {
+        "name": "YouTube",
+        "appStoreURL": "https://apps.apple.com/us/app/youtube-watch-listen-stream/id544007664",
+        "appStoreId": "544007664",
+        "category": "Streaming",
+        "currency": "USD",
+        "iconName": "youtube"
+    },
+    {
+        "name": "Hulu",
+        "appStoreURL": "https://apps.apple.com/us/app/hulu-watch-tv-series-movies/id376510438",
+        "appStoreId": "376510438",
+        "category": "Streaming",
+        "currency": "USD",
+        "iconName": "hulu"
+    },
+    {
+        "name": "Disney+",
+        "appStoreURL": "https://apps.apple.com/us/app/disney/id1446075923",
+        "appStoreId": "1446075923",
+        "category": "Streaming",
+        "currency": "USD",
+        "iconName": "disney_plus"
+    },
+    {
+        "name": "Spotify",
+        "appStoreURL": "https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580",
+        "appStoreId": "324684580",
+        "category": "Streaming",
+        "currency": "USD",
+        "iconName": "spotify"
+    },
+    {
+        "name": "Apple Music",
+        "appStoreURL": "https://apps.apple.com/us/app/apple-music/id1108187390",
+        "appStoreId": "1108187390",
+        "category": "Streaming",
+        "currency": "USD",
+        "iconName": "apple_music"
+    },
+    {
+        "name": "Prime Video",
+        "appStoreURL": "https://apps.apple.com/us/app/amazon-prime-video/id545519333",
+        "appStoreId": "545519333",
+        "category": "Streaming",
+        "currency": "USD",
+        "iconName": "prime_video"
+    },
+    {
+        "name": "Max",
+        "appStoreURL": "https://apps.apple.com/us/app/max-stream-hbo-tv-movies/id971265422",
+        "appStoreId": "971265422",
+        "category": "Streaming",
+        "currency": "USD",
+        "iconName": "max"
+    },
+    {
+        "name": "Dropbox",
+        "appStoreURL": "https://apps.apple.com/us/app/dropbox-cloud-storage-backup/id327630330",
+        "appStoreId": "327630330",
+        "category": "Digital Utilities & Cloud",
+        "currency": "USD",
+        "iconName": "dropbox"
+    },
+    {
+        "name": "Google One",
+        "appStoreURL": "https://apps.apple.com/us/app/google-one/id1451784400",
+        "appStoreId": "1451784400",
+        "category": "Digital Utilities & Cloud",
+        "currency": "USD",
+        "iconName": "google_one"
+    },
+    {
+        "name": "iCloud+",
+        "appStoreURL": "https://apps.apple.com/us/app/icloud/id500654020",
+        "appStoreId": "500654020",
+        "category": "Digital Utilities & Cloud",
+        "currency": "USD",
+        "iconName": "icloud"
+    },
+    {
+        "name": "Microsoft 365",
+        "appStoreURL": "https://apps.apple.com/us/app/microsoft-365-office/id541164041",
+        "appStoreId": "541164041",
+        "category": "Work & Productivity",
+        "currency": "USD",
+        "iconName": "microsoft_365"
+    },
+    {
+        "name": "Notion",
+        "appStoreURL": "https://apps.apple.com/us/app/notion-notes-docs-tasks/id1232780281",
+        "appStoreId": "1232780281",
+        "category": "Work & Productivity",
+        "currency": "USD",
+        "iconName": "notion"
+    },
+    {
+        "name": "Zoom",
+        "appStoreURL": "https://apps.apple.com/us/app/zoom-one-platform-to-connect/id546505307",
+        "appStoreId": "546505307",
+        "category": "Work & Productivity",
+        "currency": "USD",
+        "iconName": "zoom"
+    },
+    {
+        "name": "Adobe Creative Cloud",
+        "appStoreURL": "https://apps.apple.com/us/app/adobe-creative-cloud/id852473028",
+        "appStoreId": "852473028",
+        "category": "Professional & Business",
+        "currency": "USD",
+        "iconName": "adobe_cc"
+    },
+    {
+        "name": "GitHub",
+        "appStoreURL": "https://apps.apple.com/us/app/github/id1477376905",
+        "appStoreId": "1477376905",
+        "category": "Professional & Business",
+        "currency": "USD",
+        "iconName": "github"
+    },
+    {
+        "name": "Duolingo",
+        "appStoreURL": "https://apps.apple.com/us/app/duolingo-language-lessons/id570060128",
+        "appStoreId": "570060128",
+        "category": "Personal & Lifestyle",
+        "currency": "USD",
+        "iconName": "duolingo"
+    },
+    {
+        "name": "Headspace",
+        "appStoreURL": "https://apps.apple.com/us/app/headspace-meditation-sleep/id493145008",
+        "appStoreId": "493145008",
+        "category": "Health & Fitness",
+        "currency": "USD",
+        "iconName": "headspace"
+    },
+    {
+        "name": "MyFitnessPal",
+        "appStoreURL": "https://apps.apple.com/us/app/myfitnesspal-calorie-counter/id341232718",
+        "appStoreId": "341232718",
+        "category": "Health & Fitness",
+        "currency": "USD",
+        "iconName": "myfitnesspal"
+    },
+    {
+        "name": "Tinder",
+        "appStoreURL": "https://apps.apple.com/us/app/tinder-dating-chat-friends/id547702041",
+        "appStoreId": "547702041",
+        "category": "Personal & Lifestyle",
+        "currency": "USD",
+        "iconName": "tinder"
+    }
+]
