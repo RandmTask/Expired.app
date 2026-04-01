@@ -2147,6 +2147,7 @@ extension View {
 struct SettingsView: View {
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
+    @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
     @AppStorage("appearanceMode") private var appearanceMode = 0
     @AppStorage("notificationHour")   private var notificationHour: Int = 9
     @AppStorage("notificationMinute") private var notificationMinute: Int = 0
@@ -2197,6 +2198,44 @@ struct SettingsView: View {
         Locale.current.currency?.identifier ?? "USD"
     }
 
+    private static let appStoreRegions: [(code: String, name: String)] = [
+        ("auto", "Automatic"),
+        ("us", "United States"),
+        ("gb", "United Kingdom"),
+        ("au", "Australia"),
+        ("ca", "Canada"),
+        ("nz", "New Zealand"),
+        ("ie", "Ireland"),
+        ("de", "Germany"),
+        ("fr", "France"),
+        ("es", "Spain"),
+        ("it", "Italy"),
+        ("nl", "Netherlands"),
+        ("se", "Sweden"),
+        ("no", "Norway"),
+        ("dk", "Denmark"),
+        ("fi", "Finland"),
+        ("jp", "Japan"),
+        ("kr", "South Korea"),
+        ("cn", "China"),
+        ("hk", "Hong Kong"),
+        ("sg", "Singapore"),
+        ("in", "India"),
+        ("br", "Brazil"),
+        ("mx", "Mexico"),
+        ("za", "South Africa")
+    ]
+
+    private var appStoreRegionLabel: String {
+        if appStoreRegion == "auto" {
+            let deviceRegion = Locale.current.region?.identifier.uppercased() ?? "US"
+            return "Automatic (\(deviceRegion))"
+        }
+        let code = appStoreRegion.lowercased()
+        let name = Self.appStoreRegions.first(where: { $0.code == code })?.name ?? code.uppercased()
+        return "\(name) (\(code.uppercased()))"
+    }
+
     var body: some View {
         NavigationStack {
 #if os(macOS)
@@ -2238,6 +2277,34 @@ struct SettingsView: View {
                         }
                     }
                     .buttonStyle(.plain)
+
+                    FormDivider()
+
+                    settingsRow {
+                        macSettingsLabel("App Store", icon: "bag")
+                        Spacer()
+                        Menu {
+                            ForEach(Self.appStoreRegions, id: \.code) { region in
+                                Button { appStoreRegion = region.code } label: {
+                                    if appStoreRegion == region.code { Label(region.name, systemImage: "checkmark") }
+                                    else { Text(region.name) }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(appStoreRegionLabel)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize()
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .animation(nil, value: appStoreRegion)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                    }
 
                     FormDivider()
 
@@ -2459,6 +2526,32 @@ struct SettingsView: View {
                     }
                 }
                 .foregroundStyle(.primary)
+
+                HStack {
+                    Label("App Store", systemImage: "bag")
+                        .foregroundStyle(.primary, .secondary)
+                    Spacer()
+                    Menu {
+                        ForEach(Self.appStoreRegions, id: \.code) { region in
+                            Button { appStoreRegion = region.code } label: {
+                                if appStoreRegion == region.code { Label(region.name, systemImage: "checkmark") }
+                                else { Text(region.name) }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(appStoreRegionLabel)
+                                .foregroundStyle(.secondary)
+                                .fixedSize()
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .animation(nil, value: appStoreRegion)
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 Button {
                     appearanceMode = (appearanceMode + 1) % 3
                 } label: {

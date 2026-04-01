@@ -48,6 +48,7 @@ struct AddEditSubscriptionView: View {
     // App catalog (inline search)
     @State private var appCatalog: [AppCatalogEntry] = []
     @State private var appMatches: [AppCatalogEntry] = []
+    @State private var showAppStoreSearchSheet = false
     @State private var appStoreQuery = ""
     @State private var appStoreResults: [AppStoreSearchResult] = []
     @State private var isSearchingAppStore = false
@@ -55,10 +56,10 @@ struct AddEditSubscriptionView: View {
     @State private var isApplyingCatalogMatch = false
     @State private var selectionPulse = false
     @State private var appStoreSearchTask: Task<Void, Never>? = nil
-    @State private var showInlineResults = false
     @State private var appStoreLimit = 12
     @State private var appStoreTotal = 0
-    @State private var appStoreLastQuery = ""
+    @State private var appStoreLastFetchCount = 0
+    @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
 
     // Cost & payment
     @State private var cost: Double? = nil
@@ -151,7 +152,11 @@ struct AddEditSubscriptionView: View {
     }
     private var paymentSuggestions: [String] {
         let fromItems = allItems.compactMap { $0.paymentMethod.isEmpty ? nil : $0.paymentMethod }
-        return Array(Set(savedCards + fromItems)).sorted()
+        var combined = savedCards
+        for item in fromItems where !combined.contains(item) {
+            combined.append(item)
+        }
+        return combined
     }
     private var emailSuggestions: [String] {
         let fromItems = allItems.compactMap { $0.emailUsed.isEmpty ? nil : $0.emailUsed }
@@ -178,6 +183,21 @@ struct AddEditSubscriptionView: View {
         case .phone:
             var list = savedPhones
             if !list.contains(trimmed) { list.append(trimmed); savedPhonesData = (try? JSONEncoder().encode(list)) ?? Data() }
+        }
+    }
+
+    func updateSuggestions(_ values: [String], type: SuggestionFieldType) {
+        let trimmed = values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        switch type {
+        case .name:
+            savedNamesData = (try? JSONEncoder().encode(trimmed)) ?? Data()
+        case .card:
+            savedCardsData = (try? JSONEncoder().encode(trimmed)) ?? Data()
+        case .email:
+            savedEmailsData = (try? JSONEncoder().encode(trimmed)) ?? Data()
+        case .phone:
+            savedPhonesData = (try? JSONEncoder().encode(trimmed)) ?? Data()
         }
     }
 
@@ -217,6 +237,21 @@ struct AddEditSubscriptionView: View {
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+        }
+        .sheet(isPresented: $showAppStoreSearchSheet) {
+            AppStoreSearchSheet(
+                query: $appStoreQuery,
+                results: appStoreResults,
+                isSearching: isSearchingAppStore,
+                errorMessage: appStoreSearchError,
+                canLoadMore: shouldShowLoadMore,
+                onSearch: { term in Task { await searchAppStore(query: term, offset: 0) } },
+                onLoadMore: { loadMoreAppStoreResults() },
+                onSelect: { result in
+                    applyAppStoreResult(result)
+                    showAppStoreSearchSheet = false
+                }
+            )
         }
         .onAppear {
             if currency.isEmpty { currency = preferredCurrency }
@@ -312,6 +347,7 @@ struct AddEditSubscriptionView: View {
                                 .onSubmit { scheduleFaviconFetch(url, delay: false) }
                                 .onChange(of: url) { _, newValue in
                                     if isApplyingCatalogMatch { return }
+                                    if iconData != nil, (iconSource == .customImage || iconSource == .appBundle) { return }
                                     scheduleFaviconFetch(newValue, delay: true)
                                 }
                             if isFetchingIcon {
@@ -476,37 +512,16 @@ struct AddEditSubscriptionView: View {
     @ViewBuilder
     private var appSearchResultsView: some View {
         let query = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let hasQuery = query.count >= 2
-        if !hasQuery || !showInlineResults {
-            EmptyView()
-        } else {
-            VStack(spacing: 0) {
-            if appMatches.isEmpty && appStoreResults.isEmpty && !isSearchingAppStore {
-                HStack(spacing: 8) {
-                    Image(systemName: "sparkle.magnifyingglass")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text("No app matches — keep typing or add as custom")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-            }
-
+        let canSearch = query.count >= 2
+        VStack(spacing: 0) {
             if !appMatches.isEmpty {
                 inlineSectionHeader(title: "Catalog")
-                ForEach(appMatches.prefix(6)) { entry in
+                ForEach(Array(appMatches.prefix(6))) { entry in
                     Button {
-                        applyAppMatch(entry)
+                        applyAppCatalogMatch(entry)
                     } label: {
-                        HStack(spacing: 10) {
-                            AppCatalogIconView(
-                                iconName: entry.iconName,
-                                appStoreId: entry.appStoreId,
-                                title: entry.name
-                            )
+                        HStack(spacing: 12) {
+                            AppCatalogIconView(iconName: entry.iconName, appStoreId: entry.appStoreId, title: entry.name)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(entry.name)
                                     .font(.system(size: 14, weight: .semibold))
@@ -518,92 +533,44 @@ struct AddEditSubscriptionView: View {
                                 }
                             }
                             Spacer()
-                            Text("Use")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.blue)
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    if entry.id != appMatches.prefix(6).last?.id {
-                        FormDivider()
-                    }
                 }
+                FormDivider()
             }
 
-            if isSearchingAppStore || !appStoreResults.isEmpty {
-                if !appMatches.isEmpty { FormDivider() }
-                inlineSectionHeader(title: "App Store")
-                if isSearchingAppStore {
-                    HStack(spacing: 8) {
-                        ProgressView().scaleEffect(0.8)
-                        Text("Searching App Store…")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+            Button {
+                appStoreQuery = query
+                appStoreLimit = 12
+                appStoreResults = []
+                appStoreTotal = 0
+                appStoreLastFetchCount = 0
+                showAppStoreSearchSheet = true
+                Task { await searchAppStore(query: query, offset: 0) }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(canSearch ? "Search App Store for \"\(query)\"" : "Search App Store")
+                        .font(.system(size: 14, weight: .semibold))
+                    Spacer()
                 }
-                ForEach(appStoreResults.prefix(6)) { result in
-                    Button {
-                        applyAppStoreResult(result)
-                    } label: {
-                        HStack(spacing: 10) {
-                            AppStoreResultIcon(urlString: result.artworkUrl100, title: result.trackName)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(result.trackName)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(.primary)
-                                if let genre = result.primaryGenreName {
-                                    Text(genre)
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            Spacer()
-                            Text("Use")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.blue)
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    if result.id != appStoreResults.prefix(6).last?.id {
-                        FormDivider()
-                    }
-                }
-                if shouldShowLoadMore {
-                    FormDivider()
-                    Button {
-                        loadMoreAppStoreResults()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.blue)
-                            Text("Load more results")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.blue)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
+                .foregroundStyle(canSearch ? Color.primary : Color.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
             }
+            .buttonStyle(.plain)
+            .disabled(!canSearch)
 
             FormDivider()
             Button {
-                showInlineResults = false
-                appMatches = []
                 appStoreResults = []
+                appStoreTotal = 0
+                appStoreLastFetchCount = 0
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "plus.circle")
@@ -621,7 +588,6 @@ struct AddEditSubscriptionView: View {
         }
         .padding(.bottom, 6)
     }
-    }
 
     private struct AppCatalogIconView: View {
         let iconName: String?
@@ -630,7 +596,14 @@ struct AddEditSubscriptionView: View {
 
         var body: some View {
             let assetName = iconName ?? appStoreId
-            if let image = AppCatalogIconView.platformImage(named: assetName) {
+            if let data = Self.loadBundleImageData(named: assetName, subdirectory: "AppCatalogIcons"),
+               let image = AppCatalogIconView.platformImage(data: data) {
+                Image(platformImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 28, height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else if let image = AppCatalogIconView.platformImage(named: assetName) {
                 Image(platformImage: image)
                     .resizable()
                     .scaledToFill()
@@ -648,26 +621,45 @@ struct AddEditSubscriptionView: View {
             }
         }
 
+        private static func loadBundleImageData(named name: String, subdirectory: String) -> Data? {
+            let exts = ["png", "jpg", "jpeg"]
+            for ext in exts {
+                if let url = Bundle.main.url(forResource: name, withExtension: ext, subdirectory: subdirectory),
+                   let data = try? Data(contentsOf: url) {
+                    return data
+                }
+            }
+            return nil
+        }
+
         #if os(iOS)
         private static func platformImage(named name: String) -> UIImage? {
             UIImage(named: name)
+        }
+
+        private static func platformImage(data: Data) -> UIImage? {
+            UIImage(data: data)
         }
         #else
         private static func platformImage(named name: String) -> NSImage? {
             NSImage(named: NSImage.Name(name))
         }
+
+        private static func platformImage(data: Data) -> NSImage? {
+            NSImage(data: data)
+        }
         #endif
     }
 
-    private struct UnifiedAppSearchSheet: View {
+    private struct AppStoreSearchSheet: View {
         @Binding var query: String
-        let catalogResults: [AppCatalogEntry]
-        let appStoreResults: [AppStoreSearchResult]
+        let results: [AppStoreSearchResult]
         let isSearching: Bool
         let errorMessage: String?
+        let canLoadMore: Bool
         let onSearch: (String) -> Void
-        let onSelectCatalog: (AppCatalogEntry) -> Void
-        let onSelectAppStore: (AppStoreSearchResult) -> Void
+        let onLoadMore: () -> Void
+        let onSelect: (AppStoreSearchResult) -> Void
         @Environment(\.dismiss) private var dismiss
 
         var body: some View {
@@ -701,82 +693,51 @@ struct AddEditSubscriptionView: View {
                     }
 
                     List {
-                        if !catalogResults.isEmpty {
-                            Section("Catalog") {
-                                ForEach(catalogResults.prefix(6)) { entry in
-                                    Button {
-                                        onSelectCatalog(entry)
-                                    } label: {
-                                        HStack(spacing: 12) {
-                                            AppCatalogIconView(
-                                                iconName: entry.iconName,
-                                                appStoreId: entry.appStoreId,
-                                                title: entry.name
-                                            )
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(entry.name)
-                                                    .font(.system(size: 14, weight: .semibold))
-                                                if let category = entry.category {
-                                                    Text(category)
-                                                        .font(.system(size: 12))
-                                                        .foregroundStyle(.secondary)
-                                                }
-                                            }
-                                            Spacer()
-                                            Text("Catalog")
-                                                .font(.system(size: 10, weight: .bold))
+                        ForEach(results) { result in
+                            Button {
+                                onSelect(result)
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 12) {
+                                    AppStoreResultIcon(urlString: result.artworkUrl100, title: result.trackName)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(result.trackName)
+                                            .font(.system(size: 14, weight: .semibold))
+                                        if let genre = result.primaryGenreName {
+                                            Text(genre)
+                                                .font(.system(size: 12))
                                                 .foregroundStyle(.secondary)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 3)
-                                                .background(Color.secondary.opacity(0.12), in: Capsule())
                                         }
-                                        .padding(.vertical, 6)
                                     }
-                                    .buttonStyle(.plain)
+                                    Spacer()
                                 }
+                                .padding(.vertical, 6)
+                                .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
                         }
 
-                        Section("App Store") {
-                            if isSearching {
-                                HStack {
-                                    ProgressView().scaleEffect(0.8)
-                                    Text("Searching…")
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.secondary)
+                        if canLoadMore {
+                            Button {
+                                onLoadMore()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.system(size: 12, weight: .semibold))
+                                    Text("Load more results")
+                                        .font(.system(size: 12, weight: .semibold))
+                                    Spacer()
                                 }
-                            } else if appStoreResults.isEmpty {
-                                Text("No App Store results")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                ForEach(appStoreResults) { result in
-                                    Button {
-                                        onSelectAppStore(result)
-                                    } label: {
-                                        HStack(spacing: 12) {
-                                            AppStoreResultIcon(urlString: result.artworkUrl100, title: result.trackName)
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(result.trackName)
-                                                    .font(.system(size: 14, weight: .semibold))
-                                                if let genre = result.primaryGenreName {
-                                                    Text(genre)
-                                                        .font(.system(size: 12))
-                                                        .foregroundStyle(.secondary)
-                                                }
-                                            }
-                                            Spacer()
-                                        }
-                                        .padding(.vertical, 6)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
+                                .foregroundStyle(.blue)
+                                .padding(.vertical, 8)
+                                .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
                         }
                     }
                     .listStyle(.plain)
                 }
-                .navigationTitle("Search Apps")
+                .navigationTitle("App Store")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Close") { dismiss() }
@@ -1103,8 +1064,17 @@ struct AddEditSubscriptionView: View {
                         } else {
                             Text("Not set")
                                 .foregroundStyle(.tertiary)
+                                .onTapGesture {
+                                    withAnimation {
+                                        startDateValue = Date()
+                                        startDate = startDateValue
+                                    }
+                                }
                             Button {
-                                withAnimation { startDate = startDateValue }
+                                withAnimation {
+                                    startDateValue = Date()
+                                    startDate = startDateValue
+                                }
                             } label: {
                                 Image(systemName: "plus.circle.fill")
                                     .font(.system(size: 18))
@@ -1222,7 +1192,8 @@ struct AddEditSubscriptionView: View {
                         text: $paymentMethod,
                         suggestions: paymentSuggestions,
                         fieldType: .card,
-                        onPersist: { v, t in persistSuggestion(v, type: t) }
+                        onPersist: { v, t in persistSuggestion(v, type: t) },
+                        onUpdateSuggestions: { list, type in updateSuggestions(list, type: type) }
                     )
                 }
             }
@@ -1443,7 +1414,7 @@ struct AddEditSubscriptionView: View {
     }
 
     private var shouldShowLoadMore: Bool {
-        !isSearchingAppStore && appStoreResults.count >= appStoreLimit
+        !isSearchingAppStore && appStoreLastFetchCount == appStoreLimit
     }
 
     private func handleNameChange(_ value: String) {
@@ -1454,16 +1425,12 @@ struct AddEditSubscriptionView: View {
         guard trimmed.count >= 2 else {
             appStoreSearchTask?.cancel()
             appStoreResults = []
+            appStoreLastFetchCount = 0
             isSearchingAppStore = false
-            showInlineResults = false
             return
         }
 
         appStoreQuery = trimmed
-        showInlineResults = true
-        appStoreLimit = 12
-        appStoreLastQuery = trimmed
-        scheduleAppStoreSearch(for: trimmed)
     }
 
     private func scheduleAppStoreSearch(for query: String) {
@@ -1494,9 +1461,9 @@ struct AddEditSubscriptionView: View {
             iconSource = .system
         }
 
-        showInlineResults = false
         appMatches = []
         appStoreResults = []
+        appStoreLastFetchCount = 0
         updateAppMatches(for: name)
         pulseSelection()
     }
@@ -1529,19 +1496,27 @@ struct AddEditSubscriptionView: View {
         return nil
     }
 
+    private var appStoreRegionCode: String {
+        let trimmed = appStoreRegion.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "auto" {
+            return Locale.current.region?.identifier.lowercased() ?? "us"
+        }
+        return trimmed.lowercased()
+    }
+
     private func appStoreURL(for appStoreId: String) -> String {
-        let region = Locale.current.region?.identifier.lowercased() ?? "us"
-        return "https://apps.apple.com/\(region)/app/id\(appStoreId)"
+        "https://apps.apple.com/\(appStoreRegionCode)/app/id\(appStoreId)"
     }
 
     private func searchAppStore(query: String, offset: Int = 0) async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://itunes.apple.com/search?term=\(encoded)&entity=software&limit=\(appStoreLimit)&offset=\(offset)") else {
+              let url = URL(string: "https://itunes.apple.com/search?term=\(encoded)&entity=software&limit=\(appStoreLimit)&offset=\(offset)&country=\(appStoreRegionCode)") else {
             await MainActor.run {
                 appStoreResults = []
                 appStoreTotal = 0
+                appStoreLastFetchCount = 0
                 appStoreSearchError = nil
             }
             return
@@ -1559,13 +1534,15 @@ struct AddEditSubscriptionView: View {
                 } else {
                     appStoreResults.append(contentsOf: decoded.results)
                 }
-                appStoreTotal = decoded.resultCount
+                appStoreTotal = appStoreResults.count
+                appStoreLastFetchCount = decoded.results.count
                 isSearchingAppStore = false
             }
         } catch {
             await MainActor.run {
                 appStoreResults = []
                 appStoreTotal = 0
+                appStoreLastFetchCount = 0
                 isSearchingAppStore = false
                 appStoreSearchError = "Unable to search App Store right now."
             }
@@ -1574,8 +1551,63 @@ struct AddEditSubscriptionView: View {
 
     private func loadMoreAppStoreResults() {
         guard !isSearchingAppStore else { return }
-        appStoreLimit += 12
-        Task { await searchAppStore(query: appStoreQuery, offset: 0) }
+        Task { await searchAppStore(query: appStoreQuery, offset: appStoreResults.count) }
+    }
+
+    private func applyAppCatalogMatch(_ entry: AppCatalogEntry) {
+        isApplyingCatalogMatch = true
+        defer { isApplyingCatalogMatch = false }
+
+        name = entry.name
+        url = appStoreURL(for: entry.appStoreId)
+        if let category = entry.category {
+            selectedCategoryRaw = category
+        }
+        if let data = appCatalogIconData(named: entry.iconName, appStoreId: entry.appStoreId) {
+            iconData = data
+            iconSource = .appBundle
+        }
+
+        appMatches = []
+        appStoreResults = []
+        appStoreLastFetchCount = 0
+        updateAppMatches(for: name)
+        pulseSelection()
+
+        Task {
+            if let detail = await fetchAppStoreDetails(appStoreId: entry.appStoreId) {
+                await MainActor.run {
+                    currency = detail.currency ?? currency
+                    url = detail.trackViewUrl
+                    if selectedCategoryRaw == nil, let genre = detail.primaryGenreName {
+                        selectedCategoryRaw = mapAppStoreGenreToCategory(genre)
+                    }
+                    if iconData == nil, let art = detail.artworkUrl100, let artURL = URL(string: art) {
+                        Task {
+                            if let (data, _) = try? await URLSession.shared.data(from: artURL) {
+                                await MainActor.run {
+                                    iconData = data
+                                    iconSource = .customImage
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func fetchAppStoreDetails(appStoreId: String) async -> AppStoreSearchResult? {
+        guard let url = URL(string: "https://itunes.apple.com/lookup?id=\(appStoreId)&country=\(appStoreRegionCode)") else {
+            return nil
+        }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let decoded = try JSONDecoder().decode(AppStoreSearchResponse.self, from: data)
+            return decoded.results.first
+        } catch {
+            return nil
+        }
     }
 
     private func applyAppStoreResult(_ result: AppStoreSearchResult) {
@@ -1600,7 +1632,6 @@ struct AddEditSubscriptionView: View {
             }
         }
 
-        showInlineResults = false
         appMatches = []
         appStoreResults = []
         updateAppMatches(for: name)
@@ -1829,8 +1860,29 @@ struct AccountField: View {
     let suggestions: [String]
     let fieldType: SuggestionFieldType
     let onPersist: (String, SuggestionFieldType) -> Void
+    let onUpdateSuggestions: (([String], SuggestionFieldType) -> Void)?
 
     @State private var showAddNew = false
+
+    init(
+        label: String,
+        placeholder: String,
+        hint: String? = nil,
+        text: Binding<String>,
+        suggestions: [String],
+        fieldType: SuggestionFieldType,
+        onPersist: @escaping (String, SuggestionFieldType) -> Void,
+        onUpdateSuggestions: (([String], SuggestionFieldType) -> Void)? = nil
+    ) {
+        self.label = label
+        self.placeholder = placeholder
+        self.hint = hint
+        self._text = text
+        self.suggestions = suggestions
+        self.fieldType = fieldType
+        self.onPersist = onPersist
+        self.onUpdateSuggestions = onUpdateSuggestions
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1911,6 +1963,10 @@ struct AccountField: View {
             AddAccountValueSheet(
                 label: label,
                 fieldType: fieldType,
+                existing: suggestions,
+                onUpdateSuggestions: { updated in
+                    onUpdateSuggestions?(updated, fieldType)
+                },
                 onSave: { value, shouldPersist in
                     text = value
                     if shouldPersist {
@@ -1918,7 +1974,7 @@ struct AccountField: View {
                     }
                 }
             )
-            .presentationDetents([.height(280)])
+            .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
     }
@@ -1980,12 +2036,31 @@ struct AccountSuggestionsSheet: View {
 struct AddAccountValueSheet: View {
     let label: String
     let fieldType: SuggestionFieldType
+    let existing: [String]
+    let onUpdateSuggestions: (([String]) -> Void)?
     let onSave: (String, Bool) -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var value = ""
     @State private var shouldSave = true
+    @State private var editableValues: [String]
+    @State private var editMode: EditMode = .inactive
     @FocusState private var focused: Bool
+
+    init(
+        label: String,
+        fieldType: SuggestionFieldType,
+        existing: [String],
+        onUpdateSuggestions: (([String]) -> Void)? = nil,
+        onSave: @escaping (String, Bool) -> Void
+    ) {
+        self.label = label
+        self.fieldType = fieldType
+        self.existing = existing
+        self.onUpdateSuggestions = onUpdateSuggestions
+        self.onSave = onSave
+        _editableValues = State(initialValue: existing)
+    }
 
     var body: some View {
         NavigationStack {
@@ -2019,15 +2094,43 @@ struct AddAccountValueSheet: View {
 
 
                 Toggle(isOn: $shouldSave) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Save for future use")
-                            .font(.system(size: 15))
-                        Text("Appears as a quick-pick option next time")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("Save for future use")
+                        .font(.system(size: 15))
                 }
                 .tint(.blue)
+
+                if fieldType == .card, !editableValues.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Payment options")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button(editMode == .active ? "Done" : "Edit") {
+                                editMode = editMode == .active ? .inactive : .active
+                            }
+                            .font(.system(size: 12, weight: .semibold))
+                        }
+
+                        List {
+                            ForEach(Array(editableValues.enumerated()), id: \.offset) { _, value in
+                                Text(value)
+                                    .font(.system(size: 14))
+                            }
+                            .onDelete { indices in
+                                editableValues.remove(atOffsets: indices)
+                                onUpdateSuggestions?(editableValues)
+                            }
+                            .onMove { indices, newOffset in
+                                editableValues.move(fromOffsets: indices, toOffset: newOffset)
+                                onUpdateSuggestions?(editableValues)
+                            }
+                        }
+                        .environment(\.editMode, $editMode)
+                        .frame(maxHeight: 220)
+                        .listStyle(.plain)
+                    }
+                }
 
                 Spacer()
             }
@@ -2097,8 +2200,12 @@ struct AddAccountValueSheet: View {
         case "7":           // Russia: +7 XXX XXX XX XX
             prefix = String(digits.prefix(1))
             local  = String(digits.dropFirst(1))
-        case "2", "3", "4", "5", "6", "8", "9"
-            where digits.count > 3:
+        case "2", "3", "4", "5", "6", "8", "9":
+            guard digits.count > 3 else {
+                prefix = String(digits.prefix(1))
+                local  = String(digits.dropFirst(1))
+                break
+            }
             // 2-digit country codes (+61, +44, +49, +971, etc.)
             // Use 3-digit prefix for known Middle-East/long codes
             let threeDigit = Int(String(digits.prefix(3))) ?? 0
