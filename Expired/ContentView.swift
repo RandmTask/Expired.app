@@ -3038,15 +3038,33 @@ struct SettingsView: View {
 
     // MARK: - iOS Settings (List-based)
 
+    /// Fixed-width icon slot for iOS list rows — ensures all text starts at the same x position.
+    @ViewBuilder
+    private func rowIcon(_ name: String, color: Color = .secondary) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 16))
+            .frame(width: 22, alignment: .center)
+            .foregroundStyle(color)
+    }
+
+    @ViewBuilder
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 12, weight: .semibold))
+            .textCase(nil)
+            .foregroundStyle(.secondary)
+            .tracking(0.4)
+    }
+
     private var iosSettingsBody: some View {
         List {
+
+            // MARK: Display
             Section {
-                Button {
-                    showCurrencyPicker = true
-                } label: {
+                Button { showCurrencyPicker = true } label: {
                     HStack {
-                        Label("Currency", systemImage: "dollarsign.circle")
-                            .foregroundStyle(.primary, .secondary)
+                        rowIcon("dollarsign.circle")
+                        Text("Currency").foregroundStyle(.primary)
                         Spacer()
                         Text("\(CurrencyInfo.symbol(for: preferredCurrency)) \(preferredCurrency)")
                             .foregroundStyle(.secondary)
@@ -3058,8 +3076,8 @@ struct SettingsView: View {
                 .foregroundStyle(.primary)
 
                 HStack {
-                    Label("App Store", systemImage: "bag")
-                        .foregroundStyle(.primary, .secondary)
+                    rowIcon("bag")
+                    Text("App Store").foregroundStyle(.primary)
                     Spacer()
                     Menu {
                         ForEach(Self.appStoreRegions, id: \.code) { region in
@@ -3073,44 +3091,30 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
 
-                Button {
-                    appearanceMode = (appearanceMode + 1) % 3
-                } label: {
-                    HStack {
-                        Label("Appearance", systemImage: "paintbrush")
-                            .foregroundStyle(.primary, .secondary)
-                        Spacer()
-                        Menu {
-                            Button { appearanceMode = 0 } label: {
-                                macMenuOptionTitle("System", isSelected: appearanceMode == 0)
-                            }
-                            Button { appearanceMode = 1 } label: {
-                                macMenuOptionTitle("Light", isSelected: appearanceMode == 1)
-                            }
-                            Button { appearanceMode = 2 } label: {
-                                macMenuOptionTitle("Dark", isSelected: appearanceMode == 2)
-                            }
-                        } label: {
-                            macMenuValueLabel(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
-                        }
-                        .buttonStyle(.plain)
+                HStack {
+                    rowIcon("paintbrush")
+                    Text("Appearance").foregroundStyle(.primary)
+                    Spacer()
+                    Menu {
+                        Button { appearanceMode = 0 } label: { macMenuOptionTitle("System", isSelected: appearanceMode == 0) }
+                        Button { appearanceMode = 1 } label: { macMenuOptionTitle("Light", isSelected: appearanceMode == 1) }
+                        Button { appearanceMode = 2 } label: { macMenuOptionTitle("Dark", isSelected: appearanceMode == 2) }
+                    } label: {
+                        macMenuValueLabel(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
                     }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             } header: {
-                Text("DISPLAY")
-                    .font(.system(size: 12, weight: .semibold))
-                    .textCase(nil)
-                    .foregroundStyle(.secondary)
-                    .tracking(0.4)
+                sectionHeader("DISPLAY")
             } footer: {
                 Text("All subscription costs are converted to this currency when calculating totals. Exchange rates are approximate and updated periodically.")
             }
 
+            // MARK: Screenshot Import
             Section {
                 HStack {
-                    Label("Analyzer", systemImage: "sparkles")
-                        .foregroundStyle(.primary, .secondary)
+                    rowIcon("sparkles")
+                    Text("Analyzer").foregroundStyle(.primary)
                     Spacer()
                     Menu {
                         ForEach(ScreenshotAIProvider.allCases) { provider in
@@ -3126,16 +3130,14 @@ struct SettingsView: View {
 
                 if screenshotAIProvider.requiresAPIKey {
                     HStack {
-                        Label("API Key", systemImage: "key")
-                            .foregroundStyle(.primary, .secondary)
+                        rowIcon("key")
+                        Text("API Key").foregroundStyle(.primary)
                         Spacer()
                         Text(screenshotAIKeyPreview)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        Button {
-                            pasteScreenshotAIKey()
-                        } label: {
+                        Button { pasteScreenshotAIKey() } label: {
                             Image(systemName: "doc.on.clipboard")
                                 .font(.system(size: 16, weight: .semibold))
                         }
@@ -3143,12 +3145,10 @@ struct SettingsView: View {
                     }
 
                     HStack {
-                        Label("Model", systemImage: "cpu")
-                            .foregroundStyle(.primary, .secondary)
+                        rowIcon("cpu")
+                        Text("Model").foregroundStyle(.primary)
                         Spacer()
-                        if isLoadingModels {
-                            ProgressView().controlSize(.small)
-                        }
+                        if isLoadingModels { ProgressView().controlSize(.small) }
                         Menu {
                             ForEach(modelPickerOptions, id: \.self) { model in
                                 Button { setSelectedModel(model) } label: {
@@ -3159,33 +3159,26 @@ struct SettingsView: View {
                             macMenuValueLabel(modelLabel(currentSelectedModel))
                         }
                         .buttonStyle(.plain)
-                        Button {
-                            loadModels()
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 16, weight: .semibold))
+                        Button { loadModels() } label: {
+                            Image(systemName: "arrow.clockwise").font(.system(size: 16, weight: .semibold))
                         }
                         .buttonStyle(.plain)
                     }
 
                     modelPickerNote
-
                     apiKeySecurityWarning
                 }
             } header: {
-                Text("SCREENSHOT IMPORT")
-                    .font(.system(size: 12, weight: .semibold))
-                    .textCase(nil)
-                    .foregroundStyle(.secondary)
-                    .tracking(0.4)
+                sectionHeader("SCREENSHOT IMPORT")
             } footer: {
                 Text("Apple Intelligence keeps analysis on device. API providers send the screenshot to the provider using your saved key.")
             }
 
+            // MARK: Notifications
             Section {
                 HStack {
-                    Label("Reminder", systemImage: "clock")
-                        .foregroundStyle(.primary, .secondary)
+                    rowIcon("clock")
+                    Text("Reminder").foregroundStyle(.primary)
                     Spacer()
                     DatePicker(
                         "",
@@ -3198,150 +3191,81 @@ struct SettingsView: View {
                 }
                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
             } header: {
-                Text("NOTIFICATIONS")
-                    .font(.system(size: 12, weight: .semibold))
-                    .textCase(nil)
-                    .foregroundStyle(.secondary)
-                    .tracking(0.4)
+                sectionHeader("NOTIFICATIONS")
             } footer: {
                 Text("Reminders will be delivered at this time on the scheduled day.")
             }
 
+            // MARK: Backup & Sync
             Section {
-                Toggle(isOn: $iCloudSyncEnabled) {
-                    Label("iCloud Sync", systemImage: "icloud")
-                        .foregroundStyle(.primary, .secondary)
+                HStack {
+                    rowIcon("icloud")
+                    Text("iCloud Sync").foregroundStyle(.primary)
+                    Spacer()
+                    Toggle("", isOn: $iCloudSyncEnabled)
+                        .labelsHidden()
+                        .tint(.green)
+                        .onChange(of: iCloudSyncEnabled) { _, _ in showRestartAlert = true }
                 }
-                .onChange(of: iCloudSyncEnabled) { _, _ in
-                    showRestartAlert = true
+
+                HStack {
+                    rowIcon("icloud.and.arrow.up")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("iCloud Backup").foregroundStyle(.primary)
+                        Text(lastAutoBackupText)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $autoBackupEnabled)
+                        .labelsHidden()
+                        .tint(.green)
                 }
+
+                Button { showExportWarning = true } label: {
+                    HStack {
+                        rowIcon("square.and.arrow.up", color: .blue)
+                        Text("Export Backup").foregroundStyle(.blue)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Button { showingImporter = true } label: {
+                    HStack {
+                        rowIcon("square.and.arrow.down", color: .blue)
+                        Text("Import Backup").foregroundStyle(.blue)
+                    }
+                }
+                .buttonStyle(.plain)
             } header: {
-                Text("SYNC")
-                    .font(.system(size: 12, weight: .semibold))
-                    .textCase(nil)
-                    .foregroundStyle(.secondary)
-                    .tracking(0.4)
+                sectionHeader("BACKUP & SYNC")
             } footer: {
-                Text("When enabled, your data syncs across all devices signed into the same iCloud account. Requires an iCloud account and internet connection. Restart the app after changing this setting.")
+                Text("iCloud Sync keeps data across all your devices — restart the app after changing. Daily snapshots save automatically to iCloud Drive (skipped if nothing changed). Export writes an unencrypted JSON file (icons excluded); import merges by item, never deleting. Keep the file private.")
             }
 
+            // MARK: Data
             Section {
-                VStack(alignment: .leading, spacing: 12) {
+                NavigationLink { ArchiveView() } label: {
                     HStack {
-                        Label("Account", systemImage: "person.crop.circle")
-                            .foregroundStyle(.primary, .secondary)
-                        Spacer()
-                        Text(cloudKitDebug.accountStatusText)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    }
-
-                    HStack {
-                        Label("User Record", systemImage: "record.circle")
-                            .foregroundStyle(.primary, .secondary)
-                        Spacer()
-                        Text(cloudKitDebug.userRecordIDText)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-
-                    HStack {
-                        Label("Latest", systemImage: "chart.line.uptrend.xyaxis")
-                            .foregroundStyle(.primary, .secondary)
-                        Spacer()
-                        Text(cloudKitDebug.storeSummaryText)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    }
-
-                    HStack(spacing: 12) {
-                        Button {
-                            refreshCloudKitDiagnostics()
-                        } label: {
-                            Label("Refresh", systemImage: "arrow.clockwise")
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                        Button {
-                            copyCloudKitDiagnostics()
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        .buttonStyle(.bordered)
-                        .help("Copy CloudKit debug log")
-
-                        Button(role: .destructive) {
-                            cloudKitDebug.clear()
-                        } label: {
-                            Label("Clear", systemImage: "trash")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    if !cloudKitDebug.entries.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(cloudKitDebug.entries.prefix(8)) { entry in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack {
-                                        Text(entry.category)
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                        Text(entry.date.formatted(date: .omitted, time: .shortened))
-                                            .font(.caption)
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                    Text(entry.message)
-                                        .font(.caption)
-                                        .foregroundStyle(.primary)
-                                        .textSelection(.enabled)
-                                }
-                                if entry.id != cloudKitDebug.entries.prefix(8).last?.id {
-                                    Divider().opacity(0.5)
-                                }
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
-                }
-                .padding(.vertical, 4)
-            } header: {
-                Text("CLOUDKIT DEBUG")
-                    .font(.system(size: 12, weight: .semibold))
-                    .textCase(nil)
-                    .foregroundStyle(.secondary)
-                    .tracking(0.4)
-            } footer: {
-                Text("Use this panel to confirm whether CloudKit is authenticating, importing, and exporting while TestFlight is open.")
-            }
-
-            Section {
-                NavigationLink {
-                    ArchiveView()
-                } label: {
-                    HStack {
-                        Label("Archive", systemImage: "archivebox")
-                            .foregroundStyle(.primary, .secondary)
+                        rowIcon("archivebox")
+                        Text("Archive").foregroundStyle(.primary)
                         Spacer()
                         if !archivedItems.isEmpty {
-                            Text("\(archivedItems.count)")
-                                .foregroundStyle(.secondary)
+                            Text("\(archivedItems.count)").foregroundStyle(.secondary)
                         }
                     }
                 }
-                NavigationLink {
-                    CategoriesView()
-                } label: {
-                    Label("Categories", systemImage: "square.grid.2x2")
-                        .foregroundStyle(.primary, .secondary)
-                }
-                Button {
-                    refreshAllFavicons()
-                } label: {
+                NavigationLink { CategoriesView() } label: {
                     HStack {
-                        Label("Refresh Icons", systemImage: "arrow.clockwise.circle")
-                            .foregroundStyle(.blue)
+                        rowIcon("square.grid.2x2")
+                        Text("Categories").foregroundStyle(.primary)
+                    }
+                }
+                Button { refreshAllFavicons() } label: {
+                    HStack {
+                        rowIcon("arrow.clockwise.circle", color: isRefreshingFavicons ? Color.secondary : Color.blue)
+                        Text("Refresh Icons")
+                            .foregroundStyle(isRefreshingFavicons ? Color.secondary : Color.blue)
                         if isRefreshingFavicons {
                             Spacer()
                             if faviconRefreshProgress.total > 0 {
@@ -3356,50 +3280,84 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
                 .disabled(isRefreshingFavicons)
             } header: {
-                Text("DATA")
-                    .font(.system(size: 12, weight: .semibold))
-                    .textCase(nil)
-                    .foregroundStyle(.secondary)
-                    .tracking(0.4)
+                sectionHeader("DATA")
             }
 
+            // MARK: CloudKit Debug (development panel — kept at bottom)
             Section {
                 HStack {
-                    Image(systemName: "icloud.and.arrow.up")
-                        .font(.system(size: 16))
-                        .frame(width: 22, alignment: .center)
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("iCloud Backup")
-                            .foregroundStyle(.primary)
-                        Text(lastAutoBackupText)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
+                    rowIcon("person.crop.circle")
+                    Text("Account").foregroundStyle(.primary)
                     Spacer()
-                    Toggle("", isOn: $autoBackupEnabled)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .tint(.green)
+                    Text(cloudKitDebug.accountStatusText)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
                 }
-                Button { showExportWarning = true } label: {
-                    Label("Export Backup", systemImage: "square.and.arrow.up")
-                        .foregroundStyle(.blue)
+
+                HStack {
+                    rowIcon("record.circle")
+                    Text("User Record").foregroundStyle(.primary)
+                    Spacer()
+                    Text(cloudKitDebug.userRecordIDText)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-                .buttonStyle(.plain)
-                Button { showingImporter = true } label: {
-                    Label("Import Backup", systemImage: "square.and.arrow.down")
-                        .foregroundStyle(.blue)
+
+                HStack {
+                    rowIcon("chart.line.uptrend.xyaxis")
+                    Text("Latest").foregroundStyle(.primary)
+                    Spacer()
+                    Text(cloudKitDebug.storeSummaryText)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
                 }
-                .buttonStyle(.plain)
+
+                HStack(spacing: 10) {
+                    Button { refreshCloudKitDiagnostics() } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button { copyCloudKitDiagnostics() } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    Button(role: .destructive) { cloudKitDebug.clear() } label: {
+                        Label("Clear", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(.vertical, 2)
+
+                if !cloudKitDebug.entries.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(cloudKitDebug.entries.prefix(8)) { entry in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(entry.category)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text(entry.date.formatted(date: .omitted, time: .shortened))
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                Text(entry.message)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.primary)
+                                    .textSelection(.enabled)
+                            }
+                            if entry.id != cloudKitDebug.entries.prefix(8).last?.id {
+                                Divider().opacity(0.4)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
             } header: {
-                Text("BACKUP")
-                    .font(.system(size: 12, weight: .semibold))
-                    .textCase(nil)
-                    .foregroundStyle(.secondary)
-                    .tracking(0.4)
+                sectionHeader("CLOUDKIT DEBUG")
             } footer: {
-                Text("A daily snapshot is saved to iCloud Drive automatically (skipped if nothing changed). Export writes an unencrypted JSON file (icons excluded — re-fetch with Refresh Icons); import merges by item, never deleting. Keep the file private.")
+                Text("Use this panel to confirm whether CloudKit is authenticating, importing, and exporting while TestFlight is open.")
             }
         }
         .navigationTitle("Settings")
