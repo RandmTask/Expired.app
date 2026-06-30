@@ -2637,11 +2637,11 @@ struct SettingsView: View {
                         Menu {
                             ForEach(ScreenshotAIProvider.allCases) { provider in
                                 Button { screenshotAIProviderRaw = provider.rawValue } label: {
-                                    macMenuOptionTitle(provider.rawValue, isSelected: screenshotAIProvider == provider)
+                                    macMenuOptionTitle(provider.displayName, isSelected: screenshotAIProvider == provider)
                                 }
                             }
                         } label: {
-                            macMenuValueLabel(screenshotAIProvider.rawValue)
+                            macMenuValueLabel(screenshotAIProvider.displayName)
                         }
                         .menuStyle(.borderlessButton)
                         .menuIndicator(.hidden)
@@ -2728,125 +2728,6 @@ struct SettingsView: View {
                     }
                 }
 
-                // SYNC
-                settingsSection(title: "Sync", icon: "icloud") {
-                    settingsRow {
-                        macSettingsLabel("iCloud Sync", icon: "icloud")
-                        Spacer()
-                        Toggle("", isOn: $iCloudSyncEnabled)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .tint(.green)
-                            .onChange(of: iCloudSyncEnabled) { _, _ in showRestartAlert = true }
-                    }
-
-                    FormDivider()
-
-                    Button {
-                        guard !isSyncing else { return }
-                        isSyncing = true
-                        NotificationCenter.default.post(name: .expiredManualSync, object: nil)
-                        Task {
-                            try? await Task.sleep(for: .seconds(2))
-                            isSyncing = false
-                        }
-                    } label: {
-                        settingsRow {
-                            macSettingsLabel("Sync Now", icon: isSyncing ? "arrow.triangle.2.circlepath" : "arrow.clockwise.icloud")
-                            Spacer()
-                            if isSyncing { ProgressView().controlSize(.small) }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!iCloudSyncEnabled || isSyncing)
-                }
-
-                // CLOUDKIT DEBUG
-                settingsSection(title: "CloudKit Debug", icon: "wave.3.right") {
-                    settingsRow {
-                        macSettingsLabel("Account", icon: "person.crop.circle")
-                        Spacer()
-                        Text(cloudKitDebug.accountStatusText)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    }
-
-                    FormDivider()
-
-                    settingsRow {
-                        macSettingsLabel("User Record", icon: "record.circle")
-                        Spacer()
-                        Text(cloudKitDebug.userRecordIDText)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-
-                    FormDivider()
-
-                    settingsRow {
-                        macSettingsLabel("Latest", icon: "chart.line.uptrend.xyaxis")
-                        Spacer()
-                        Text(cloudKitDebug.storeSummaryText)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    }
-
-                    FormDivider()
-
-                    HStack(spacing: 10) {
-                        Button {
-                            refreshCloudKitDiagnostics()
-                        } label: {
-                            Label("Refresh", systemImage: "arrow.clockwise")
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                        Button {
-                            copyCloudKitDiagnostics()
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        .buttonStyle(.bordered)
-                        .help("Copy CloudKit debug log")
-
-                        Button(role: .destructive) {
-                            cloudKitDebug.clear()
-                        } label: {
-                            Label("Clear", systemImage: "trash")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    if !cloudKitDebug.entries.isEmpty {
-                        FormDivider()
-
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(cloudKitDebug.entries.prefix(8)) { entry in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack {
-                                        Text(entry.category)
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                        Text(entry.date.formatted(date: .omitted, time: .shortened))
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                    Text(entry.message)
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(.primary)
-                                        .textSelection(.enabled)
-                                }
-                                if entry.id != cloudKitDebug.entries.prefix(8).last?.id {
-                                    Divider().opacity(0.5)
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-
                 // DATA
                 settingsSection(title: "Data", icon: "folder") {
                     NavigationLink { ArchiveView() } label: {
@@ -2896,20 +2777,60 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(isRefreshingFavicons)
+                }
+
+                // BACKUP & SYNC
+                settingsSection(title: "Backup & Sync", icon: "icloud") {
+                    settingsRow {
+                        macSettingsLabel("iCloud Sync", icon: "icloud")
+                        Spacer()
+                        Toggle("", isOn: $iCloudSyncEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .tint(.green)
+                            .onChange(of: iCloudSyncEnabled) { _, _ in showRestartAlert = true }
+                    }
+
+                    FormDivider()
+
+                    Button {
+                        guard !isSyncing else { return }
+                        isSyncing = true
+                        NotificationCenter.default.post(name: .expiredManualSync, object: nil)
+                        Task {
+                            try? await Task.sleep(for: .seconds(2))
+                            isSyncing = false
+                        }
+                    } label: {
+                        settingsRow {
+                            macSettingsLabel("Sync Now", icon: isSyncing ? "arrow.triangle.2.circlepath" : "arrow.clockwise.icloud")
+                            Spacer()
+                            if isSyncing { ProgressView().controlSize(.small) }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!iCloudSyncEnabled || isSyncing)
 
                     FormDivider()
 
                     settingsRow {
-                        Toggle(isOn: $autoBackupEnabled) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                macSettingsLabel("iCloud Backup", icon: "icloud.and.arrow.up")
-                                Text(lastAutoBackupText)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.secondary)
-                            }
+                        Image(systemName: "icloud.and.arrow.up")
+                            .font(.system(size: 15))
+                            .frame(width: 20, alignment: .center)
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("iCloud Backup")
+                                .font(.system(size: 15))
+                                .foregroundStyle(.primary)
+                            Text(lastAutoBackupText)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
                         }
-                        .toggleStyle(.switch)
-                        .tint(.green)
+                        Spacer()
+                        Toggle("", isOn: $autoBackupEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .tint(.green)
                     }
 
                     FormDivider()
@@ -2931,6 +2852,86 @@ struct SettingsView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                }
+
+                // CLOUDKIT DEBUG
+                settingsSection(title: "CloudKit Debug", icon: "wave.3.right") {
+                    settingsRow {
+                        macSettingsLabel("Account", icon: "person.crop.circle")
+                        Spacer()
+                        Text(cloudKitDebug.accountStatusText)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+
+                    FormDivider()
+
+                    settingsRow {
+                        macSettingsLabel("User Record", icon: "record.circle")
+                        Spacer()
+                        Text(cloudKitDebug.userRecordIDText)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
+                    FormDivider()
+
+                    settingsRow {
+                        macSettingsLabel("Latest", icon: "chart.line.uptrend.xyaxis")
+                        Spacer()
+                        Text(cloudKitDebug.storeSummaryText)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+
+                    FormDivider()
+
+                    HStack(spacing: 10) {
+                        Button { refreshCloudKitDiagnostics() } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button { copyCloudKitDiagnostics() } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Copy CloudKit debug log")
+
+                        Button(role: .destructive) { cloudKitDebug.clear() } label: {
+                            Label("Clear", systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if !cloudKitDebug.entries.isEmpty {
+                        FormDivider()
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(cloudKitDebug.entries.prefix(8)) { entry in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack {
+                                        Text(entry.category)
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Text(entry.date.formatted(date: .omitted, time: .shortened))
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    Text(entry.message)
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.primary)
+                                        .textSelection(.enabled)
+                                }
+                                if entry.id != cloudKitDebug.entries.prefix(8).last?.id {
+                                    Divider().opacity(0.5)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
 
                 Spacer(minLength: 40)
@@ -3119,11 +3120,11 @@ struct SettingsView: View {
                     Menu {
                         ForEach(ScreenshotAIProvider.allCases) { provider in
                             Button { screenshotAIProviderRaw = provider.rawValue } label: {
-                                macMenuOptionTitle(provider.rawValue, isSelected: screenshotAIProvider == provider)
+                                macMenuOptionTitle(provider.displayName, isSelected: screenshotAIProvider == provider)
                             }
                         }
                     } label: {
-                        macMenuValueLabel(screenshotAIProvider.rawValue)
+                        macMenuValueLabel(screenshotAIProvider.displayName)
                     }
                     .buttonStyle(.plain)
                 }
@@ -3196,6 +3197,46 @@ struct SettingsView: View {
                 Text("Reminders will be delivered at this time on the scheduled day.")
             }
 
+            // MARK: Data
+            Section {
+                NavigationLink { ArchiveView() } label: {
+                    HStack {
+                        rowIcon("archivebox")
+                        Text("Archive").foregroundStyle(.primary)
+                        Spacer()
+                        if !archivedItems.isEmpty {
+                            Text("\(archivedItems.count)").foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                NavigationLink { CategoriesView() } label: {
+                    HStack {
+                        rowIcon("square.grid.2x2")
+                        Text("Categories").foregroundStyle(.primary)
+                    }
+                }
+                Button { refreshAllFavicons() } label: {
+                    HStack {
+                        rowIcon("arrow.clockwise.circle", color: isRefreshingFavicons ? Color.secondary : Color.blue)
+                        Text("Refresh Icons")
+                            .foregroundStyle(isRefreshingFavicons ? Color.secondary : Color.blue)
+                        if isRefreshingFavicons {
+                            Spacer()
+                            if faviconRefreshProgress.total > 0 {
+                                Text("\(faviconRefreshProgress.done)/\(faviconRefreshProgress.total)")
+                                    .foregroundStyle(.secondary)
+                                    .font(.system(size: 13))
+                            }
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isRefreshingFavicons)
+            } header: {
+                sectionHeader("DATA")
+            }
+
             // MARK: Backup & Sync
             Section {
                 HStack {
@@ -3241,46 +3282,6 @@ struct SettingsView: View {
                 sectionHeader("BACKUP & SYNC")
             } footer: {
                 Text("iCloud Sync keeps data across all your devices — restart the app after changing. Daily snapshots save automatically to iCloud Drive (skipped if nothing changed). Export writes an unencrypted JSON file (icons excluded); import merges by item, never deleting. Keep the file private.")
-            }
-
-            // MARK: Data
-            Section {
-                NavigationLink { ArchiveView() } label: {
-                    HStack {
-                        rowIcon("archivebox")
-                        Text("Archive").foregroundStyle(.primary)
-                        Spacer()
-                        if !archivedItems.isEmpty {
-                            Text("\(archivedItems.count)").foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                NavigationLink { CategoriesView() } label: {
-                    HStack {
-                        rowIcon("square.grid.2x2")
-                        Text("Categories").foregroundStyle(.primary)
-                    }
-                }
-                Button { refreshAllFavicons() } label: {
-                    HStack {
-                        rowIcon("arrow.clockwise.circle", color: isRefreshingFavicons ? Color.secondary : Color.blue)
-                        Text("Refresh Icons")
-                            .foregroundStyle(isRefreshingFavicons ? Color.secondary : Color.blue)
-                        if isRefreshingFavicons {
-                            Spacer()
-                            if faviconRefreshProgress.total > 0 {
-                                Text("\(faviconRefreshProgress.done)/\(faviconRefreshProgress.total)")
-                                    .foregroundStyle(.secondary)
-                                    .font(.system(size: 13))
-                            }
-                            ProgressView().controlSize(.small)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(isRefreshingFavicons)
-            } header: {
-                sectionHeader("DATA")
             }
 
             // MARK: CloudKit Debug (development panel — kept at bottom)

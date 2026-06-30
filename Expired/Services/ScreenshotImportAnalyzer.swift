@@ -20,6 +20,11 @@ enum ScreenshotAIProvider: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// UI label — avoids using Apple's trademark "Apple Intelligence" in the picker.
+    var displayName: String {
+        self == .appleIntelligence ? "On-Device" : rawValue
+    }
+
     /// Legacy UserDefaults key — retained only for the one-time Keychain migration.
     var apiKeyDefaultsKey: String {
         "screenshotAI.apiKey.\(rawValue)"
