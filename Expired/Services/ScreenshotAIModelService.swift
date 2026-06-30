@@ -18,31 +18,27 @@ enum ScreenshotAIModelService {
         }
     }
 
-    static func listModels(provider: ScreenshotAIProvider, apiKey: String) async throws -> [String] {
-        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return [] }
+    /// Fetches the provider's available models via the Supabase `models` function (the
+    /// server holds the key). `apiKey` is accepted for call-site compatibility but no
+    /// longer used — the on-device key path is gone.
+    static func listModels(provider: ScreenshotAIProvider, apiKey: String = "") async throws -> [String] {
+        guard let proxyID = provider.proxyID else { throw ModelServiceError.unsupported }
+
+        var request = try await SupabaseService.shared.authorizedFunctionRequest(BackendConfig.Function.models)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["provider": proxyID])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw ModelServiceError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
 
         switch provider {
-        case .appleIntelligence:
-            throw ModelServiceError.unsupported
         case .openAI:
-            let data = try await httpGET("https://api.openai.com/v1/models", headers: ["Authorization": "Bearer \(key)"])
             return dataArrayIDs(data).filter { $0.hasPrefix("gpt") || $0.hasPrefix("o") }
-        case .deepSeek:
-            let data = try await httpGET("https://api.deepseek.com/models", headers: ["Authorization": "Bearer \(key)"])
-            return dataArrayIDs(data)
-        case .claude:
-            let data = try await httpGET(
-                "https://api.anthropic.com/v1/models?limit=100",
-                headers: ["x-api-key": key, "anthropic-version": "2023-06-01"]
-            )
-            return dataArrayIDs(data)
         case .gemini:
-            let data = try await httpGET(
-                "https://generativelanguage.googleapis.com/v1beta/models?key=\(key)&pageSize=200",
-                headers: [:]
-            )
             return geminiGenerateContentModels(data)
+        default:
+            return dataArrayIDs(data)
         }
     }
 
@@ -66,20 +62,5 @@ enum ScreenshotAIModelService {
             return name.hasPrefix("models/") ? String(name.dropFirst("models/".count)) : name
         }
         return ids.sorted()
-    }
-
-    // MARK: - Shared GET
-
-    private static func httpGET(_ urlString: String, headers: [String: String]) async throws -> Data {
-        guard let url = URL(string: urlString) else { throw ModelServiceError.http(-1, "bad URL") }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        for (field, value) in headers { request.setValue(value, forHTTPHeaderField: field) }
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw ModelServiceError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
-        }
-        return data
     }
 }

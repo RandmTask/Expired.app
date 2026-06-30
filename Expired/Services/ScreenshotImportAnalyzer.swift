@@ -39,6 +39,19 @@ enum ScreenshotAIProvider: String, CaseIterable, Identifiable {
         self != .appleIntelligence
     }
 
+    /// Stable identifier the Supabase `ai-proxy` / `models` functions use to pick the
+    /// provider endpoint and inject the server-held key. nil for the on-device path,
+    /// which is never proxied (and stays free).
+    var proxyID: String? {
+        switch self {
+        case .openAI: return "openai"
+        case .claude: return "claude"
+        case .gemini: return "gemini"
+        case .deepSeek: return "deepseek"
+        case .appleIntelligence: return nil
+        }
+    }
+
     /// Last-resort offline fallback model per provider. NOT the only source of
     /// truth — `selectedModelID` prefers the user's live-picked override (see the
     /// model picker in Settings). End state per `_shared/ai-providers.md`: a
@@ -207,6 +220,26 @@ enum ScreenshotImportAnalyzer {
         return data
     }
 
+    /// Sends a provider request `body` through the Supabase `ai-proxy` (server holds the
+    /// key, gates Premium, rate-limits, kill-switch). The proxy passes the provider's
+    /// response straight through, so the existing per-provider parsers work unchanged.
+    private static func proxyForData(
+        provider: ScreenshotAIProvider,
+        model: String,
+        body: [String: Any]
+    ) async throws -> Data {
+        guard let proxyID = provider.proxyID else {
+            throw AnalyzerError.appleIntelligenceUnavailable
+        }
+        var request = try await SupabaseService.shared.authorizedFunctionRequest(BackendConfig.Function.aiProxy)
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "provider": proxyID,
+            "model": model,
+            "body": body
+        ])
+        return try await sendForData(request)
+    }
+
     /// Extracts a human error message from a provider error payload.
     /// OpenAI / DeepSeek / Anthropic / Gemini all nest it under `error.message`.
     private static func providerErrorMessage(from data: Data) -> String? {
@@ -258,11 +291,8 @@ enum ScreenshotImportAnalyzer {
             return try await parseWithAppleIntelligence(lines: lines, referenceDate: referenceDate)
 
         default:
-            let key = settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.isEmpty else {
-                // No key configured — heuristic by design, not a failure.
-                return parse(lines: try await ocrLines(from: imageData), referenceDate: referenceDate)
-            }
+            // The provider key now lives server-side: every remote call goes through the
+            // Supabase proxy (Premium-gated, rate-limited). No on-device key to check.
             if settings.provider.supportsVision {
                 // Vision models see the screenshot directly — visual grouping is
                 // what disambiguates a plan ("Student") from its service.
@@ -408,52 +438,21 @@ enum ScreenshotImportAnalyzer {
     }
 
     private static func remoteTextResponse(prompt: String, settings: ScreenshotAISettings) async throws -> String {
-        switch settings.provider {
-        case .deepSeek:
-            return try await chatCompletionsTextResponse(
-                url: URL(string: "https://api.deepseek.com/chat/completions")!,
-                settings: settings,
-                prompt: prompt
-            )
-        case .openAI:
-            return try await chatCompletionsTextResponse(
-                url: URL(string: "https://api.openai.com/v1/chat/completions")!,
-                settings: settings,
-                prompt: prompt
-            )
-        default:
-            return "[]"
-        }
-    }
-
-    private static func chatCompletionsTextResponse(
-        url: URL,
-        settings: ScreenshotAISettings,
-        prompt: String
-    ) async throws -> String {
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(settings.apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        // OpenAI + DeepSeek share the chat-completions body shape; the proxy routes by provider.
+        let body: [String: Any] = [
             "model": settings.modelID,
             "temperature": 0,
             "messages": [
                 ["role": "system", "content": "You extract subscription data and return JSON only."],
                 ["role": "user", "content": prompt]
             ]
-        ])
-
-        let data = try await sendForData(request)
+        ]
+        let data = try await proxyForData(provider: settings.provider, model: settings.modelID, body: body)
         return openAIContent(from: data)
     }
 
     private static func openAIVisionResponse(prompt: String, base64: String, mime: String, settings: ScreenshotAISettings) async throws -> String {
-        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(settings.apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        let body: [String: Any] = [
             "model": settings.modelID,
             "temperature": 0,
             "messages": [
@@ -463,18 +462,13 @@ enum ScreenshotImportAnalyzer {
                     ["type": "image_url", "image_url": ["url": "data:\(mime);base64,\(base64)"]]
                 ]]
             ]
-        ])
-        let data = try await sendForData(request)
+        ]
+        let data = try await proxyForData(provider: .openAI, model: settings.modelID, body: body)
         return openAIContent(from: data)
     }
 
     private static func claudeVisionResponse(prompt: String, base64: String, mime: String, settings: ScreenshotAISettings) async throws -> String {
-        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
-        request.httpMethod = "POST"
-        request.setValue(settings.apiKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        let body: [String: Any] = [
             "model": settings.modelID,
             "max_tokens": 1200,
             "temperature": 0,
@@ -482,26 +476,24 @@ enum ScreenshotImportAnalyzer {
                 ["type": "text", "text": prompt],
                 ["type": "image", "source": ["type": "base64", "media_type": mime, "data": base64]]
             ]]]
-        ])
-        let data = try await sendForData(request)
+        ]
+        let data = try await proxyForData(provider: .claude, model: settings.modelID, body: body)
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let content = object?["content"] as? [[String: Any]]
         return content?.compactMap { $0["text"] as? String }.joined(separator: "\n") ?? "[]"
     }
 
     private static func geminiVisionResponse(prompt: String, base64: String, mime: String, settings: ScreenshotAISettings) async throws -> String {
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(settings.modelID):generateContent?key=\(settings.apiKey)")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        // Gemini puts the model in the URL — the proxy builds that from the envelope's
+        // `model`, so the body carries only contents + generationConfig.
+        let body: [String: Any] = [
             "contents": [["parts": [
                 ["text": prompt],
                 ["inline_data": ["mime_type": mime, "data": base64]]
             ]]],
             "generationConfig": ["temperature": 0]
-        ])
-        let data = try await sendForData(request)
+        ]
+        let data = try await proxyForData(provider: .gemini, model: settings.modelID, body: body)
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let candidates = object?["candidates"] as? [[String: Any]]
         let content = candidates?.first?["content"] as? [String: Any]

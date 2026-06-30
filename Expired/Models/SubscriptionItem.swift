@@ -387,6 +387,39 @@ final class SubscriptionItem {
         return trial > Date() && !isCancelled
     }
 
+    var isExpired: Bool {
+        if case .expired = status { return true }
+        return false
+    }
+
+    var isActiveSubscription: Bool {
+        itemType == .subscription && !isExpired
+    }
+
+    /// Items that should contribute to current monthly/yearly recurring totals.
+    /// Cancelled-but-active subscriptions still have access, but they should not
+    /// be counted as ongoing spend because they will not renew.
+    var contributesToCurrentRecurringSpend: Bool {
+        itemType == .subscription &&
+        !isExpired &&
+        !isCancelled &&
+        billingCycle != .oneOff
+    }
+
+    var isAutoRenewingActiveSubscription: Bool {
+        isActiveSubscription && isAutoRenew && !isTrial && !isCancelled
+    }
+
+    var isManualActiveSubscription: Bool {
+        isActiveSubscription && !isAutoRenew && !isTrial && !isCancelled
+    }
+
+    var isCancelledButActiveSubscription: Bool {
+        guard isActiveSubscription else { return false }
+        if case .cancelledButActive = status { return true }
+        return false
+    }
+
     var nextRelevantDate: Date {
         if itemType == .document {
             return expiryDate ?? nextRenewalDate

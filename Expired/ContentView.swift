@@ -74,10 +74,27 @@ struct TimelineView: View {
             case .strip:      return "rectangle.split.2x1"
             }
         }
+
+        /// Timeline + Calendar are free; the richer visualisations are Pro.
+        var isPro: Bool {
+            switch self {
+            case .timeline, .calendar: return false
+            default: return true
+            }
+        }
     }
+
+    @Environment(PurchaseManager.self) private var purchaseManager
+    @State private var showPaywall = false
 
     @AppStorage("timelineViewMode") private var viewModeRaw: String = ViewMode.timeline.rawValue
     private var viewMode: ViewMode { ViewMode(rawValue: viewModeRaw) ?? .timeline }
+
+    /// Falls back to the free Timeline when a Pro mode is selected but the user isn't
+    /// premium (e.g. after a lapse) — without discarding their saved preference.
+    private var effectiveViewMode: ViewMode {
+        (viewMode.isPro && !purchaseManager.isPremium) ? .timeline : viewMode
+    }
 
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
 
@@ -96,7 +113,7 @@ struct TimelineView: View {
                         description: Text("Add subscriptions to see your timeline.")
                     )
                 } else {
-                    switch viewMode {
+                    switch effectiveViewMode {
                     case .timeline:   classicTimelineView
                     case .calendar:   CalendarGridView(items: allItems, currency: preferredCurrency)
                     case .heatmap:    HeatmapView(items: allItems, currency: preferredCurrency)
@@ -113,18 +130,25 @@ struct TimelineView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         ForEach(ViewMode.allCases, id: \.self) { mode in
+                            let locked = mode.isPro && !purchaseManager.isPremium
                             Button {
-                                withAnimation(.spring(duration: 0.3)) { viewModeRaw = mode.rawValue }
+                                if locked {
+                                    showPaywall = true
+                                } else {
+                                    withAnimation(.spring(duration: 0.3)) { viewModeRaw = mode.rawValue }
+                                }
                             } label: {
                                 if viewMode == mode {
                                     Label(mode.rawValue, systemImage: "checkmark")
+                                } else if locked {
+                                    Label(mode.rawValue, systemImage: "lock.fill")
                                 } else {
                                     Label(mode.rawValue, systemImage: mode.icon)
                                 }
                             }
                         }
                     } label: {
-                        Image(systemName: viewMode.icon)
+                        Image(systemName: effectiveViewMode.icon)
                             .font(.system(size: 16, weight: .semibold))
                     }
 #if os(macOS)
@@ -132,6 +156,7 @@ struct TimelineView: View {
 #endif
                 }
             }
+            .expiredPaywallSheet(isPresented: $showPaywall)
         }
     }
 
@@ -1182,16 +1207,24 @@ struct InsightsView: View {
         case annual   = "Annual"
         case ytd      = "YTD"
         case lifetime = "Lifetime"
+
+        /// Monthly total is free; longer-horizon analysis is Pro.
+        var isPro: Bool { self != .monthly }
     }
     @State private var costPeriod: CostPeriod = .monthly
+    @Environment(PurchaseManager.self) private var purchaseManager
+    @State private var showPaywall = false
 
     private var activeItems: [SubscriptionItem] {
-        allItems.filter { if case .expired = $0.status { return false }; return true }
+        allItems.filter(\.isActiveSubscription)
     }
     private var displayCurrency: String { preferredCurrency }
 
     private var monthlyTotal: Double {
-        activeItems.compactMap { $0.monthlyCostConverted(to: preferredCurrency) }.reduce(0, +)
+        activeItems
+            .filter(\.contributesToCurrentRecurringSpend)
+            .compactMap { $0.monthlyCostConverted(to: preferredCurrency) }
+            .reduce(0, +)
     }
     private var yearlyTotal: Double { monthlyTotal * 12 }
 
@@ -1261,10 +1294,12 @@ struct InsightsView: View {
         }
     }
 
-    private var autoRenewCount: Int { activeItems.filter(\.isAutoRenew).count }
+    private var activeCount: Int { activeItems.count }
+    private var autoRenewCount: Int { activeItems.filter(\.isAutoRenewingActiveSubscription).count }
     private var trialCount: Int { activeItems.filter(\.isTrial).count }
+    private var manualCount: Int { activeItems.filter(\.isManualActiveSubscription).count }
     private var cancelledCount: Int {
-        allItems.filter { if case .cancelledButActive = $0.status { return true }; return false }.count
+        activeItems.filter(\.isCancelledButActiveSubscription).count
     }
 
     var body: some View {
@@ -1273,14 +1308,28 @@ struct InsightsView: View {
                 VStack(spacing: 16) {
                     // Period picker
                     Picker("", selection: $costPeriod) {
-                        ForEach(CostPeriod.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        ForEach(CostPeriod.allCases, id: \.self) { period in
+                            if period.isPro && !purchaseManager.isPremium {
+                                Text("\(Image(systemName: "lock.fill")) \(period.rawValue)").tag(period)
+                            } else {
+                                Text(period.rawValue).tag(period)
+                            }
+                        }
                     }
                     .pickerStyle(.segmented)
                     .padding(.horizontal)
+                    .onChange(of: costPeriod) { _, newValue in
+                        // Pro periods are selectable in the segmented control but revert
+                        // immediately and surface the paywall for a free user.
+                        if newValue.isPro && !purchaseManager.isPremium {
+                            costPeriod = .monthly
+                            showPaywall = true
+                        }
+                    }
 
                     costCard
                     countsRow
-                    if !activeItems.isEmpty { costBreakdown }
+                    if !costBreakdownItems.isEmpty { costBreakdown }
                     Spacer(minLength: 40)
                 }
                 .padding(.top, 12)
@@ -1290,6 +1339,7 @@ struct InsightsView: View {
             .background(groupedBackground.ignoresSafeArea())
             .navigationTitle("Insights")
             .largeNavigationTitle()
+            .expiredPaywallSheet(isPresented: $showPaywall)
         }
     }
 
@@ -1304,9 +1354,11 @@ struct InsightsView: View {
     }
 
     private var countsRow: some View {
-        HStack(spacing: 12) {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+            GlassInsightCard(title: "Active", value: "\(activeCount)", icon: "checkmark.seal.fill", color: .blue)
             GlassInsightCard(title: "Auto-Renewing", value: "\(autoRenewCount)", icon: "arrow.clockwise", color: .green)
             GlassInsightCard(title: "Free Trials", value: "\(trialCount)", icon: "gift.fill", color: .purple)
+            GlassInsightCard(title: "Manual", value: "\(manualCount)", icon: "hand.tap.fill", color: .indigo)
             GlassInsightCard(title: "Cancelled", value: "\(cancelledCount)", icon: "xmark.circle", color: .red)
         }
         .padding(.horizontal)
@@ -1347,14 +1399,23 @@ struct InsightsView: View {
         case .lifetime:
             let billingFrom = item.effectiveStartDate
             let billingTo = billingEndDate(for: item, cap: now)
-            guard billingFrom < billingTo else { return monthly }
+            guard billingFrom < billingTo else { return 0 }
             let days = cal.dateComponents([.day], from: billingFrom, to: billingTo).day ?? 0
-            return monthly * max(1, Double(days) / 30.4375)
+            return monthly * (Double(days) / 30.4375)
+        }
+    }
+
+    private var costBreakdownItems: [SubscriptionItem] {
+        switch costPeriod {
+        case .monthly, .annual:
+            return activeItems.filter(\.contributesToCurrentRecurringSpend)
+        case .ytd, .lifetime:
+            return allItems.filter { $0.itemType == .subscription }
         }
     }
 
     private var costBreakdown: some View {
-        let itemsWithCost = activeItems
+        let itemsWithCost = costBreakdownItems
             .filter { $0.monthlyCostConverted(to: preferredCurrency) != nil }
             .sorted { periodCost(for: $0) > periodCost(for: $1) }
         let maxCost = itemsWithCost.map { periodCost(for: $0) }.first ?? 1
@@ -1557,6 +1618,8 @@ private enum CategoryListItem: Identifiable {
 
 struct CategoriesView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(PurchaseManager.self) private var purchaseManager
+    @State private var showPaywall = false
     @Query(filter: #Predicate<SubscriptionItem> { !$0.isArchived && $0.itemTypeRaw == "subscription" })
     private var allSubscriptions: [SubscriptionItem]
 
@@ -1655,11 +1718,30 @@ struct CategoriesView: View {
     }
 
     var body: some View {
+        platformBody
+            .expiredPaywallSheet(isPresented: $showPaywall)
+    }
+
+    @ViewBuilder
+    private var platformBody: some View {
 #if os(iOS)
         iOSBody
 #else
         macOSBody
 #endif
+    }
+
+    /// Custom categories are a Pro feature; a free user gets the paywall instead of the editor.
+    private func beginAddCategory() {
+        guard purchaseManager.isPremium else {
+            showPaywall = true
+            return
+        }
+        newCategoryName = ""
+        newCategoryIcon = UserCategory.defaultIcon
+        newCategoryDescription = ""
+        editingCategory = nil
+        showingAdd = true
     }
 
 #if os(iOS)
@@ -1703,13 +1785,9 @@ struct CategoriesView: View {
 
             Section {
                 Button {
-                    newCategoryName = ""
-                    newCategoryIcon = UserCategory.defaultIcon
-                    newCategoryDescription = ""
-                    editingCategory = nil
-                    showingAdd = true
+                    beginAddCategory()
                 } label: {
-                    Label("Add Category", systemImage: "plus.circle.fill")
+                    Label("Add Category", systemImage: purchaseManager.isPremium ? "plus.circle.fill" : "lock.fill")
                         .foregroundStyle(.blue)
                 }
             }
@@ -2000,14 +2078,10 @@ struct CategoriesView: View {
             }
             FormDivider()
             Button {
-                newCategoryName = ""
-                newCategoryIcon = UserCategory.defaultIcon
-                newCategoryDescription = ""
-                editingCategory = nil
-                showingAdd = true
+                beginAddCategory()
             } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: "plus.circle.fill")
+                    Image(systemName: purchaseManager.isPremium ? "plus.circle.fill" : "lock.fill")
                         .font(.system(size: 16))
                         .frame(width: 22, alignment: .center)
                     Text("Add Category")
@@ -2232,14 +2306,12 @@ extension View {
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(PurchaseManager.self) private var purchaseManager
     @EnvironmentObject private var cloudKitDebug: CloudKitDebugStore
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
     @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
     @AppStorage(ScreenshotAISettings.providerKey) private var screenshotAIProviderRaw = ScreenshotAIProvider.appleIntelligence.rawValue
-    /// API keys live in the Keychain (per-device, never synced). This mirror exists
-    /// only to drive the UI; the source of truth is `KeychainStore`.
-    @State private var screenshotAIKeys: [String: String] = [:]
     /// Live model picker state. `selectedModels` mirrors the chosen model per
     /// provider; `availableModels` is the last fetched list for the current provider.
     @State private var selectedModels: [String: String] = [:]
@@ -2255,6 +2327,8 @@ struct SettingsView: View {
     @State private var isRefreshingFavicons = false
     @State private var faviconRefreshProgress: (done: Int, total: Int) = (0, 0)
     @State private var showExportWarning = false
+    @State private var showPaywall = false
+    @State private var showCustomerCenter = false
     @State private var showingExporter = false
     @State private var exportDocument: BackupDocument?
     @State private var showingImporter = false
@@ -2345,26 +2419,6 @@ struct SettingsView: View {
         nonmutating set { screenshotAIProviderRaw = newValue.rawValue }
     }
 
-    private var currentScreenshotAIKey: String {
-        screenshotAIKeys[screenshotAIProvider.rawValue] ?? ""
-    }
-
-    /// Writes a key to the Keychain and updates the UI mirror.
-    private func setScreenshotAIKey(_ value: String) {
-        guard screenshotAIProvider.requiresAPIKey else { return }
-        KeychainStore.set(value, for: screenshotAIProvider.keychainAccount)
-        screenshotAIKeys[screenshotAIProvider.rawValue] = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// Loads stored keys from the Keychain into the UI mirror.
-    private func loadScreenshotAIKeys() {
-        var keys: [String: String] = [:]
-        for provider in ScreenshotAIProvider.allCases where provider.requiresAPIKey {
-            keys[provider.rawValue] = KeychainStore.get(provider.keychainAccount)
-        }
-        screenshotAIKeys = keys
-    }
-
     // MARK: - Live model picker
 
     private var currentSelectedModel: String {
@@ -2397,19 +2451,18 @@ struct SettingsView: View {
         selectedModels = dict
     }
 
-    /// Fetches the live model list for the current provider's key. Guards against
-    /// a stale response landing after the user has switched provider.
+    /// Fetches the live model list for the current provider via the Supabase `models`
+    /// function (server holds the key). Guards against a stale response landing after
+    /// the user has switched provider.
     private func loadModels() {
         availableModels = []
         modelLoadError = nil
         let provider = screenshotAIProvider
         guard provider.requiresAPIKey else { return }
-        let key = currentScreenshotAIKey
-        guard !key.isEmpty else { return }
         isLoadingModels = true
         Task {
             do {
-                let models = try await ScreenshotAIModelService.listModels(provider: provider, apiKey: key)
+                let models = try await ScreenshotAIModelService.listModels(provider: provider)
                 await MainActor.run {
                     guard screenshotAIProvider == provider else { return }
                     availableModels = models
@@ -2435,33 +2488,9 @@ struct SettingsView: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Models load live from your key. Server-side model selection is planned — this picker is a stopgap.")
+            Text("Models load live from the server. A server-side default is planned — this picker is a stopgap.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var screenshotAIKeyPreview: String {
-        maskedAPIKey(currentScreenshotAIKey)
-    }
-
-    private func maskedAPIKey(_ key: String) -> String {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "No key saved" }
-        return String(trimmed.prefix(min(5, trimmed.count))) + String(repeating: "•", count: max(trimmed.count - 5, 0))
-    }
-
-    /// Visible pre-release warning shown wherever a raw API key can be entered.
-    /// Stays until AI calls are routed through a backend proxy (see CLAUDE.md).
-    private var apiKeySecurityWarning: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.red)
-            Text("Stored only on this device. Before any TestFlight or App Store release, route AI requests through a backend proxy that holds the key server-side with per-user rate limits and a monthly spend cap. A key shipped on-device can be extracted and abused — at your expense.")
-                .font(.system(size: 12))
-                .foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -2477,7 +2506,6 @@ struct SettingsView: View {
         .onAppear {
             NSUbiquitousKeyValueStore.default.synchronize()
             pullNotificationTimeFromKVStore()
-            loadScreenshotAIKeys()
             loadSelectedModels()
             loadModels()
         }
@@ -2525,6 +2553,17 @@ struct SettingsView: View {
         } message: {
             Text(backupErrorMessage ?? "")
         }
+        .expiredPaywallSheet(isPresented: $showPaywall)
+        .expiredCustomerCenterSheet(isPresented: $showCustomerCenter)
+    }
+
+    /// Pro export is gated: a free user gets the paywall instead of the export warning.
+    private func beginExport() {
+        guard purchaseManager.isPremium else {
+            showPaywall = true
+            return
+        }
+        showExportWarning = true
     }
 
     // MARK: - Backup (export / import)
@@ -2629,6 +2668,47 @@ struct SettingsView: View {
                     }
                 }
 
+                // EXPIRED PRO
+                settingsSection(title: "Expired Pro", icon: "crown") {
+                    if purchaseManager.isPremium {
+                        settingsRow {
+                            macSettingsLabel("Subscription", icon: "crown.fill")
+                            Spacer()
+                            Text("Active").foregroundStyle(.green)
+                        }
+                        FormDivider()
+                        Button { showCustomerCenter = true } label: {
+                            settingsRow {
+                                macSettingsLabel("Manage Subscription", icon: "person.crop.circle")
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Button { showPaywall = true } label: {
+                            settingsRow {
+                                macSettingsLabel("Upgrade to Pro", icon: "crown.fill")
+                                    .foregroundStyle(.blue)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        FormDivider()
+                        Button { showCustomerCenter = true } label: {
+                            settingsRow {
+                                macSettingsLabel("Restore Purchases", icon: "arrow.clockwise")
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
                 // SCREENSHOT IMPORT
                 settingsSection(title: "Screenshot Import", icon: "doc.viewfinder") {
                     settingsRow {
@@ -2649,27 +2729,6 @@ struct SettingsView: View {
                     }
 
                     if screenshotAIProvider.requiresAPIKey {
-                        FormDivider()
-
-                        settingsRow {
-                            macSettingsLabel("API Key", icon: "key")
-                            Spacer()
-                            Text(screenshotAIKeyPreview)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .textSelection(.enabled)
-                            Button {
-                                pasteScreenshotAIKey()
-                            } label: {
-                                Image(systemName: "doc.on.clipboard")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(.blue)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Paste API key")
-                        }
-
                         FormDivider()
 
                         settingsRow {
@@ -2703,12 +2762,6 @@ struct SettingsView: View {
 
                         settingsRow {
                             modelPickerNote
-                        }
-
-                        FormDivider()
-
-                        settingsRow {
-                            apiKeySecurityWarning
                         }
                     }
                 }
@@ -2835,9 +2888,9 @@ struct SettingsView: View {
 
                     FormDivider()
 
-                    Button { showExportWarning = true } label: {
+                    Button { beginExport() } label: {
                         settingsRow {
-                            macSettingsLabel("Export Backup", icon: "square.and.arrow.up")
+                            macSettingsLabel("Export Backup", icon: purchaseManager.isPremium ? "square.and.arrow.up" : "lock.fill")
                                 .foregroundStyle(.blue)
                         }
                     }
@@ -3111,6 +3164,50 @@ struct SettingsView: View {
                 Text("All subscription costs are converted to this currency when calculating totals. Exchange rates are approximate and updated periodically.")
             }
 
+            // MARK: Expired Pro
+            Section {
+                if purchaseManager.isPremium {
+                    HStack {
+                        rowIcon("crown.fill", color: .green)
+                        Text("Expired Pro").foregroundStyle(.primary)
+                        Spacer()
+                        Text("Active").foregroundStyle(.green)
+                    }
+                    Button { showCustomerCenter = true } label: {
+                        HStack {
+                            rowIcon("person.crop.circle")
+                            Text("Manage Subscription").foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button { showPaywall = true } label: {
+                        HStack {
+                            rowIcon("crown.fill", color: .blue)
+                            Text("Upgrade to Pro").foregroundStyle(.blue)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    Button { showCustomerCenter = true } label: {
+                        HStack {
+                            rowIcon("arrow.clockwise", color: .blue)
+                            Text("Restore Purchases").foregroundStyle(.blue)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            } header: {
+                sectionHeader("EXPIRED PRO")
+            }
+
             // MARK: Screenshot Import
             Section {
                 HStack {
@@ -3130,21 +3227,6 @@ struct SettingsView: View {
                 }
 
                 if screenshotAIProvider.requiresAPIKey {
-                    HStack {
-                        rowIcon("key")
-                        Text("API Key").foregroundStyle(.primary)
-                        Spacer()
-                        Text(screenshotAIKeyPreview)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Button { pasteScreenshotAIKey() } label: {
-                            Image(systemName: "doc.on.clipboard")
-                                .font(.system(size: 16, weight: .semibold))
-                        }
-                        .buttonStyle(.plain)
-                    }
-
                     HStack {
                         rowIcon("cpu")
                         Text("Model").foregroundStyle(.primary)
@@ -3167,12 +3249,11 @@ struct SettingsView: View {
                     }
 
                     modelPickerNote
-                    apiKeySecurityWarning
                 }
             } header: {
                 sectionHeader("SCREENSHOT IMPORT")
             } footer: {
-                Text("Apple Intelligence keeps analysis on device. API providers send the screenshot to the provider using your saved key.")
+                Text("Apple Intelligence keeps analysis on device. Other providers send the screenshot through Expired's secure proxy — no key needed on your device.")
             }
 
             // MARK: Notifications
@@ -3263,9 +3344,9 @@ struct SettingsView: View {
                         .tint(.green)
                 }
 
-                Button { showExportWarning = true } label: {
+                Button { beginExport() } label: {
                     HStack {
-                        rowIcon("square.and.arrow.up", color: .blue)
+                        rowIcon(purchaseManager.isPremium ? "square.and.arrow.up" : "lock.fill", color: .blue)
                         Text("Export Backup").foregroundStyle(.blue)
                     }
                 }
@@ -3416,21 +3497,6 @@ struct SettingsView: View {
 #endif
     }
 
-    private func pasteScreenshotAIKey() {
-#if os(iOS)
-        let pasted = UIPasteboard.general.string
-#elseif os(macOS)
-        let pasted = NSPasteboard.general.string(forType: .string)
-#else
-        let pasted: String? = nil
-#endif
-        guard let key = pasted?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !key.isEmpty,
-              screenshotAIProvider.requiresAPIKey
-        else { return }
-        setScreenshotAIKey(key)
-        loadModels()
-    }
 }
 
 // MARK: - Preview
@@ -3438,6 +3504,7 @@ struct SettingsView: View {
 #Preview {
     ContentView()
         .environmentObject(CloudKitDebugStore.shared)
+        .environment(PurchaseManager.shared)
         .modelContainer(PreviewData.container)
 }
 // MARK: - Platform-adaptive currency picker presentation

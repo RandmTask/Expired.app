@@ -11,7 +11,6 @@
 		7ED538012FF3A95E004321A5 /* ReceiptParser in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538002FF3A95E004321A5 /* ReceiptParser */; };
 		7ED538032FF3A95E004321A5 /* RevenueCat in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538022FF3A95E004321A5 /* RevenueCat */; };
 		7ED538052FF3A95E004321A5 /* RevenueCatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538042FF3A95E004321A5 /* RevenueCatUI */; };
-		7ED538072FF3A95E004321A5 /* RevenueCat_CustomEntitlementComputation in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538062FF3A95E004321A5 /* RevenueCat_CustomEntitlementComputation */; };
 		7ED5380A2FF3A9C9004321A5 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538092FF3A9C9004321A5 /* Supabase */; };
 		7EEA5B7F2F752B8800DF89FC /* CloudKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7EEA5B7E2F752B8800DF89FC /* CloudKit.framework */; };
 /* End PBXBuildFile section */
@@ -49,7 +48,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				7ED538052FF3A95E004321A5 /* RevenueCatUI in Frameworks */,
-				7ED538072FF3A95E004321A5 /* RevenueCat_CustomEntitlementComputation in Frameworks */,
 				7ED5380A2FF3A9C9004321A5 /* Supabase in Frameworks */,
 				7ED538012FF3A95E004321A5 /* ReceiptParser in Frameworks */,
 				7EEA5B7F2F752B8800DF89FC /* CloudKit.framework in Frameworks */,
@@ -125,7 +123,6 @@
 				7ED538002FF3A95E004321A5 /* ReceiptParser */,
 				7ED538022FF3A95E004321A5 /* RevenueCat */,
 				7ED538042FF3A95E004321A5 /* RevenueCatUI */,
-				7ED538062FF3A95E004321A5 /* RevenueCat_CustomEntitlementComputation */,
 				7ED538092FF3A9C9004321A5 /* Supabase */,
 			);
 			productName = Expired;
@@ -463,11 +460,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 7ED537FF2FF3A95E004321A5 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */;
 			productName = RevenueCatUI;
-		};
-		7ED538062FF3A95E004321A5 /* RevenueCat_CustomEntitlementComputation */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 7ED537FF2FF3A95E004321A5 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */;
-			productName = RevenueCat_CustomEntitlementComputation;
 		};
 		7ED538092FF3A9C9004321A5 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;

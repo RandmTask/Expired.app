@@ -232,3 +232,49 @@ Replaced the borrowed HomeHub-facing `AGENTS.md` with an Expired-specific compat
 
 Built the current Expired foundation around SwiftData + CloudKit, added persistent settings for currency, appearance, notification time, iCloud sync, and AI screenshot import provider selection, and exposed CloudKit debug information so sync behavior can be inspected without guessing.
 
+
+---
+
+## 2026-06-30 — Supabase + RevenueCat: build unblock + Tasks #5/#4/#6
+
+**Build unblockers (3 errors):**
+- **100 duplicate `RC*` symbols / linker failure.** Cause: the target linked
+  `RevenueCat_CustomEntitlementComputation` *in addition to* `RevenueCat` + `RevenueCatUI`.
+  That product is a standalone alternative build of RevenueCat carrying the same ObjC classes —
+  never combine them. Removed it from the pbxproj (build file, Frameworks phase, package product
+  dependency, XCSwiftPackageProductDependency). Decision: edit the pbxproj directly (4 discrete,
+  well-contained references) rather than the Xcode GUI, since it's deterministic and verifiable.
+- `BackupService.writeAutomaticBackup` chain called from `Task.detached` → marked the whole
+  off-main chain (`writeAutomaticBackup`/`backupsDirectory`/`pruneAutomaticBackups`/`modDate`)
+  `nonisolated` (touches only FileManager/UserDefaults). The *whole* chain must be marked, not
+  just the entry point.
+- `AddEditSubscriptionView` `.map(NotificationRuleDraft.init(rule:))` — a point-free reference to
+  a main-actor-isolated initializer can't satisfy `map`'s non-isolated function type. Replaced with
+  an explicit closure `{ NotificationRuleDraft(rule: $0) }`, which defers the call into the
+  main-actor context.
+
+**Task #5 — launch wiring.** `ExpiredApp` ContentView gets a non-blocking `.task`:
+`SupabaseService.ensureSession()` then `PurchaseManager.configure(appUserID:)`, and
+`.environment(PurchaseManager.shared)` for gates. Chose a `.task` over `init()` work so it's tied to
+view lifecycle and never blocks launch.
+
+**Task #4 — proxy reroute.** Added `ScreenshotAIProvider.proxyID`. New `proxyForData(provider:model:body:)`
+posts `{provider, model, body}` to `ai-proxy` via `authorizedFunctionRequest`; the four provider
+functions now build the same body dicts (Gemini omits `model` — proxy puts it in the URL) and reuse the
+existing response parsers untouched. `listModels` routes through the `models` fn (kept its `apiKey`
+param, now ignored, to avoid touching call sites this batch). On-device key reads removed from the
+analyzer; `ScreenshotAISettings.apiKey` kept (migration still needs Keychain).
+
+**Task #6 — paywall + gates.** New `UI/Paywall.swift`: `expiredPaywallSheet` (RevenueCatUI `PaywallView`,
+works on macOS), `expiredCustomerCenterSheet` (`CustomerCenterView` is iOS-only → macOS fallback
+`MacManageSubscriptionSheet` with Restore + guidance), `ProLockBadge`. Gates (lock badge + paywall on
+tap, per Deon's choice): TimelineView ViewMode (Timeline/Calendar free; `effectiveViewMode` degrades a
+Pro selection on lapse without losing the saved preference), InsightsView CostPeriod (Monthly free;
+segmented control reverts + paywalls on a Pro tap), HomeView AI import + 5-item cap (active-only count =
+`allItems` which is already `!isArchived`), CategoriesView custom-category add, Settings manual Export.
+Added an "Expired Pro" section (upgrade / manage / restore) to both Settings bodies. Removed the raw-key
+entry UI + RED security warning (key now lives server-side).
+
+**Deferred:** currency-conversion gating (ambiguous — needs a behaviour decision).
+
+**No schema changes.** SwiftData/CloudKit model untouched.

@@ -438,9 +438,17 @@ struct ExpiredApp: App {
         WindowGroup {
             ContentView()
                 .modelContainer(container)
+                .environment(PurchaseManager.shared)
                 .preferredColorScheme(preferredColorScheme)
                 .task {
                     await NotificationManager.shared.requestAuthorization()
+                }
+                .task {
+                    // Resolve the anonymous Supabase identity, then hand that same UUID to
+                    // RevenueCat so server (proxy) and client agree on one user. Non-blocking:
+                    // a failure here just means AI/purchase calls surface their own errors later.
+                    try? await SupabaseService.shared.ensureSession()
+                    PurchaseManager.shared.configure(appUserID: SupabaseService.shared.currentUserID)
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
                     scheduleSwiftDataRefreshPasses(reason: "remote store change")

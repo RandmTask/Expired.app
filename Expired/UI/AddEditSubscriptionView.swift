@@ -1543,7 +1543,7 @@ struct AddEditSubscriptionView: View {
         if let vf = item.validFromDate { validFromDate = vf }
         iconData = item.iconData
         iconSource = item.iconSource
-        notifications = item.notificationsList.map(NotificationRuleDraft.init(rule:))
+        notifications = item.notificationsList.map { NotificationRuleDraft(rule: $0) }
         selectedCategoryRaw = item.categoryRaw
         if let sd = item.startDate {
             startDate = sd

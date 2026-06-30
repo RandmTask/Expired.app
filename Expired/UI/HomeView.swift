@@ -5,9 +5,13 @@ import UniformTypeIdentifiers
 
 struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(PurchaseManager.self) private var purchaseManager
     @Query(filter: #Predicate<SubscriptionItem> { !$0.isArchived },
            sort: \SubscriptionItem.nextRenewalDate)
     private var allItems: [SubscriptionItem]
+
+    /// Free tier allows up to this many active (non-archived) items.
+    private static let freeItemLimit = 5
 
     private var subscriptionItems: [SubscriptionItem] {
         allItems.filter { $0.itemType == .subscription }
@@ -22,6 +26,7 @@ struct HomeView: View {
     @State private var importWarning: String?
     @State private var importError: String?
     @State private var isAnalyzingScreenshot = false
+    @State private var showPaywall = false
     @State private var undoToast: UndoToast?
     @State private var toastDismissTask: Task<Void, Never>?
 #if os(iOS)
@@ -163,7 +168,10 @@ struct HomeView: View {
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
 
     private var monthlyTotal: Double {
-        subscriptionItems.compactMap { $0.monthlyCostConverted(to: preferredCurrency) }.reduce(0, +)
+        subscriptionItems
+            .filter(\.contributesToCurrentRecurringSpend)
+            .compactMap { $0.monthlyCostConverted(to: preferredCurrency) }
+            .reduce(0, +)
     }
 
     private var yearlyTotal: Double { monthlyTotal * 12 }
@@ -217,6 +225,7 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showingAdd) { AddEditSubscriptionView(item: nil) }
             .sheet(item: $editingItem) { AddEditSubscriptionView(item: $0) }
+            .expiredPaywallSheet(isPresented: $showPaywall)
             .sheet(isPresented: $showingImportReview) {
                 ScreenshotImportReviewSheet(
                     drafts: $importDrafts,
@@ -268,10 +277,7 @@ struct HomeView: View {
                     monthlyTotal: monthlyTotal,
                     yearlyTotal: yearlyTotal,
                     currency: displayCurrency,
-                    activeCount: subscriptionItems.filter {
-                        if case .expired = $0.status { return false }
-                        return true
-                    }.count
+                    activeCount: subscriptionItems.filter(\.isActiveSubscription).count
                 )
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
@@ -320,10 +326,7 @@ struct HomeView: View {
                         monthlyTotal: monthlyTotal,
                         yearlyTotal: yearlyTotal,
                         currency: displayCurrency,
-                        activeCount: subscriptionItems.filter {
-                            if case .expired = $0.status { return false }
-                            return true
-                        }.count
+                        activeCount: subscriptionItems.filter(\.isActiveSubscription).count
                     )
                     .padding(.horizontal)
                     .padding(.top, 8)
@@ -604,8 +607,9 @@ struct HomeView: View {
             Button {
                 triggerScreenshotImport()
             } label: {
+                let locked = !purchaseManager.isPremium
                 Label(isAnalyzingScreenshot ? "Analyzing…" : "Import from Screenshot",
-                      systemImage: isAnalyzingScreenshot ? "hourglass" : "doc.viewfinder")
+                      systemImage: isAnalyzingScreenshot ? "hourglass" : (locked ? "lock.fill" : "doc.viewfinder"))
             }
             .disabled(isAnalyzingScreenshot)
 
@@ -697,6 +701,11 @@ struct HomeView: View {
     }
 
     private func triggerScreenshotImport() {
+        // AI / screenshot import is a Pro feature (also enforced server-side by the proxy).
+        guard purchaseManager.isPremium else {
+            showPaywall = true
+            return
+        }
 #if os(iOS)
         showingPhotoImporter = true
 #else
@@ -880,6 +889,11 @@ struct HomeView: View {
     // MARK: - Actions
 
     private func openAddSheet() {
+        // Free tier is capped at `freeItemLimit` active items; adding beyond that is Pro.
+        if allItems.count >= Self.freeItemLimit && !purchaseManager.isPremium {
+            showPaywall = true
+            return
+        }
         editingItem = nil
         showingAdd = true
     }

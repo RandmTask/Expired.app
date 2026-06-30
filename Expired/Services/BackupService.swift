@@ -268,7 +268,7 @@ extension BackupService {
     }
 
     /// iCloud Drive (ubiquity) Documents folder if available, else local Application Support.
-    private static func backupsDirectory() -> URL? {
+    private nonisolated static func backupsDirectory() -> URL? {
         let fm = FileManager.default
         if let container = fm.url(forUbiquityContainerIdentifier: nil) {
             let dir = container.appending(path: "Documents", directoryHint: .isDirectory)
@@ -281,7 +281,7 @@ extension BackupService {
         return local
     }
 
-    private static func writeAutomaticBackup(data: Data, stamp: String) {
+    private nonisolated static func writeAutomaticBackup(data: Data, stamp: String) {
         guard let dir = backupsDirectory() else { return }
         let url = dir.appending(path: "Expired-Backup-\(stamp).json")
         do {
@@ -295,7 +295,7 @@ extension BackupService {
 
     /// Keeps the most recent `keeping` dated snapshots; deletes older ones so the folder
     /// doesn't grow unbounded while still giving a few recovery points against corruption.
-    private static func pruneAutomaticBackups(in dir: URL, keeping: Int) {
+    private nonisolated static func pruneAutomaticBackups(in dir: URL, keeping: Int) {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(
             at: dir,
@@ -307,7 +307,7 @@ extension BackupService {
         for old in backups.dropFirst(keeping) { try? fm.removeItem(at: old) }
     }
 
-    private static func modDate(_ url: URL) -> Date {
+    private nonisolated static func modDate(_ url: URL) -> Date {
         (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
     }
 }

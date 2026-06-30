@@ -91,7 +91,31 @@ sync can't be gated without an architecture change, and we don't want to.)
 
 ---
 
-## ⏳ REMAINING SWIFT WORK (do with a build between each)
+## ✅ SWIFT WORK DONE (2026-06-30, builds green iOS + macOS)
+
+- **Build unblockers:** removed the stray `RevenueCat_CustomEntitlementComputation` SPM product
+  from the target (it duplicates every `RC*` symbol → 100 duplicate-symbol linker errors).
+  Fixed two Swift-6 isolation errors (`BackupService` off-main write chain → `nonisolated`;
+  `AddEditSubscriptionView` point-free `NotificationRuleDraft.init(rule:)` → explicit closure).
+- **Task #5 done** — `ExpiredApp` launches a non-blocking `.task`: `ensureSession()` →
+  `PurchaseManager.configure(appUserID:)`; `PurchaseManager.shared` injected into the environment.
+- **Task #4 done** — `ScreenshotImportAnalyzer` + `ScreenshotAIModelService` route through the
+  proxy (`proxyForData` envelope `{provider, model, body}`; `listModels` → `models` fn). Added
+  `ScreenshotAIProvider.proxyID`. On-device key reads removed from the analyzer.
+- **Task #6 done** — `UI/Paywall.swift` (PaywallView sheet + lock badge + Customer Center w/
+  macOS fallback). Gates: AI import + 5-item cap (active-only) in HomeView; ViewMode + CostPeriod
+  lock badges; custom categories; manual export. "Expired Pro" section (upgrade / manage / restore)
+  added to both Settings bodies. Raw-key entry UI + RED warning removed.
+
+### ⚠️ Deferred / still open
+- **Currency conversion gating** — NOT implemented (ambiguous: gate changing display currency, or
+  the per-item conversion in totals?). Decide the exact behaviour before wiring.
+- `ScreenshotAISettings.apiKey` (Keychain-backed) is now unused by the analyzer but kept so the
+  one-time Keychain migration + struct stay intact. Remove when convenient.
+- macOS Customer Center uses a lightweight Restore + guidance sheet (RevenueCat's `CustomerCenterView`
+  is iOS-only). Verify it reads acceptably.
+
+## ⏳ ORIGINAL TASK NOTES (for reference)
 
 ### Task #5 — `ExpiredApp.swift` launch wiring
 On launch: `try await SupabaseService.shared.ensureSession()` → then
