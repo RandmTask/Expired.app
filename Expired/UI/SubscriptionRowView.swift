@@ -98,29 +98,24 @@ struct SubscriptionRowView: View {
     }
 }
 
+// MARK: - Icon Display Style
+
+enum IconDisplayStyle: String, CaseIterable {
+    case natural      = "Natural"
+    case whiteCard    = "White Card"
+    case adaptiveCard = "Adaptive Card"
+    case frosted      = "Frosted"
+    case shadowBoost  = "Shadow"
+}
+
 // MARK: - Urgency Icon View (icon with adaptive border ring)
 
 struct UrgencyIconView: View {
     let item: SubscriptionItem
     let size: CGFloat
 
-    private var ringColor: Color {
-        switch item.urgency {
-        case .critical: return .red
-        case .warning:  return .orange
-        case .expired:  return Color.secondary.opacity(0.5)
-        case .normal:   return .clear
-        }
-    }
-
     var body: some View {
-        ZStack {
-            ItemIconView(item: item, size: size)
-
-            RoundedRectangle(cornerRadius: size * 0.22)
-                .strokeBorder(ringColor, lineWidth: 2)
-                .frame(width: size, height: size)
-        }
+        ItemIconView(item: item, size: size)
     }
 }
 
@@ -162,16 +157,15 @@ struct ItemIconView: View {
     let item: SubscriptionItem
     let size: CGFloat
 
+    @AppStorage("iconDisplayStyle") private var iconStyleRaw: String = IconDisplayStyle.natural.rawValue
+    private var iconStyle: IconDisplayStyle { IconDisplayStyle(rawValue: iconStyleRaw) ?? .natural }
+
     var body: some View {
         Group {
             if item.iconSource == .customImage || item.iconSource == .favicon,
                let data = item.iconData,
                let img = platformImage(from: data) {
-                Image(platformImage: img)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: size, height: size)
-                    .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
+                styledIcon(img)
             } else {
                 ZStack {
                     RoundedRectangle(cornerRadius: size * 0.22)
@@ -183,7 +177,55 @@ struct ItemIconView: View {
                 .frame(width: size, height: size)
             }
         }
-        .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
+        .shadow(color: .black.opacity(iconStyle == .shadowBoost ? 0.30 : 0.12),
+                radius: iconStyle == .shadowBoost ? 8 : 4,
+                x: 0, y: iconStyle == .shadowBoost ? 4 : 2)
+    }
+
+    @ViewBuilder
+    private func styledIcon(_ img: PlatformImage) -> some View {
+        let r = size * 0.22
+        switch iconStyle {
+        case .natural:
+            Image(platformImage: img)
+                .resizable().scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: r))
+        case .whiteCard:
+            ZStack {
+                RoundedRectangle(cornerRadius: r).fill(Color.white)
+                Image(platformImage: img).resizable().scaledToFit().padding(size * 0.12)
+            }
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: r))
+        case .adaptiveCard:
+            ZStack {
+                RoundedRectangle(cornerRadius: r).fill(adaptiveCardColor)
+                Image(platformImage: img).resizable().scaledToFit().padding(size * 0.12)
+            }
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: r))
+        case .frosted:
+            ZStack {
+                RoundedRectangle(cornerRadius: r).fill(.ultraThinMaterial)
+                Image(platformImage: img).resizable().scaledToFit().padding(size * 0.12)
+            }
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: r))
+        case .shadowBoost:
+            Image(platformImage: img)
+                .resizable().scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: r))
+        }
+    }
+
+    private var adaptiveCardColor: Color {
+#if os(iOS)
+        Color(uiColor: .secondarySystemGroupedBackground)
+#else
+        Color(nsColor: .controlBackgroundColor)
+#endif
     }
 
     private var iconGradient: LinearGradient {

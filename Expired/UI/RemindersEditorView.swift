@@ -1,8 +1,44 @@
 import SwiftUI
 import SwiftData
 
+/// Pure value type backing the reminders editor. The form must never hold live
+/// SwiftData `NotificationRule` models — those are reconciled into the relationship
+/// only on Save, so cancelling can't mutate or churn managed objects.
+struct NotificationRuleDraft: Identifiable, Equatable {
+    var id: UUID
+    var offsetType: NotificationOffsetType
+    var value: Int
+    var isCritical: Bool
+    var customDate: Date?
+
+    init(id: UUID = UUID(),
+         offsetType: NotificationOffsetType = .daysBefore,
+         value: Int = 1,
+         isCritical: Bool = false,
+         customDate: Date? = nil) {
+        self.id = id
+        self.offsetType = offsetType
+        self.value = value
+        self.isCritical = isCritical
+        self.customDate = customDate
+    }
+
+    init(rule: NotificationRule) {
+        self.id = rule.id
+        self.offsetType = rule.offsetType
+        self.value = rule.value
+        self.isCritical = rule.isCritical
+        self.customDate = rule.customDate
+    }
+
+    /// Builds a fresh managed rule from this draft (used when creating a new item).
+    func makeRule() -> NotificationRule {
+        NotificationRule(id: id, offsetType: offsetType, value: value, isCritical: isCritical, customDate: customDate)
+    }
+}
+
 struct RemindersEditorView: View {
-    @Binding var notifications: [NotificationRule]
+    @Binding var notifications: [NotificationRuleDraft]
     let baseDate: Date
 
     var body: some View {
@@ -89,7 +125,7 @@ struct RemindersEditorView: View {
     private func addRule(_ type: NotificationOffsetType, _ value: Int) {
         guard !notifications.contains(where: { $0.offsetType == type && $0.value == value && $0.customDate == nil }) else { return }
         withAnimation {
-            notifications.append(NotificationRule(offsetType: type, value: value))
+            notifications.append(NotificationRuleDraft(offsetType: type, value: value))
         }
     }
 
@@ -103,11 +139,11 @@ struct RemindersEditorView: View {
             candidate = Calendar.current.date(byAdding: .day, value: 1, to: candidate) ?? candidate
         }
         withAnimation {
-            notifications.append(NotificationRule(offsetType: .exactDate, value: 0, customDate: candidate))
+            notifications.append(NotificationRuleDraft(offsetType: .exactDate, value: 0, customDate: candidate))
         }
     }
 
-    private func applyUpdate(_ updated: NotificationRule, at index: Int) {
+    private func applyUpdate(_ updated: NotificationRuleDraft, at index: Int) {
         var updatedList = notifications
         let duplicateIndices = updatedList.indices.filter { i in
             i != index && isDuplicate(updated, updatedList[i])
@@ -120,7 +156,7 @@ struct RemindersEditorView: View {
         notifications = updatedList
     }
 
-    private func isDuplicate(_ lhs: NotificationRule, _ rhs: NotificationRule) -> Bool {
+    private func isDuplicate(_ lhs: NotificationRuleDraft, _ rhs: NotificationRuleDraft) -> Bool {
         guard lhs.offsetType == rhs.offsetType else { return false }
         if lhs.offsetType == .exactDate {
             guard let leftDate = lhs.customDate, let rightDate = rhs.customDate else { return false }
@@ -158,20 +194,20 @@ private struct CriticalAlertBanner: View {
 // MARK: - Single Rule Row
 
 struct ReminderRuleRow: View {
-    let rule: NotificationRule
+    let rule: NotificationRuleDraft
     let baseDate: Date
     let onDelete: () -> Void
-    let onUpdate: (NotificationRule) -> Void
+    let onUpdate: (NotificationRuleDraft) -> Void
 
     @State private var offsetType: NotificationOffsetType
     @State private var value: Int
     @State private var isCritical: Bool
     @State private var customDate: Date
 
-    init(rule: NotificationRule,
+    init(rule: NotificationRuleDraft,
          baseDate: Date,
          onDelete: @escaping () -> Void,
-         onUpdate: @escaping (NotificationRule) -> Void) {
+         onUpdate: @escaping (NotificationRuleDraft) -> Void) {
         self.rule = rule
         self.baseDate = baseDate
         self.onDelete = onDelete
@@ -259,6 +295,9 @@ struct ReminderRuleRow: View {
                 .font(.system(size: 16))
             DatePicker("", selection: $customDate, displayedComponents: .date)
                 .labelsHidden()
+#if os(macOS)
+                .datePickerStyle(.field)
+#endif
                 .onChange(of: customDate) { _, _ in propagate() }
         }
     }
@@ -299,7 +338,7 @@ struct ReminderRuleRow: View {
 
     private func propagate() {
         let date = offsetType == .exactDate ? customDate : nil
-        onUpdate(NotificationRule(id: rule.id, offsetType: offsetType, value: value, isCritical: isCritical, customDate: date))
+        onUpdate(NotificationRuleDraft(id: rule.id, offsetType: offsetType, value: value, isCritical: isCritical, customDate: date))
     }
 }
 

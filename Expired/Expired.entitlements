@@ -2,8 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>aps-environment</key>
+	<string>development</string>
 	<key>com.apple.developer.aps-environment</key>
 	<string>development</string>
+	<!-- Critical Alerts: re-enable the two lines below AFTER Apple grants the
+	     entitlement on App ID com.swiftstudio.Expired. Until then this breaks
+	     device/TestFlight signing (App ID lacks the capability). Simulator is fine.
+	<key>com.apple.developer.usernotifications.critical-alerts</key>
+	<true/>
+	-->
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
 		<string>iCloud.com.swiftstudio.Expired</string>
@@ -11,6 +19,7 @@
 	<key>com.apple.developer.icloud-services</key>
 	<array>
 		<string>CloudKit</string>
+		<string>CloudDocuments</string>
 	</array>
 	<key>com.apple.developer.ubiquity-kvstore-identifier</key>
 	<string>$(TeamIdentifierPrefix)com.swiftstudio.Expired</string>

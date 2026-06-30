@@ -1,5 +1,11 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 struct ContentView: View {
     @State private var selectedTab = 0
@@ -32,6 +38,10 @@ struct ContentView: View {
                 SettingsView()
                     .id(settingsNavID)
             }
+        }
+        .environmentObject(CloudKitDebugStore.shared)
+        .onReceive(NotificationCenter.default.publisher(for: .expiredShowSettings)) { _ in
+            selectedTab = 3
         }
 #if os(iOS)
         .tabBarMinimizeBehavior(.onScrollDown)
@@ -761,7 +771,7 @@ struct SwimLaneRow: View {
                     Text(labelText)
                         .font(.system(size: 10, weight: .bold, design: .rounded))
                         .foregroundStyle(barColor)
-                        .offset(x: max(8, geo.size.width * fraction) + 4)
+                        .offset(x: fraction > 0 ? max(8, geo.size.width * fraction) + 4 : 0)
                         .frame(maxHeight: .infinity, alignment: .center)
                 }
             }
@@ -989,7 +999,9 @@ struct MonthStripView: View {
                         .tag(period.id)
                     }
                 }
+#if os(iOS)
                 .tabViewStyle(.page(indexDisplayMode: .never))
+#endif
                 .frame(width: geo.size.width, height: 130)
                 .onChange(of: currentPeriodID) { _, _ in
                     selectedDay = nil
@@ -1490,7 +1502,9 @@ struct ArchiveView: View {
                         .onTapGesture { editingItem = item }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
+                                NotificationManager.shared.removeAll(for: item)
                                 modelContext.delete(item)
+                                try? modelContext.save()
                             } label: {
                                 Label("Delete", systemImage: "trash")
                             }
@@ -1500,6 +1514,7 @@ struct ArchiveView: View {
                                 withAnimation {
                                     item.isArchived = false
                                     item.updatedAt = Date()
+                                    try? modelContext.save()
                                 }
                             } label: {
                                 Label("Restore", systemImage: "arrow.uturn.left")
@@ -1541,6 +1556,7 @@ private enum CategoryListItem: Identifiable {
 }
 
 struct CategoriesView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query(filter: #Predicate<SubscriptionItem> { !$0.isArchived && $0.itemTypeRaw == "subscription" })
     private var allSubscriptions: [SubscriptionItem]
 
@@ -1562,6 +1578,22 @@ struct CategoriesView: View {
 
     private func count(rawName: String) -> Int {
         allSubscriptions.filter { $0.categoryRaw == rawName }.count
+    }
+
+    /// Reassigns every item pointing at a custom category to `newName` (or clears it when nil).
+    /// Fetches directly from the context — `allSubscriptions` excludes archived/document items,
+    /// which must also be reassigned so a deleted/renamed category can't strand them.
+    private func reassignItems(named oldName: String, to newName: String?) {
+        let target: String? = oldName
+        let descriptor = FetchDescriptor<SubscriptionItem>(
+            predicate: #Predicate { $0.categoryRaw == target }
+        )
+        guard let matches = try? modelContext.fetch(descriptor), !matches.isEmpty else { return }
+        for item in matches {
+            item.categoryRaw = newName
+            item.updatedAt = Date()
+        }
+        try? modelContext.save()
     }
 
     /// Build the unified list, respecting the saved interleaved order when available.
@@ -1658,6 +1690,12 @@ struct CategoriesView: View {
                         return false
                     }
                     guard !toRemove.isEmpty else { return }
+                    // Clear the category off any items that referenced it before removing.
+                    for i in toRemove {
+                        if case .custom(let c) = unifiedCategories[i] {
+                            reassignItems(named: c.name, to: nil)
+                        }
+                    }
                     unifiedCategories.remove(atOffsets: IndexSet(toRemove))
                     saveUnified()
                 }
@@ -1716,6 +1754,10 @@ struct CategoriesView: View {
                         icon: newCategoryIcon,
                         description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
                     )
+                    // A rename must follow through to items that reference the old name.
+                    if editing.name != newCategoryName {
+                        reassignItems(named: editing.name, to: newCategoryName)
+                    }
                     unifiedCategories[idx] = .custom(updated)
                 } else {
                     unifiedCategories.append(.custom(UserCategory(
@@ -1767,6 +1809,10 @@ struct CategoriesView: View {
                         icon: newCategoryIcon,
                         description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
                     )
+                    // A rename must follow through to items that reference the old name.
+                    if editing.name != newCategoryName {
+                        reassignItems(named: editing.name, to: newCategoryName)
+                    }
                     unifiedCategories[idx] = .custom(updated)
                 } else {
                     unifiedCategories.append(.custom(UserCategory(
@@ -2013,6 +2059,7 @@ struct CategoriesView: View {
             .padding(.leading, 8)
             Button {
                 withAnimation {
+                    reassignItems(named: cat.name, to: nil)
                     unifiedCategories.removeAll {
                         if case .custom(let c) = $0 { return c.id == cat.id }
                         return false
@@ -2184,9 +2231,21 @@ extension View {
 // MARK: - Settings View
 
 struct SettingsView: View {
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var cloudKitDebug: CloudKitDebugStore
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
     @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
+    @AppStorage(ScreenshotAISettings.providerKey) private var screenshotAIProviderRaw = ScreenshotAIProvider.appleIntelligence.rawValue
+    /// API keys live in the Keychain (per-device, never synced). This mirror exists
+    /// only to drive the UI; the source of truth is `KeychainStore`.
+    @State private var screenshotAIKeys: [String: String] = [:]
+    /// Live model picker state. `selectedModels` mirrors the chosen model per
+    /// provider; `availableModels` is the last fetched list for the current provider.
+    @State private var selectedModels: [String: String] = [:]
+    @State private var availableModels: [String] = []
+    @State private var isLoadingModels = false
+    @State private var modelLoadError: String?
     @AppStorage("appearanceMode") private var appearanceMode = 0
     @AppStorage("notificationHour")   private var notificationHour: Int = 9
     @AppStorage("notificationMinute") private var notificationMinute: Int = 0
@@ -2195,6 +2254,14 @@ struct SettingsView: View {
     @State private var isSyncing = false
     @State private var isRefreshingFavicons = false
     @State private var faviconRefreshProgress: (done: Int, total: Int) = (0, 0)
+    @State private var showExportWarning = false
+    @State private var showingExporter = false
+    @State private var exportDocument: BackupDocument?
+    @State private var showingImporter = false
+    @State private var importResultMessage: String?
+    @State private var backupErrorMessage: String?
+    @AppStorage(BackupService.autoBackupEnabledKey) private var autoBackupEnabled = true
+    @AppStorage(BackupService.lastAutoBackupKey) private var lastAutoBackupAt: Double = 0
     @Query(filter: #Predicate<SubscriptionItem> { $0.isArchived }) private var archivedItems: [SubscriptionItem]
     @Query private var allItems: [SubscriptionItem]
 
@@ -2210,12 +2277,10 @@ struct SettingsView: View {
     }
 
     /// Writes notification time to both @AppStorage (local) and iCloud KV store (cross-device).
-    /// Minutes are snapped to the nearest 15-minute interval (0, 15, 30, 45).
     private func saveNotificationTime(_ date: Date) {
         let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
         let hour   = comps.hour   ?? 9
-        let rawMin = comps.minute ?? 0
-        let minute = (rawMin / 15) * 15   // snap down to nearest quarter-hour
+        let minute = comps.minute ?? 0
         notificationHour   = hour
         notificationMinute = minute
         let kv = NSUbiquitousKeyValueStore.default
@@ -2275,6 +2340,132 @@ struct SettingsView: View {
         return "\(name) (\(code.uppercased()))"
     }
 
+    private var screenshotAIProvider: ScreenshotAIProvider {
+        get { ScreenshotAIProvider(rawValue: screenshotAIProviderRaw) ?? .appleIntelligence }
+        nonmutating set { screenshotAIProviderRaw = newValue.rawValue }
+    }
+
+    private var currentScreenshotAIKey: String {
+        screenshotAIKeys[screenshotAIProvider.rawValue] ?? ""
+    }
+
+    /// Writes a key to the Keychain and updates the UI mirror.
+    private func setScreenshotAIKey(_ value: String) {
+        guard screenshotAIProvider.requiresAPIKey else { return }
+        KeychainStore.set(value, for: screenshotAIProvider.keychainAccount)
+        screenshotAIKeys[screenshotAIProvider.rawValue] = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Loads stored keys from the Keychain into the UI mirror.
+    private func loadScreenshotAIKeys() {
+        var keys: [String: String] = [:]
+        for provider in ScreenshotAIProvider.allCases where provider.requiresAPIKey {
+            keys[provider.rawValue] = KeychainStore.get(provider.keychainAccount)
+        }
+        screenshotAIKeys = keys
+    }
+
+    // MARK: - Live model picker
+
+    private var currentSelectedModel: String {
+        selectedModels[screenshotAIProvider.rawValue] ?? screenshotAIProvider.selectedModelID
+    }
+
+    /// Picker options: live-fetched ∪ current selection ∪ hardcoded default, so a
+    /// tag always exists for the current value even before a successful fetch.
+    private var modelPickerOptions: [String] {
+        var set = Set(availableModels)
+        set.insert(currentSelectedModel)
+        set.insert(screenshotAIProvider.defaultModelID)
+        return set.filter { !$0.isEmpty }.sorted()
+    }
+
+    private func modelLabel(_ model: String) -> String {
+        model == screenshotAIProvider.defaultModelID ? "\(model) (default)" : model
+    }
+
+    private func setSelectedModel(_ model: String) {
+        screenshotAIProvider.setSelectedModelID(model)
+        selectedModels[screenshotAIProvider.rawValue] = screenshotAIProvider.selectedModelID
+    }
+
+    private func loadSelectedModels() {
+        var dict: [String: String] = [:]
+        for provider in ScreenshotAIProvider.allCases where provider.requiresAPIKey {
+            dict[provider.rawValue] = provider.selectedModelID
+        }
+        selectedModels = dict
+    }
+
+    /// Fetches the live model list for the current provider's key. Guards against
+    /// a stale response landing after the user has switched provider.
+    private func loadModels() {
+        availableModels = []
+        modelLoadError = nil
+        let provider = screenshotAIProvider
+        guard provider.requiresAPIKey else { return }
+        let key = currentScreenshotAIKey
+        guard !key.isEmpty else { return }
+        isLoadingModels = true
+        Task {
+            do {
+                let models = try await ScreenshotAIModelService.listModels(provider: provider, apiKey: key)
+                await MainActor.run {
+                    guard screenshotAIProvider == provider else { return }
+                    availableModels = models
+                    isLoadingModels = false
+                }
+            } catch {
+                await MainActor.run {
+                    guard screenshotAIProvider == provider else { return }
+                    modelLoadError = error.localizedDescription
+                    isLoadingModels = false
+                }
+            }
+        }
+    }
+
+    /// Shared note + error shown under the model picker on both platforms.
+    @ViewBuilder
+    private var modelPickerNote: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if let modelLoadError {
+                Text(modelLoadError)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Models load live from your key. Server-side model selection is planned — this picker is a stopgap.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var screenshotAIKeyPreview: String {
+        maskedAPIKey(currentScreenshotAIKey)
+    }
+
+    private func maskedAPIKey(_ key: String) -> String {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "No key saved" }
+        return String(trimmed.prefix(min(5, trimmed.count))) + String(repeating: "•", count: max(trimmed.count - 5, 0))
+    }
+
+    /// Visible pre-release warning shown wherever a raw API key can be entered.
+    /// Stays until AI calls are routed through a backend proxy (see CLAUDE.md).
+    private var apiKeySecurityWarning: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.red)
+            Text("Stored only on this device. Before any TestFlight or App Store release, route AI requests through a backend proxy that holds the key server-side with per-user rate limits and a monthly spend cap. A key shipped on-device can be extracted and abused — at your expense.")
+                .font(.system(size: 12))
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     var body: some View {
         NavigationStack {
 #if os(macOS)
@@ -2286,12 +2477,90 @@ struct SettingsView: View {
         .onAppear {
             NSUbiquitousKeyValueStore.default.synchronize()
             pullNotificationTimeFromKVStore()
+            loadScreenshotAIKeys()
+            loadSelectedModels()
+            loadModels()
+        }
+        .onChange(of: screenshotAIProviderRaw) { _, _ in
+            loadModels()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSUbiquitousKeyValueStore.didChangeExternallyNotification)) { note in
             guard let keys = (note.userInfo?[NSUbiquitousKeyValueStoreChangedKeysKey] as? [String]) else { return }
             if keys.contains(Self.kvHourKey) || keys.contains(Self.kvMinuteKey) {
                 pullNotificationTimeFromKVStore()
             }
+        }
+        .fileExporter(
+            isPresented: $showingExporter,
+            document: exportDocument,
+            contentType: .json,
+            defaultFilename: "Expired Backup"
+        ) { _ in
+            exportDocument = nil
+        }
+        .fileImporter(
+            isPresented: $showingImporter,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false
+        ) { handleImport($0) }
+        .alert("Export Backup", isPresented: $showExportWarning) {
+            Button("Continue") { prepareExport() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This backup is not encrypted and includes account emails, usernames, and passwords. Only save it somewhere private.")
+        }
+        .alert("Import Complete", isPresented: Binding(
+            get: { importResultMessage != nil },
+            set: { if !$0 { importResultMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importResultMessage ?? "")
+        }
+        .alert("Backup Error", isPresented: Binding(
+            get: { backupErrorMessage != nil },
+            set: { if !$0 { backupErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(backupErrorMessage ?? "")
+        }
+    }
+
+    // MARK: - Backup (export / import)
+
+    private var lastAutoBackupText: String {
+        guard lastAutoBackupAt > 0 else { return "No automatic backup yet" }
+        let date = Date(timeIntervalSince1970: lastAutoBackupAt)
+        return "Last backup \(date.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    private func prepareExport() {
+        do {
+            let data = try BackupService.export(allItems)
+            exportDocument = BackupDocument(data: data)
+            showingExporter = true
+        } catch {
+            backupErrorMessage = "Could not create backup: \(error.localizedDescription)"
+        }
+    }
+
+    private func handleImport(_ result: Result<[URL], Error>) {
+        guard let url = try? result.get().first else { return }
+        guard url.startAccessingSecurityScopedResource() else {
+            backupErrorMessage = "Could not access the selected file."
+            return
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
+        do {
+            let data = try Data(contentsOf: url)
+            let file = try BackupService.decode(data)
+            let counts = BackupService.merge(file, into: modelContext, existing: allItems)
+            importResultMessage = "Imported \(counts.added) new, updated \(counts.updated)."
+            let items = allItems
+            Task { await NotificationManager.shared.rescheduleAll(items) }
+        } catch {
+            backupErrorMessage = "Could not read backup: \(error.localizedDescription)"
         }
     }
 
@@ -2325,20 +2594,11 @@ struct SettingsView: View {
                         Menu {
                             ForEach(Self.appStoreRegions, id: \.code) { region in
                                 Button { appStoreRegion = region.code } label: {
-                                    if appStoreRegion == region.code { Label(region.name, systemImage: "checkmark") }
-                                    else { Text(region.name) }
+                                    macMenuOptionTitle(region.name, isSelected: appStoreRegion == region.code)
                                 }
                             }
                         } label: {
-                            HStack(spacing: 4) {
-                                Text(appStoreRegionLabel)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize()
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .animation(nil, value: appStoreRegion)
+                            macMenuValueLabel(appStoreRegionLabel)
                         }
                         .menuStyle(.borderlessButton)
                         .menuIndicator(.hidden)
@@ -2352,31 +2612,104 @@ struct SettingsView: View {
                         Spacer()
                         Menu {
                             Button { appearanceMode = 0 } label: {
-                                if appearanceMode == 0 { Label("System", systemImage: "checkmark") }
-                                else { Text("System") }
+                                macMenuOptionTitle("System", isSelected: appearanceMode == 0)
                             }
                             Button { appearanceMode = 1 } label: {
-                                if appearanceMode == 1 { Label("Light", systemImage: "checkmark") }
-                                else { Text("Light") }
+                                macMenuOptionTitle("Light", isSelected: appearanceMode == 1)
                             }
                             Button { appearanceMode = 2 } label: {
-                                if appearanceMode == 2 { Label("Dark", systemImage: "checkmark") }
-                                else { Text("Dark") }
+                                macMenuOptionTitle("Dark", isSelected: appearanceMode == 2)
                             }
                         } label: {
-                            HStack(spacing: 4) {
-                                Text(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize()
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .animation(nil, value: appearanceMode)
+                            macMenuValueLabel(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
                         }
                         .menuStyle(.borderlessButton)
                         .menuIndicator(.hidden)
                         .fixedSize()
+                    }
+                }
+
+                // SCREENSHOT IMPORT
+                settingsSection(title: "Screenshot Import", icon: "doc.viewfinder") {
+                    settingsRow {
+                        macSettingsLabel("Analyzer", icon: "sparkles")
+                        Spacer()
+                        Menu {
+                            ForEach(ScreenshotAIProvider.allCases) { provider in
+                                Button { screenshotAIProviderRaw = provider.rawValue } label: {
+                                    macMenuOptionTitle(provider.rawValue, isSelected: screenshotAIProvider == provider)
+                                }
+                            }
+                        } label: {
+                            macMenuValueLabel(screenshotAIProvider.rawValue)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                    }
+
+                    if screenshotAIProvider.requiresAPIKey {
+                        FormDivider()
+
+                        settingsRow {
+                            macSettingsLabel("API Key", icon: "key")
+                            Spacer()
+                            Text(screenshotAIKeyPreview)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                            Button {
+                                pasteScreenshotAIKey()
+                            } label: {
+                                Image(systemName: "doc.on.clipboard")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.blue)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Paste API key")
+                        }
+
+                        FormDivider()
+
+                        settingsRow {
+                            macSettingsLabel("Model", icon: "cpu")
+                            Spacer()
+                            if isLoadingModels {
+                                ProgressView().controlSize(.small)
+                            }
+                            Menu {
+                                ForEach(modelPickerOptions, id: \.self) { model in
+                                    Button { setSelectedModel(model) } label: {
+                                        macMenuOptionTitle(modelLabel(model), isSelected: currentSelectedModel == model)
+                                    }
+                                }
+                            } label: {
+                                macMenuValueLabel(modelLabel(currentSelectedModel))
+                            }
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
+                            .fixedSize()
+                            Button {
+                                loadModels()
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.blue)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Refresh model list")
+                        }
+
+                        settingsRow {
+                            modelPickerNote
+                        }
+
+                        FormDivider()
+
+                        settingsRow {
+                            apiKeySecurityWarning
+                        }
                     }
                 }
 
@@ -2428,6 +2761,92 @@ struct SettingsView: View {
                     .disabled(!iCloudSyncEnabled || isSyncing)
                 }
 
+                // CLOUDKIT DEBUG
+                settingsSection(title: "CloudKit Debug", icon: "wave.3.right") {
+                    settingsRow {
+                        macSettingsLabel("Account", icon: "person.crop.circle")
+                        Spacer()
+                        Text(cloudKitDebug.accountStatusText)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+
+                    FormDivider()
+
+                    settingsRow {
+                        macSettingsLabel("User Record", icon: "record.circle")
+                        Spacer()
+                        Text(cloudKitDebug.userRecordIDText)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
+                    FormDivider()
+
+                    settingsRow {
+                        macSettingsLabel("Latest", icon: "chart.line.uptrend.xyaxis")
+                        Spacer()
+                        Text(cloudKitDebug.storeSummaryText)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+
+                    FormDivider()
+
+                    HStack(spacing: 10) {
+                        Button {
+                            refreshCloudKitDiagnostics()
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button {
+                            copyCloudKitDiagnostics()
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Copy CloudKit debug log")
+
+                        Button(role: .destructive) {
+                            cloudKitDebug.clear()
+                        } label: {
+                            Label("Clear", systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if !cloudKitDebug.entries.isEmpty {
+                        FormDivider()
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(cloudKitDebug.entries.prefix(8)) { entry in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack {
+                                        Text(entry.category)
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Text(entry.date.formatted(date: .omitted, time: .shortened))
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    Text(entry.message)
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.primary)
+                                        .textSelection(.enabled)
+                                }
+                                if entry.id != cloudKitDebug.entries.prefix(8).last?.id {
+                                    Divider().opacity(0.5)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
                 // DATA
                 settingsSection(title: "Data", icon: "folder") {
                     NavigationLink { ArchiveView() } label: {
@@ -2477,6 +2896,41 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(isRefreshingFavicons)
+
+                    FormDivider()
+
+                    settingsRow {
+                        Toggle(isOn: $autoBackupEnabled) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                macSettingsLabel("iCloud Backup", icon: "icloud.and.arrow.up")
+                                Text(lastAutoBackupText)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .tint(.green)
+                    }
+
+                    FormDivider()
+
+                    Button { showExportWarning = true } label: {
+                        settingsRow {
+                            macSettingsLabel("Export Backup", icon: "square.and.arrow.up")
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    FormDivider()
+
+                    Button { showingImporter = true } label: {
+                        settingsRow {
+                            macSettingsLabel("Import Backup", icon: "square.and.arrow.down")
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 Spacer(minLength: 40)
@@ -2545,6 +2999,43 @@ struct SettingsView: View {
     }
 #endif
 
+    /// Stable menu label used for settings pickers so the row width does not jitter while scrolling.
+    @ViewBuilder
+    private func macMenuValueLabel(_ title: String) -> some View {
+        HStack(spacing: 4) {
+            Text(title)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .animation(nil, value: title)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    /// Stable menu row content. macOS uses a fixed-width checkmark slot for alignment;
+    /// iOS uses the standard Label/Text pattern so only the selected item shows a checkmark.
+    @ViewBuilder
+    private func macMenuOptionTitle(_ title: String, isSelected: Bool) -> some View {
+#if os(macOS)
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 14, alignment: .center)
+                .foregroundStyle(isSelected ? Color.primary : Color.clear)
+            Text(title)
+        }
+#else
+        if isSelected {
+            Label(title, systemImage: "checkmark")
+        } else {
+            Text(title)
+        }
+#endif
+    }
+
     // MARK: - iOS Settings (List-based)
 
     private var iosSettingsBody: some View {
@@ -2573,20 +3064,11 @@ struct SettingsView: View {
                     Menu {
                         ForEach(Self.appStoreRegions, id: \.code) { region in
                             Button { appStoreRegion = region.code } label: {
-                                if appStoreRegion == region.code { Label(region.name, systemImage: "checkmark") }
-                                else { Text(region.name) }
+                                macMenuOptionTitle(region.name, isSelected: appStoreRegion == region.code)
                             }
                         }
                     } label: {
-                        HStack(spacing: 4) {
-                            Text(appStoreRegionLabel)
-                                .foregroundStyle(.secondary)
-                                .fixedSize()
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .animation(nil, value: appStoreRegion)
+                        macMenuValueLabel(appStoreRegionLabel)
                     }
                     .buttonStyle(.plain)
                 }
@@ -2600,36 +3082,104 @@ struct SettingsView: View {
                         Spacer()
                         Menu {
                             Button { appearanceMode = 0 } label: {
-                                if appearanceMode == 0 { Label("System", systemImage: "checkmark") }
-                                else { Text("System") }
+                                macMenuOptionTitle("System", isSelected: appearanceMode == 0)
                             }
                             Button { appearanceMode = 1 } label: {
-                                if appearanceMode == 1 { Label("Light", systemImage: "checkmark") }
-                                else { Text("Light") }
+                                macMenuOptionTitle("Light", isSelected: appearanceMode == 1)
                             }
                             Button { appearanceMode = 2 } label: {
-                                if appearanceMode == 2 { Label("Dark", systemImage: "checkmark") }
-                                else { Text("Dark") }
+                                macMenuOptionTitle("Dark", isSelected: appearanceMode == 2)
                             }
                         } label: {
-                            HStack(spacing: 4) {
-                                Text(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize()
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .animation(nil, value: appearanceMode)
+                            macMenuValueLabel(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .buttonStyle(.plain)
             } header: {
-                Text("Display")
+                Text("DISPLAY")
+                    .font(.system(size: 12, weight: .semibold))
+                    .textCase(nil)
+                    .foregroundStyle(.secondary)
+                    .tracking(0.4)
             } footer: {
                 Text("All subscription costs are converted to this currency when calculating totals. Exchange rates are approximate and updated periodically.")
+            }
+
+            Section {
+                HStack {
+                    Label("Analyzer", systemImage: "sparkles")
+                        .foregroundStyle(.primary, .secondary)
+                    Spacer()
+                    Menu {
+                        ForEach(ScreenshotAIProvider.allCases) { provider in
+                            Button { screenshotAIProviderRaw = provider.rawValue } label: {
+                                macMenuOptionTitle(provider.rawValue, isSelected: screenshotAIProvider == provider)
+                            }
+                        }
+                    } label: {
+                        macMenuValueLabel(screenshotAIProvider.rawValue)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if screenshotAIProvider.requiresAPIKey {
+                    HStack {
+                        Label("API Key", systemImage: "key")
+                            .foregroundStyle(.primary, .secondary)
+                        Spacer()
+                        Text(screenshotAIKeyPreview)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Button {
+                            pasteScreenshotAIKey()
+                        } label: {
+                            Image(systemName: "doc.on.clipboard")
+                                .font(.system(size: 16, weight: .semibold))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    HStack {
+                        Label("Model", systemImage: "cpu")
+                            .foregroundStyle(.primary, .secondary)
+                        Spacer()
+                        if isLoadingModels {
+                            ProgressView().controlSize(.small)
+                        }
+                        Menu {
+                            ForEach(modelPickerOptions, id: \.self) { model in
+                                Button { setSelectedModel(model) } label: {
+                                    macMenuOptionTitle(modelLabel(model), isSelected: currentSelectedModel == model)
+                                }
+                            }
+                        } label: {
+                            macMenuValueLabel(modelLabel(currentSelectedModel))
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            loadModels()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 16, weight: .semibold))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    modelPickerNote
+
+                    apiKeySecurityWarning
+                }
+            } header: {
+                Text("SCREENSHOT IMPORT")
+                    .font(.system(size: 12, weight: .semibold))
+                    .textCase(nil)
+                    .foregroundStyle(.secondary)
+                    .tracking(0.4)
+            } footer: {
+                Text("Apple Intelligence keeps analysis on device. API providers send the screenshot to the provider using your saved key.")
             }
 
             Section {
@@ -2646,8 +3196,13 @@ struct SettingsView: View {
                     .datePickerStyle(.compact)
                     .fixedSize()
                 }
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
             } header: {
-                Text("Notifications")
+                Text("NOTIFICATIONS")
+                    .font(.system(size: 12, weight: .semibold))
+                    .textCase(nil)
+                    .foregroundStyle(.secondary)
+                    .tracking(0.4)
             } footer: {
                 Text("Reminders will be delivered at this time on the scheduled day.")
             }
@@ -2661,12 +3216,107 @@ struct SettingsView: View {
                     showRestartAlert = true
                 }
             } header: {
-                Text("Sync")
+                Text("SYNC")
+                    .font(.system(size: 12, weight: .semibold))
+                    .textCase(nil)
+                    .foregroundStyle(.secondary)
+                    .tracking(0.4)
             } footer: {
                 Text("When enabled, your data syncs across all devices signed into the same iCloud account. Requires an iCloud account and internet connection. Restart the app after changing this setting.")
             }
 
-            Section("Data") {
+            Section {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label("Account", systemImage: "person.crop.circle")
+                            .foregroundStyle(.primary, .secondary)
+                        Spacer()
+                        Text(cloudKitDebug.accountStatusText)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+
+                    HStack {
+                        Label("User Record", systemImage: "record.circle")
+                            .foregroundStyle(.primary, .secondary)
+                        Spacer()
+                        Text(cloudKitDebug.userRecordIDText)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
+                    HStack {
+                        Label("Latest", systemImage: "chart.line.uptrend.xyaxis")
+                            .foregroundStyle(.primary, .secondary)
+                        Spacer()
+                        Text(cloudKitDebug.storeSummaryText)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+
+                    HStack(spacing: 12) {
+                        Button {
+                            refreshCloudKitDiagnostics()
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button {
+                            copyCloudKitDiagnostics()
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Copy CloudKit debug log")
+
+                        Button(role: .destructive) {
+                            cloudKitDebug.clear()
+                        } label: {
+                            Label("Clear", systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if !cloudKitDebug.entries.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(cloudKitDebug.entries.prefix(8)) { entry in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack {
+                                        Text(entry.category)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Text(entry.date.formatted(date: .omitted, time: .shortened))
+                                            .font(.caption)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    Text(entry.message)
+                                        .font(.caption)
+                                        .foregroundStyle(.primary)
+                                        .textSelection(.enabled)
+                                }
+                                if entry.id != cloudKitDebug.entries.prefix(8).last?.id {
+                                    Divider().opacity(0.5)
+                                }
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Text("CLOUDKIT DEBUG")
+                    .font(.system(size: 12, weight: .semibold))
+                    .textCase(nil)
+                    .foregroundStyle(.secondary)
+                    .tracking(0.4)
+            } footer: {
+                Text("Use this panel to confirm whether CloudKit is authenticating, importing, and exporting while TestFlight is open.")
+            }
+
+            Section {
                 NavigationLink {
                     ArchiveView()
                 } label: {
@@ -2705,6 +3355,51 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isRefreshingFavicons)
+            } header: {
+                Text("DATA")
+                    .font(.system(size: 12, weight: .semibold))
+                    .textCase(nil)
+                    .foregroundStyle(.secondary)
+                    .tracking(0.4)
+            }
+
+            Section {
+                HStack {
+                    Image(systemName: "icloud.and.arrow.up")
+                        .font(.system(size: 16))
+                        .frame(width: 22, alignment: .center)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("iCloud Backup")
+                            .foregroundStyle(.primary)
+                        Text(lastAutoBackupText)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $autoBackupEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .tint(.green)
+                }
+                Button { showExportWarning = true } label: {
+                    Label("Export Backup", systemImage: "square.and.arrow.up")
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+                Button { showingImporter = true } label: {
+                    Label("Import Backup", systemImage: "square.and.arrow.down")
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+            } header: {
+                Text("BACKUP")
+                    .font(.system(size: 12, weight: .semibold))
+                    .textCase(nil)
+                    .foregroundStyle(.secondary)
+                    .tracking(0.4)
+            } footer: {
+                Text("A daily snapshot is saved to iCloud Drive automatically (skipped if nothing changed). Export writes an unencrypted JSON file (icons excluded — re-fetch with Refresh Icons); import merges by item, never deleting. Keep the file private.")
             }
         }
         .navigationTitle("Settings")
@@ -2731,8 +3426,14 @@ struct SettingsView: View {
                 guard !Task.isCancelled else { break }
                 if let data = await FaviconFetcher.fetch(from: item.url) {
                     await MainActor.run {
+                        // The row may have been deleted while the fetch was in flight.
+                        guard item.modelContext != nil else {
+                            faviconRefreshProgress.done += 1
+                            return
+                        }
                         item.iconData = data
                         item.iconSource = .favicon
+                        try? item.modelContext?.save()
                         faviconRefreshProgress.done += 1
                     }
                 } else {
@@ -2742,12 +3443,42 @@ struct SettingsView: View {
             await MainActor.run { isRefreshingFavicons = false }
         }
     }
+
+    private func refreshCloudKitDiagnostics() {
+        NotificationCenter.default.post(name: .expiredManualSync, object: nil)
+    }
+
+    private func copyCloudKitDiagnostics() {
+#if os(iOS)
+        UIPasteboard.general.string = cloudKitDebug.transcript()
+#elseif os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(cloudKitDebug.transcript(), forType: .string)
+#endif
+    }
+
+    private func pasteScreenshotAIKey() {
+#if os(iOS)
+        let pasted = UIPasteboard.general.string
+#elseif os(macOS)
+        let pasted = NSPasteboard.general.string(forType: .string)
+#else
+        let pasted: String? = nil
+#endif
+        guard let key = pasted?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !key.isEmpty,
+              screenshotAIProvider.requiresAPIKey
+        else { return }
+        setScreenshotAIKey(key)
+        loadModels()
+    }
 }
 
 // MARK: - Preview
 
 #Preview {
     ContentView()
+        .environmentObject(CloudKitDebugStore.shared)
         .modelContainer(PreviewData.container)
 }
 // MARK: - Platform-adaptive currency picker presentation

@@ -82,7 +82,7 @@ struct AddEditSubscriptionView: View {
     @State private var startDateValue: Date = Date()
 
     // Reminders & notes
-    @State private var notifications: [NotificationRule] = []
+    @State private var notifications: [NotificationRuleDraft] = []
     @State private var notes = ""
 
     // Account field sheets
@@ -96,6 +96,7 @@ struct AddEditSubscriptionView: View {
     @FocusState private var costFieldFocused: Bool
     @FocusState private var nameFieldFocused: Bool
     @FocusState private var urlFieldFocused: Bool
+    @FocusState private var notesFieldFocused: Bool
 
     // Persistent suggestion store (UserDefaults-backed)
     @AppStorage("savedNames")  private var savedNamesData:  Data = Data()
@@ -195,6 +196,7 @@ struct AddEditSubscriptionView: View {
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     itemTypeSection
@@ -203,11 +205,18 @@ struct AddEditSubscriptionView: View {
                     paymentSection
                     remindersSection
                     notesSection
+                        .id("notesSection")
                     if isEditing { deleteSection }
                     Spacer(minLength: 40)
                 }
                 .padding(.horizontal)
                 .padding(.top, 12)
+            }
+            .onChange(of: notesFieldFocused) { _, focused in
+                guard focused else { return }
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo("notesSection", anchor: .bottom)
+                }
             }
             .background(groupedBackground.ignoresSafeArea())
             .scrollEdgeEffectStyle(.soft, for: .top)
@@ -226,6 +235,7 @@ struct AddEditSubscriptionView: View {
                         .fontWeight(.semibold)
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+            }
             }
         }
         .sheet(isPresented: $showAppStoreSearchSheet) {
@@ -247,6 +257,12 @@ struct AddEditSubscriptionView: View {
             if currency.isEmpty { currency = preferredCurrency }
             userCategories = UserCategoryStore.load()
             populateFromItem()
+            if !isEditing {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(250))
+                    nameFieldFocused = true
+                }
+            }
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
@@ -307,10 +323,11 @@ struct AddEditSubscriptionView: View {
                             .padding(.vertical, 18)
                             .padding(.trailing, 16)
                     }
+                    .padding(.top, 14)
                     .contentShape(Rectangle())
                     .onTapGesture { nameFieldFocused = true }
 
-                    if itemType == .subscription {
+                    if itemType == .subscription && nameFieldFocused {
                         appSearchResultsView
                     }
 
@@ -339,7 +356,7 @@ struct AddEditSubscriptionView: View {
                                         suppressNextFaviconFetch = false
                                         return
                                     }
-                                    if iconData != nil, (iconSource == .customImage || iconSource == .appBundle) { return }
+                                    if iconData != nil { return }
                                     scheduleFaviconFetch(newValue, delay: true)
                                 }
                             if isFetchingIcon {
@@ -362,11 +379,17 @@ struct AddEditSubscriptionView: View {
                         FormRow(label: "Expires") {
                             DatePicker("", selection: $expiryDate, displayedComponents: .date)
                                 .labelsHidden()
+#if os(macOS)
+                                .datePickerStyle(.field)
+#endif
                         }
                         FormDivider()
                         FormRow(label: "Valid From") {
                             DatePicker("", selection: $validFromDate, displayedComponents: .date)
                                 .labelsHidden()
+#if os(macOS)
+                                .datePickerStyle(.field)
+#endif
                         }
                         FormDivider()
                         HStack {
@@ -504,32 +527,32 @@ struct AddEditSubscriptionView: View {
     @ViewBuilder
     private var appSearchResultsView: some View {
         let query = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let canSearch = query.count >= 2
-        VStack(spacing: 0) {
-            Button {
-                appStoreQuery = query
-                appStoreLimit = 15
-                appStoreResults = []
-                appStoreTotal = 0
-                appStoreLastFetchCount = 0
-                showAppStoreSearchSheet = true
-                Task { await searchAppStore(query: query, offset: 0) }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text(canSearch ? "Search App Store for \"\(query)\"" : "Search App Store")
-                        .font(.system(size: 14, weight: .semibold))
-                    Spacer()
-                }
-                .foregroundStyle(canSearch ? Color.primary : Color.secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+        Button {
+            appStoreQuery = query
+            appStoreLimit = 15
+            appStoreResults = []
+            appStoreTotal = 0
+            appStoreLastFetchCount = 0
+            showAppStoreSearchSheet = true
+            Task { await searchAppStore(query: query, offset: 0) }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Search App Store")
+                    .font(.system(size: 12, weight: .semibold))
             }
-            .buttonStyle(.plain)
-            .disabled(!canSearch)
+            .foregroundStyle(.blue)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Color.blue.opacity(0.1), in: Capsule())
         }
-        .padding(.bottom, 6)
+        .buttonStyle(.plain)
+        // Align chip under the text field, not the icon:
+        // 16pt card inset + 60pt icon + 14pt gap = 90pt
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 90)
+        .padding(.bottom, 8)
     }
 
     private struct AppStoreSearchSheet: View {
@@ -550,7 +573,9 @@ struct AddEditSubscriptionView: View {
                         Image(systemName: "magnifyingglass")
                             .foregroundStyle(.secondary)
                         TextField("Search App Store", text: $query)
+#if os(iOS)
                             .textInputAutocapitalization(.never)
+#endif
                             .autocorrectionDisabled()
                             .onSubmit { onSearch(query) }
                         if isSearching {
@@ -670,8 +695,7 @@ struct AddEditSubscriptionView: View {
         iconContent
             .frame(width: 60, height: 60)
             .overlay(alignment: .bottomTrailing) {
-                // Small edit badge
-                if !isFetchingIcon {
+                if !isFetchingIcon && iconData == nil {
                     Image(systemName: "pencil.circle.fill")
                         .font(.system(size: 16))
                         .foregroundStyle(.white, Color.blue)
@@ -703,6 +727,9 @@ struct AddEditSubscriptionView: View {
                 Button("Choose Photo") { showPhotoPicker = true }
                 Button("Choose File") { showFilePicker = true }
                 Button("Paste Image") { pasteImageFromClipboard() }
+                if iconData != nil && !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button("Refresh Icon") { refreshIcon() }
+                }
                 if iconData != nil {
                     Button("Remove Icon", role: .destructive) { clearIcon() }
                 }
@@ -765,6 +792,9 @@ struct AddEditSubscriptionView: View {
             }
     }
 
+    @AppStorage("iconDisplayStyle") private var iconStyleRaw: String = IconDisplayStyle.natural.rawValue
+    private var iconStyle: IconDisplayStyle { IconDisplayStyle(rawValue: iconStyleRaw) ?? .natural }
+
     @ViewBuilder
     private var iconContent: some View {
         if isFetchingIcon {
@@ -772,9 +802,7 @@ struct AddEditSubscriptionView: View {
                 .fill(Color.secondary.opacity(0.15))
                 .overlay { ProgressView().scaleEffect(0.8) }
         } else if let data = iconData, let img = platformImage(from: data) {
-            Image(platformImage: img)
-                .resizable().scaledToFill()
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+            styledEditIcon(img)
         } else {
             RoundedRectangle(cornerRadius: 12)
                 .fill(itemType == .document ? Color.indigo.opacity(0.12) : Color.blue.opacity(0.12))
@@ -784,6 +812,42 @@ struct AddEditSubscriptionView: View {
                         .foregroundStyle(itemType == .document ? .indigo.opacity(0.7) : .blue.opacity(0.5))
                 }
         }
+    }
+
+    @ViewBuilder
+    private func styledEditIcon(_ img: PlatformImage) -> some View {
+        switch iconStyle {
+        case .natural, .shadowBoost:
+            Image(platformImage: img)
+                .resizable().scaledToFill()
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+        case .whiteCard:
+            ZStack {
+                RoundedRectangle(cornerRadius: 12).fill(Color.white)
+                Image(platformImage: img).resizable().scaledToFit().padding(7)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        case .adaptiveCard:
+            ZStack {
+                RoundedRectangle(cornerRadius: 12).fill(editAdaptiveCardColor)
+                Image(platformImage: img).resizable().scaledToFit().padding(7)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        case .frosted:
+            ZStack {
+                RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial)
+                Image(platformImage: img).resizable().scaledToFit().padding(7)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private var editAdaptiveCardColor: Color {
+#if os(iOS)
+        Color(uiColor: .secondarySystemGroupedBackground)
+#else
+        Color(nsColor: .controlBackgroundColor)
+#endif
     }
 
 #if os(macOS)
@@ -798,6 +862,13 @@ struct AddEditSubscriptionView: View {
                 .buttonStyle(.plain)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+            if iconData != nil && !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Divider()
+                Button("Refresh Icon") { showIconMenu = false; refreshIcon() }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            }
             if iconData != nil {
                 Divider()
                 Button("Remove Icon") { showIconMenu = false; clearIcon() }
@@ -836,6 +907,14 @@ struct AddEditSubscriptionView: View {
         iconSource = .system
     }
 
+    private func refreshIcon() {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        iconData = nil
+        iconSource = .system
+        scheduleFaviconFetch(trimmed, delay: false)
+    }
+
 
     // MARK: - Status section (chips + date + cost)
 
@@ -864,8 +943,8 @@ struct AddEditSubscriptionView: View {
                             isTrial.toggle()
                             if isTrial && notifications.isEmpty {
                                 notifications = [
-                                    NotificationRule(offsetType: .daysBefore, value: 3),
-                                    NotificationRule(offsetType: .daysBefore, value: 1)
+                                    NotificationRuleDraft(offsetType: .daysBefore, value: 3),
+                                    NotificationRuleDraft(offsetType: .daysBefore, value: 1)
                                 ]
                             }
                         }
@@ -891,6 +970,9 @@ struct AddEditSubscriptionView: View {
                         Spacer()
                         DatePicker("", selection: $statusDate, displayedComponents: .date)
                             .labelsHidden()
+#if os(macOS)
+                            .datePickerStyle(.field)
+#endif
                         // Quick-pick + button: bump the renewal date forward
                         Menu {
                             Button("+1 Week") {
@@ -1118,6 +1200,7 @@ struct AddEditSubscriptionView: View {
             SectionHeader(title: "Notes")
             TextField("Optional notes…", text: $notes, axis: .vertical)
                 .foregroundStyle(.primary)
+                .focused($notesFieldFocused)
                 .lineLimit(3...6)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
@@ -1249,10 +1332,8 @@ struct AddEditSubscriptionView: View {
         }
     }
 
-    // MARK: - App Catalog
-
     private var shouldShowLoadMore: Bool {
-        !isSearchingAppStore && appStoreLastFetchCount == appStoreLimit
+        !isSearchingAppStore && !appStoreResults.isEmpty && appStoreLastFetchCount > 0
     }
 
     private func handleNameChange(_ value: String) {
@@ -1361,9 +1442,6 @@ struct AddEditSubscriptionView: View {
         name = result.trackName
         url = result.trackViewUrl
         currency = result.currency ?? currency
-        if let genre = result.primaryGenreName {
-            selectedCategoryRaw = mapAppStoreGenreToCategory(genre)
-        }
 
         if let art = result.artworkUrl100, let artURL = URL(string: art) {
             Task {
@@ -1447,6 +1525,8 @@ struct AddEditSubscriptionView: View {
             statusDate = u
         } else if let t = item.trialEndDate, t > Date() {
             statusDate = t
+        } else if item.itemType == .subscription, item.isAutoRenew {
+            statusDate = item.nextLiveRenewalDate()
         } else {
             statusDate = item.nextRenewalDate
         }
@@ -1463,7 +1543,7 @@ struct AddEditSubscriptionView: View {
         if let vf = item.validFromDate { validFromDate = vf }
         iconData = item.iconData
         iconSource = item.iconSource
-        notifications = item.notificationsList
+        notifications = item.notificationsList.map(NotificationRuleDraft.init(rule:))
         selectedCategoryRaw = item.categoryRaw
         if let sd = item.startDate {
             startDate = sd
@@ -1472,6 +1552,36 @@ struct AddEditSubscriptionView: View {
     }
 
     // MARK: - Save
+
+    /// Reconciles the form's drafts into an existing item's managed rules:
+    /// updates rules in place by `id`, inserts new drafts, deletes removed rules.
+    /// In-place updates avoid the CloudKit record churn that replacing the whole
+    /// relationship array would cause.
+    private func reconcileNotifications(into item: SubscriptionItem) {
+        let existingRules = item.notificationsList
+        let existingByID = Dictionary(existingRules.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let draftIDs = Set(notifications.map { $0.id })
+
+        // Delete rules the user removed.
+        for rule in existingRules where !draftIDs.contains(rule.id) {
+            modelContext.delete(rule)
+        }
+
+        // Update existing rules in place; create managed rules for new drafts.
+        var result: [NotificationRule] = []
+        for draft in notifications {
+            if let rule = existingByID[draft.id] {
+                rule.offsetType = draft.offsetType
+                rule.value = draft.value
+                rule.isCritical = draft.isCritical
+                rule.customDate = draft.customDate
+                result.append(rule)
+            } else {
+                result.append(draft.makeRule())
+            }
+        }
+        item.notifications = result
+    }
 
     private func saveAndDismiss() {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
@@ -1515,7 +1625,7 @@ struct AddEditSubscriptionView: View {
             existing.emailUsed = trimmedEmail
             existing.phoneNumber = trimmedPhone
             existing.notes = trimmedNotes
-            existing.notifications = notifications
+            reconcileNotifications(into: existing)
             existing.categoryRaw = isDoc ? nil : selectedCategoryRaw
             existing.startDate = isDoc ? nil : startDate
             existing.updatedAt = Date()
@@ -1543,13 +1653,15 @@ struct AddEditSubscriptionView: View {
                 documentNumber: isDoc ? trimmedDocNum.isEmpty ? nil : trimmedDocNum : nil,
                 validFromDate: isDoc ? validFromDate : nil,
                 startDate: isDoc ? nil : startDate,
-                notifications: notifications
+                notifications: notifications.map { $0.makeRule() }
             )
             newItem.categoryRaw = isDoc ? nil : selectedCategoryRaw
             newItem.iconData = iconData
             modelContext.insert(newItem)
             savedItem = newItem
         }
+        // Persist before scheduling so CloudKit export and notifications act on saved data.
+        try? modelContext.save()
         Task { await NotificationManager.shared.reschedule(for: savedItem) }
         dismiss()
     }
@@ -1558,6 +1670,7 @@ struct AddEditSubscriptionView: View {
         if let item {
             NotificationManager.shared.removeAll(for: item)
             modelContext.delete(item)
+            try? modelContext.save()
         }
         dismiss()
     }
@@ -1566,6 +1679,7 @@ struct AddEditSubscriptionView: View {
         if let item {
             item.isArchived = !item.isArchived
             item.updatedAt = Date()
+            try? modelContext.save()
         }
         dismiss()
     }
@@ -1786,7 +1900,11 @@ struct AddAccountValueSheet: View {
     @State private var value = ""
     @State private var shouldSave = true
     @State private var editableValues: [String]
+#if os(iOS)
     @State private var editMode: EditMode = .inactive
+#else
+    @State private var isEditingOptions = false
+#endif
     @FocusState private var focused: Bool
 
     init(
@@ -1848,12 +1966,20 @@ struct AddAccountValueSheet: View {
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(.secondary)
                             Spacer()
+#if os(iOS)
                             Button(editMode == .active ? "Done" : "Edit") {
                                 editMode = editMode == .active ? .inactive : .active
                             }
                             .font(.system(size: 12, weight: .semibold))
+#else
+                            Button(isEditingOptions ? "Done" : "Edit") {
+                                isEditingOptions.toggle()
+                            }
+                            .font(.system(size: 12, weight: .semibold))
+#endif
                         }
 
+#if os(iOS)
                         List {
                             ForEach(Array(editableValues.enumerated()), id: \.offset) { _, value in
                                 Text(value)
@@ -1871,6 +1997,34 @@ struct AddAccountValueSheet: View {
                         .environment(\.editMode, $editMode)
                         .frame(maxHeight: 220)
                         .listStyle(.plain)
+#else
+                        VStack(spacing: 0) {
+                            ForEach(Array(editableValues.enumerated()), id: \.offset) { index, value in
+                                HStack(spacing: 10) {
+                                    Text(value)
+                                        .font(.system(size: 14))
+                                    Spacer()
+                                    if isEditingOptions {
+                                        Button {
+                                            editableValues.remove(at: index)
+                                            onUpdateSuggestions?(editableValues)
+                                        } label: {
+                                            Image(systemName: "trash")
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .foregroundStyle(.red)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                if index < editableValues.count - 1 {
+                                    Divider()
+                                }
+                            }
+                        }
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+#endif
                     }
                 }
 

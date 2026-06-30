@@ -9,12 +9,14 @@ final class NotificationManager {
     // MARK: - Permission
 
     func requestAuthorization() async {
+        // Re-register every launch — categories are not persisted across launches,
+        // so already-authorized users would otherwise lose the "View"/"Dismiss" actions.
+        registerCategories()
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .notDetermined else { return }
         // criticalAlert requires a separate entitlement; the system will show an extra prompt
         _ = try? await center.requestAuthorization(options: [.alert, .badge, .sound, .criticalAlert])
-        registerCategories()
     }
 
     // MARK: - Notification categories (enables "View" action on lock screen)

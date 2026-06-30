@@ -2,71 +2,161 @@ import SwiftUI
 import SwiftData
 import CloudKit
 import CoreData
+import Combine
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
+final class CloudKitDebugStore: ObservableObject {
+    struct Entry: Identifiable, Hashable {
+        let id = UUID()
+        let date: Date
+        let category: String
+        let message: String
+    }
+
+    static let shared = CloudKitDebugStore()
+
+    @Published var accountStatusText = "Unknown"
+    @Published var userRecordIDText = "Unknown"
+    @Published var storeSummaryText = "No CloudKit activity yet"
+    @Published var entries: [Entry] = []
+
+    private init() {}
+
+    private func apply(_ mutation: @escaping () -> Void) {
+        if Thread.isMainThread {
+            mutation()
+        } else {
+            DispatchQueue.main.async { mutation() }
+        }
+    }
+
+    func record(_ message: String, category: String = "CloudKit") {
+        let entry = Entry(date: Date(), category: category, message: message)
+        apply {
+            self.entries.insert(entry, at: 0)
+            if self.entries.count > 30 {
+                self.entries.removeLast(self.entries.count - 30)
+            }
+        }
+        print(message)
+    }
+
+    func setAccountStatus(_ status: String) {
+        apply { self.accountStatusText = status }
+    }
+
+    func setUserRecordID(_ recordID: String) {
+        apply { self.userRecordIDText = recordID }
+    }
+
+    func setStoreSummary(_ summary: String) {
+        apply { self.storeSummaryText = summary }
+    }
+
+    func clear() {
+        apply { self.entries.removeAll() }
+    }
+
+    func transcript() -> String {
+        var lines: [String] = []
+        lines.append("CloudKit Debug Log")
+        lines.append("Account: \(accountStatusText)")
+        lines.append("User Record ID: \(userRecordIDText)")
+        lines.append("Store: \(storeSummaryText)")
+        lines.append("")
+        for entry in entries.reversed() {
+            lines.append("[\(entry.category)] \(entry.date.formatted(date: .omitted, time: .standard)) \(entry.message)")
+        }
+        return lines.joined(separator: "\n")
+    }
+}
 
 @main
 struct ExpiredApp: App {
+#if os(iOS)
+    @UIApplicationDelegateAdaptor(ExpiredAppDelegate.self) private var appDelegate
+#elseif os(macOS)
+    @NSApplicationDelegateAdaptor(ExpiredAppDelegate.self) private var appDelegate
+#endif
+
     // Persisted user preference for iCloud sync (default: on)
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
     // Appearance: 0 = system/auto, 1 = light, 2 = dark
     @AppStorage("appearanceMode") private var appearanceMode = 0
+    @Environment(\.scenePhase) private var scenePhase
+    private static var diagnosticsEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "ExpiredCloudKitDiagnosticsEnabled")
+    }
+    @State private var pendingCloudKitRefreshes: [DispatchWorkItem] = []
 
     let container: ModelContainer
 
     init() {
-        // Enable verbose CoreData + CloudKit mirroring logs at runtime.
-        // Equivalent to the -com.apple.CoreData.CloudKitDebug 3 launch argument.
-        UserDefaults.standard.set(3, forKey: "com.apple.CoreData.CloudKitDebug")
+        // Move any pre-existing plaintext API keys out of UserDefaults into the Keychain.
+        ScreenshotAISettings.migrateAPIKeysToKeychainIfNeeded()
+
+        if Self.diagnosticsEnabled {
+            // Equivalent to the -com.apple.CoreData.CloudKitDebug 3 launch argument.
+            UserDefaults.standard.set(3, forKey: "com.apple.CoreData.CloudKitDebug")
+            CloudKitDebugStore.shared.record("[CloudKit] Debug logging enabled")
+        }
 
         // Read the preference before the App property wrappers are initialised
         let syncOn = UserDefaults.standard.object(forKey: "iCloudSyncEnabled") as? Bool ?? true
         container = Self.makeContainer(iCloudSync: syncOn)
 
-        // NSPersistentStoreRemoteChangeNotification fires at the CoreData store level.
-        // We observe it and explicitly call refreshAllObjects() on the main context so
-        // SwiftUI @Query properties re-evaluate. Without this, remote changes arrive in
-        // the SQLite store but the in-memory context (and therefore the UI) never sees them.
-        let modelContainer = container   // local copy for capture
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("NSPersistentStoreRemoteChangeNotification"),
-            object: nil,
-            queue: .main
-        ) { _ in
-            print("[CloudKit] ⬇ Remote store change received")
-            // Must hop to MainActor because mainContext is main-actor isolated.
-            Task { @MainActor in
-                try? modelContainer.mainContext.save()
-                print("[CloudKit]   mainContext saved — @Query views will refresh ✓")
+        // NSPersistentStoreRemoteChange fires when CloudKit merges remote saves into the store.
+        // We force the main SwiftData context to drop stale state so @Query re-fetches immediately.
+        if Self.diagnosticsEnabled {
+            NotificationCenter.default.addObserver(
+                forName: .NSPersistentStoreRemoteChange,
+                object: nil,
+                queue: .main
+            ) { _ in
+                CloudKitDebugStore.shared.record("[CloudKit] ⬇ Remote store change received")
+                CloudKitDebugStore.shared.setStoreSummary("Remote store change received")
             }
         }
 
         // NSPersistentCloudKitContainer.eventChangedNotification fires when an
         // import/export/setup operation completes. This is the high-level signal.
-        NotificationCenter.default.addObserver(
-            forName: NSPersistentCloudKitContainer.eventChangedNotification,
-            object: nil,
-            queue: .main
-        ) { note in
-            guard let event = note.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
-                    as? NSPersistentCloudKitContainer.Event else { return }
-            let typeStr: String
-            switch event.type {
-            case .setup:  typeStr = "setup"
-            case .import: typeStr = "import ⬇"
-            case .export: typeStr = "export ⬆"
-            @unknown default: typeStr = "unknown(\(event.type.rawValue))"
-            }
-            if let error = event.error {
-                print("[CloudKit] ✗ \(typeStr) event FAILED: \(error)")
-            } else if event.succeeded {
-                print("[CloudKit] ✓ \(typeStr) event succeeded")
-            } else {
-                print("[CloudKit] … \(typeStr) event in progress")
+        if Self.diagnosticsEnabled {
+            NotificationCenter.default.addObserver(
+                forName: NSPersistentCloudKitContainer.eventChangedNotification,
+                object: nil,
+                queue: .main
+            ) { note in
+                guard let event = note.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
+                        as? NSPersistentCloudKitContainer.Event else { return }
+                let typeStr: String
+                switch event.type {
+                case .setup:  typeStr = "setup"
+                case .import: typeStr = "import ⬇"
+                case .export: typeStr = "export ⬆"
+                @unknown default: typeStr = "unknown(\(event.type.rawValue))"
+                }
+                if let error = event.error {
+                    CloudKitDebugStore.shared.record("[CloudKit] ✗ \(typeStr) event FAILED: \(error)")
+                    CloudKitDebugStore.shared.setStoreSummary("\(typeStr) failed")
+                } else if event.succeeded {
+                    CloudKitDebugStore.shared.record("[CloudKit] ✓ \(typeStr) event succeeded")
+                    CloudKitDebugStore.shared.setStoreSummary("\(typeStr) succeeded")
+                } else {
+                    CloudKitDebugStore.shared.record("[CloudKit] … \(typeStr) event in progress")
+                    CloudKitDebugStore.shared.setStoreSummary("\(typeStr) in progress")
+                }
             }
         }
 
-        Task {
-            await Self.logCloudKitAccountStatus()
-            await Self.probeCloudKitRecords()
+        if Self.diagnosticsEnabled {
+            Task {
+                await Self.logCloudKitAccountStatus()
+                await Self.probeCloudKitRecords()
+            }
         }
     }
 
@@ -75,7 +165,7 @@ struct ExpiredApp: App {
     /// here but not in the app, the issue is SwiftData mirroring. If no records
     /// show up here, the iOS devices aren't writing to the cloud at all.
     static func probeCloudKitRecords() async {
-        print("[CloudKit] ── Direct container probe ────────────────────")
+        CloudKitDebugStore.shared.record("[CloudKit] ── Direct container probe ────────────────────")
         let ckContainer = CKContainer(identifier: "iCloud.com.swiftstudio.Expired")
         let db = ckContainer.privateCloudDatabase
 
@@ -83,40 +173,53 @@ struct ExpiredApp: App {
         // rather than recordName since recordName isn't queryable by default.
         let query = CKQuery(recordType: "CD_SubscriptionItem", predicate: NSPredicate(format: "CD_name != %@", ""))
         do {
-            let (results, _) = try await db.records(matching: query, resultsLimit: 5)
+            let (results, _) = try await db.records(matching: query, resultsLimit: 100)
             let successes = results.compactMap { try? $0.1.get() }
             if successes.isEmpty {
-                print("[CloudKit] ⚠ No CD_SubscriptionItem records found in private DB")
-                print("[CloudKit]   → Either iOS hasn't synced yet, or schema not deployed")
-                print("[CloudKit]   → Check CloudKit Console: icloud.developer.apple.com")
+                CloudKitDebugStore.shared.record("[CloudKit] ⚠ No CD_SubscriptionItem records found in private DB")
+                CloudKitDebugStore.shared.record("[CloudKit]   → Either iOS hasn't synced yet, or schema not deployed")
+                CloudKitDebugStore.shared.record("[CloudKit]   → Check CloudKit Console: icloud.developer.apple.com")
+                CloudKitDebugStore.shared.setStoreSummary("No SubscriptionItem records found")
             } else {
-                print("[CloudKit] ✓ Found \(successes.count) CD_SubscriptionItem record(s) in private DB")
-                for r in successes {
-                    print("[CloudKit]   • \(r.recordID.recordName): \(r["CD_name"] as? String ?? "(no name)")")
+                let newestRecords = successes
+                    .sorted { ($0.modificationDate ?? .distantPast) > ($1.modificationDate ?? .distantPast) }
+                    .prefix(8)
+                CloudKitDebugStore.shared.record("[CloudKit] ✓ Found \(successes.count) CD_SubscriptionItem record(s) in private DB (up to first 100)")
+                CloudKitDebugStore.shared.setStoreSummary("Found \(successes.count) CloudKit SubscriptionItem records")
+                CloudKitDebugStore.shared.record("[CloudKit]   newest CloudKit records:")
+                for r in newestRecords {
+                    CloudKitDebugStore.shared.record("[CloudKit]   • \(r.recordID.recordName): \(r["CD_name"] as? String ?? "(no name)")")
                 }
             }
         } catch let error as CKError {
             switch error.code {
             case .unknownItem:
-                print("[CloudKit] ⚠ Record type CD_SubscriptionItem doesn't exist in container")
-                print("[CloudKit]   → Schema not yet deployed. Run app on iOS first, or deploy via CloudKit Console")
+                CloudKitDebugStore.shared.record("[CloudKit] ⚠ Record type CD_SubscriptionItem doesn't exist in container")
+                CloudKitDebugStore.shared.record("[CloudKit]   → Schema not yet deployed. Run app on iOS first, or deploy via CloudKit Console")
+                CloudKitDebugStore.shared.setStoreSummary("Missing CD_SubscriptionItem record type")
             case .notAuthenticated:
-                print("[CloudKit] ✗ Not authenticated — sign into iCloud in System Settings")
+                CloudKitDebugStore.shared.record("[CloudKit] ✗ Not authenticated — sign into iCloud in System Settings")
+                CloudKitDebugStore.shared.setAccountStatus("Not authenticated")
             case .networkUnavailable, .networkFailure:
-                print("[CloudKit] ✗ Network error: \(error.localizedDescription)")
+                CloudKitDebugStore.shared.record("[CloudKit] ✗ Network error: \(error.localizedDescription)")
+                CloudKitDebugStore.shared.setStoreSummary("Network error")
             case .requestRateLimited:
-                print("[CloudKit] ⚠ Rate limited — wait and try again")
+                CloudKitDebugStore.shared.record("[CloudKit] ⚠ Rate limited — wait and try again")
+                CloudKitDebugStore.shared.setStoreSummary("Rate limited")
             case .invalidArguments:
-                print("[CloudKit] ⚠ Query field not queryable in CloudKit Console")
-                print("[CloudKit]   → Go to icloud.developer.apple.com > Schema > CD_SubscriptionItem")
-                print("[CloudKit]   → Set CD_name field to 'Queryable' and deploy to Production")
+                CloudKitDebugStore.shared.record("[CloudKit] ⚠ Query field not queryable in CloudKit Console")
+                CloudKitDebugStore.shared.record("[CloudKit]   → Go to icloud.developer.apple.com > Schema > CD_SubscriptionItem")
+                CloudKitDebugStore.shared.record("[CloudKit]   → Set CD_name field to 'Queryable' and deploy to Production")
+                CloudKitDebugStore.shared.setStoreSummary("Query field not queryable")
             default:
-                print("[CloudKit] ✗ CKError \(error.code.rawValue): \(error.localizedDescription)")
+                CloudKitDebugStore.shared.record("[CloudKit] ✗ CKError \(error.code.rawValue): \(error.localizedDescription)")
+                CloudKitDebugStore.shared.setStoreSummary("CKError \(error.code.rawValue)")
             }
         } catch {
-            print("[CloudKit] ✗ Probe failed: \(error)")
+            CloudKitDebugStore.shared.record("[CloudKit] ✗ Probe failed: \(error)")
+            CloudKitDebugStore.shared.setStoreSummary("Probe failed")
         }
-        print("[CloudKit] ────────────────────────────────────────────")
+        CloudKitDebugStore.shared.record("[CloudKit] ────────────────────────────────────────────")
     }
 
     /// Logs iCloud account status and the CloudKit user record ID.
@@ -128,15 +231,28 @@ struct ExpiredApp: App {
         do {
             let status = try await ckContainer.accountStatus()
             switch status {
-            case .available:      print("[ExpiredApp] iCloud account: available ✓")
-            case .noAccount:      print("[ExpiredApp] iCloud account: NO ACCOUNT — user not signed in to iCloud")
-            case .restricted:     print("[ExpiredApp] iCloud account: restricted — parental controls or MDM")
-            case .couldNotDetermine: print("[ExpiredApp] iCloud account: could not determine — check network")
-            case .temporarilyUnavailable: print("[ExpiredApp] iCloud account: temporarily unavailable")
-            @unknown default:     print("[ExpiredApp] iCloud account: unknown status \(status.rawValue)")
+            case .available:
+                CloudKitDebugStore.shared.record("[ExpiredApp] iCloud account: available ✓")
+                CloudKitDebugStore.shared.setAccountStatus("Available")
+            case .noAccount:
+                CloudKitDebugStore.shared.record("[ExpiredApp] iCloud account: NO ACCOUNT — user not signed in to iCloud")
+                CloudKitDebugStore.shared.setAccountStatus("No account")
+            case .restricted:
+                CloudKitDebugStore.shared.record("[ExpiredApp] iCloud account: restricted — parental controls or MDM")
+                CloudKitDebugStore.shared.setAccountStatus("Restricted")
+            case .couldNotDetermine:
+                CloudKitDebugStore.shared.record("[ExpiredApp] iCloud account: could not determine — check network")
+                CloudKitDebugStore.shared.setAccountStatus("Could not determine")
+            case .temporarilyUnavailable:
+                CloudKitDebugStore.shared.record("[ExpiredApp] iCloud account: temporarily unavailable")
+                CloudKitDebugStore.shared.setAccountStatus("Temporarily unavailable")
+            @unknown default:
+                CloudKitDebugStore.shared.record("[ExpiredApp] iCloud account: unknown status \(status.rawValue)")
+                CloudKitDebugStore.shared.setAccountStatus("Unknown (\(status.rawValue))")
             }
         } catch {
-            print("[ExpiredApp] iCloud account check failed: \(error)")
+            CloudKitDebugStore.shared.record("[ExpiredApp] iCloud account check failed: \(error)")
+            CloudKitDebugStore.shared.setAccountStatus("Check failed")
         }
         // Fetch the CloudKit user record ID — this is unique per Apple ID.
         // Compare this value across Mac, iPhone, and iPad.
@@ -145,10 +261,12 @@ struct ExpiredApp: App {
         // added on one device never appears on another.
         do {
             let userID = try await ckContainer.userRecordID()
-            print("[ExpiredApp] CloudKit user record ID: \(userID.recordName)")
-            print("[ExpiredApp] ⚠ Compare this value across all devices — must be identical for sync to work")
+            CloudKitDebugStore.shared.record("[ExpiredApp] CloudKit user record ID: \(userID.recordName)")
+            CloudKitDebugStore.shared.record("[ExpiredApp] ⚠ Compare this value across all devices — must be identical for sync to work")
+            CloudKitDebugStore.shared.setUserRecordID(userID.recordName)
         } catch {
-            print("[ExpiredApp] CloudKit user record ID fetch failed: \(error)")
+            CloudKitDebugStore.shared.record("[ExpiredApp] CloudKit user record ID fetch failed: \(error)")
+            CloudKitDebugStore.shared.setUserRecordID("Unavailable")
         }
     }
 
@@ -164,13 +282,13 @@ struct ExpiredApp: App {
             withIntermediateDirectories: true
         )
 
-        print("[ExpiredApp] ── Launch diagnostics ──────────────────────")
-        print("[ExpiredApp] Platform: \(platformName)")
-        print("[ExpiredApp] Bundle ID: \(Bundle.main.bundleIdentifier ?? "unknown")")
-        print("[ExpiredApp] CloudKit container: iCloud.com.swiftstudio.Expired")
-        print("[ExpiredApp] Store URL: \(storeURL.path)")
-        print("[ExpiredApp] iCloud sync enabled: \(iCloudSync)")
-        print("[ExpiredApp] ────────────────────────────────────────────")
+        CloudKitDebugStore.shared.record("[ExpiredApp] ── Launch diagnostics ──────────────────────")
+        CloudKitDebugStore.shared.record("[ExpiredApp] Platform: \(platformName)")
+        CloudKitDebugStore.shared.record("[ExpiredApp] Bundle ID: \(Bundle.main.bundleIdentifier ?? "unknown")")
+        CloudKitDebugStore.shared.record("[ExpiredApp] CloudKit container: iCloud.com.swiftstudio.Expired")
+        CloudKitDebugStore.shared.record("[ExpiredApp] Store URL: \(storeURL.path)")
+        CloudKitDebugStore.shared.record("[ExpiredApp] iCloud sync enabled: \(iCloudSync)")
+        CloudKitDebugStore.shared.record("[ExpiredApp] ────────────────────────────────────────────")
 
         // Try preferred store type first
         if iCloudSync {
@@ -181,11 +299,13 @@ struct ExpiredApp: App {
                     cloudKitDatabase: .automatic
                 )
                 let c = try ModelContainer(for: schema, configurations: config)
-                print("[ExpiredApp] CloudKit store opened successfully ✓")
+                CloudKitDebugStore.shared.record("[ExpiredApp] CloudKit store opened successfully ✓")
+                CloudKitDebugStore.shared.setStoreSummary("CloudKit store opened successfully")
                 return c
             } catch {
-                print("[ExpiredApp] CloudKit store FAILED: \(error)")
-                print("[ExpiredApp] Falling back to local-only store")
+                CloudKitDebugStore.shared.record("[ExpiredApp] CloudKit store FAILED: \(error)")
+                CloudKitDebugStore.shared.record("[ExpiredApp] Falling back to local-only store")
+                CloudKitDebugStore.shared.setStoreSummary("CloudKit store failed; using local-only")
             }
         }
 
@@ -193,24 +313,27 @@ struct ExpiredApp: App {
         do {
             let config = ModelConfiguration(schema: schema, url: storeURL)
             let c = try ModelContainer(for: schema, configurations: config)
-            print("[ExpiredApp] Local store opened successfully")
+            CloudKitDebugStore.shared.record("[ExpiredApp] Local store opened successfully")
+            CloudKitDebugStore.shared.setStoreSummary("Local-only store opened")
             return c
         } catch {
-            print("[ExpiredApp] Store failed (likely schema mismatch): \(error)")
-            Self.deleteSQLiteFiles(at: storeURL)
+            CloudKitDebugStore.shared.record("[ExpiredApp] Store failed (likely schema mismatch): \(error)")
+            Self.backupSQLiteFiles(at: storeURL)
         }
 
-        // Re-try after clearing incompatible store
+        // Re-try after moving the incompatible store aside (originals preserved in Backups/)
         do {
             let config = ModelConfiguration(schema: schema, url: storeURL)
             let c = try ModelContainer(for: schema, configurations: config)
-            print("[ExpiredApp] Fresh store opened after deleting old schema")
+            CloudKitDebugStore.shared.record("[ExpiredApp] Fresh store opened after backing up old schema")
+            CloudKitDebugStore.shared.setStoreSummary("Fresh local store opened")
             return c
         } catch {
-            print("[ExpiredApp] Fresh store also failed: \(error)")
+            CloudKitDebugStore.shared.record("[ExpiredApp] Fresh store also failed: \(error)")
         }
 
-        print("[ExpiredApp] WARNING: falling back to in-memory store")
+        CloudKitDebugStore.shared.record("[ExpiredApp] WARNING: falling back to in-memory store")
+        CloudKitDebugStore.shared.setStoreSummary("In-memory fallback")
         return try! ModelContainer(for: schema,
                                    configurations: ModelConfiguration(isStoredInMemoryOnly: true))
     }
@@ -225,13 +348,29 @@ struct ExpiredApp: App {
 #endif
     }
 
-    /// Removes the SQLite store triple (.sqlite, .sqlite-shm, .sqlite-wal) at the given URL.
-    static func deleteSQLiteFiles(at url: URL) {
+    /// Moves the SQLite store triple (.store, .store-shm, .store-wal) into a timestamped
+    /// Backups/ folder instead of deleting it. A schema mismatch, migration bug, or transient
+    /// open failure must never destroy the user's on-device data — preserving the files keeps
+    /// recovery (and a future migration path) possible.
+    static func backupSQLiteFiles(at url: URL) {
         let fm = FileManager.default
+        let stamp = ISO8601DateFormatter().string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+        let backupDir = url.deletingLastPathComponent()
+            .appending(path: "Backups", directoryHint: .isDirectory)
+            .appending(path: stamp, directoryHint: .isDirectory)
+        try? fm.createDirectory(at: backupDir, withIntermediateDirectories: true)
+
         for suffix in ["", "-shm", "-wal"] {
             let file = URL(fileURLWithPath: url.path + suffix)
-            try? fm.removeItem(at: file)
-            print("[ExpiredApp] Deleted: \(file.lastPathComponent)")
+            guard fm.fileExists(atPath: file.path) else { continue }
+            let dest = backupDir.appending(path: file.lastPathComponent)
+            do {
+                try fm.moveItem(at: file, to: dest)
+                CloudKitDebugStore.shared.record("[ExpiredApp] Backed up \(file.lastPathComponent) → \(dest.path)")
+            } catch {
+                CloudKitDebugStore.shared.record("[ExpiredApp] Backup move failed for \(file.lastPathComponent): \(error)")
+            }
         }
     }
 
@@ -243,6 +382,58 @@ struct ExpiredApp: App {
         }
     }
 
+    @MainActor
+    private func runSwiftDataRefreshPass(reason: String, refreshRootView: Bool = true) {
+        CloudKitDebugStore.shared.record("[CloudKit]   local SwiftData refresh pass started (\(reason))")
+        do {
+            if container.mainContext.hasChanges {
+                try container.mainContext.save()
+            }
+            container.mainContext.processPendingChanges()
+            let items = try container.mainContext.fetch(
+                FetchDescriptor<SubscriptionItem>(
+                    sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+                )
+            )
+            let rules = try container.mainContext.fetch(FetchDescriptor<NotificationRule>())
+            container.mainContext.processPendingChanges()
+
+            if refreshRootView {
+                CloudKitDebugStore.shared.record("[CloudKit]   SwiftData refresh completed without resetting UI state ✓")
+            }
+            CloudKitDebugStore.shared.setStoreSummary("Local SwiftData has \(items.count) SubscriptionItem records")
+            CloudKitDebugStore.shared.record("[CloudKit]   local SwiftData store: \(items.count) item(s), \(rules.count) notification rule(s)")
+            for item in items.prefix(8) {
+                let archived = item.isArchived ? " archived" : ""
+                CloudKitDebugStore.shared.record("[CloudKit]   • \(item.name)\(archived)")
+            }
+            CloudKitDebugStore.shared.record("[CloudKit]   local SwiftData refresh pass finished ✓")
+        } catch {
+            CloudKitDebugStore.shared.record("[CloudKit]   local SwiftData refresh pass failed: \(error)")
+        }
+    }
+
+    private func scheduleSwiftDataRefreshPasses(reason: String) {
+        for workItem in pendingCloudKitRefreshes {
+            workItem.cancel()
+        }
+        pendingCloudKitRefreshes.removeAll()
+
+        let passes: [(delay: TimeInterval, suffix: String, refreshRootView: Bool)] = [
+            (0.0, "", true),
+            (1.0, " +1s", true),
+            (2.0, " +2s", false)
+        ]
+
+        for pass in passes {
+            let workItem = DispatchWorkItem {
+                runSwiftDataRefreshPass(reason: "\(reason)\(pass.suffix)", refreshRootView: pass.refreshRootView)
+            }
+            pendingCloudKitRefreshes.append(workItem)
+            DispatchQueue.main.asyncAfter(deadline: .now() + pass.delay, execute: workItem)
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -251,25 +442,105 @@ struct ExpiredApp: App {
                 .task {
                     await NotificationManager.shared.requestAuthorization()
                 }
-#if os(macOS)
-                // On macOS, CloudKit processes remote changes on scene phase transitions.
-                // We also respond to manual refresh requests from Settings.
+                .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
+                    scheduleSwiftDataRefreshPasses(reason: "remote store change")
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)) { note in
+                    guard let event = note.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
+                            as? NSPersistentCloudKitContainer.Event,
+                          event.type == .import,
+                          event.succeeded
+                    else { return }
+                    scheduleSwiftDataRefreshPasses(reason: "CloudKit import succeeded")
+                }
                 .onReceive(NotificationCenter.default.publisher(for: .expiredManualSync)) { _ in
-                    print("[CloudKit] ── Manual sync triggered ────────────────────")
+                    CloudKitDebugStore.shared.record("[CloudKit] ── Manual sync triggered ────────────────────")
+                    scheduleSwiftDataRefreshPasses(reason: "manual sync")
                     Task {
                         await Self.logCloudKitAccountStatus()
                         await Self.probeCloudKitRecords()
                     }
                 }
-#endif
+                .onChange(of: scenePhase) { _, newPhase in
+                    switch newPhase {
+                    case .active:
+                        scheduleSwiftDataRefreshPasses(reason: "scene became active")
+                    case .inactive, .background:
+                        Task { @MainActor in
+                            if container.mainContext.hasChanges {
+                                try? container.mainContext.save()
+                                CloudKitDebugStore.shared.record("[CloudKit]   saved pending changes before leaving active scene")
+                            }
+                            BackupService.runAutomaticBackupIfNeeded(context: container.mainContext)
+                        }
+                    @unknown default:
+                        break
+                    }
+                }
         }
 #if os(macOS)
         .defaultSize(width: 900, height: 680)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings...") {
+                    NotificationCenter.default.post(name: .expiredShowSettings, object: nil)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+        }
 #endif
     }
 }
 
 extension Notification.Name {
     static let expiredManualSync = Notification.Name("com.swiftstudio.Expired.manualSync")
+    static let expiredShowSettings = Notification.Name("com.swiftstudio.Expired.showSettings")
 }
 
+#if os(iOS)
+final class ExpiredAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        application.registerForRemoteNotifications()
+        print("[CloudKit] Registered for remote notifications")
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        print("[CloudKit] Remote notification registration succeeded")
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        print("[CloudKit] Remote notification registration failed: \(error)")
+    }
+}
+#elseif os(macOS)
+final class ExpiredAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.registerForRemoteNotifications(matching: [])
+        print("[CloudKit] Registered for remote notifications")
+    }
+
+    func application(
+        _ application: NSApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        print("[CloudKit] Remote notification registration succeeded")
+    }
+
+    func application(
+        _ application: NSApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        print("[CloudKit] Remote notification registration failed: \(error)")
+    }
+}
+#endif

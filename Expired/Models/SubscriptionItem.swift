@@ -371,6 +371,10 @@ final class SubscriptionItem {
             return .expired
         }
 
+        if isPromotionalEndDate && nextRenewalDate < now {
+            return .expired
+        }
+
         if !isAutoRenew && nextRenewalDate < now {
             return .expired
         }
@@ -389,7 +393,58 @@ final class SubscriptionItem {
         }
         if let trial = trialEndDate, trial > Date() { return trial }
         if isCancelled, let until = activeUntilDate { return until }
+        if isAutoRenew, !isPromotionalEndDate {
+            return nextLiveRenewalDate()
+        }
         return nextRenewalDate
+    }
+
+    /// Returns the next upcoming occurrence for active recurring auto-renew items.
+    /// The stored date remains the original known renewal day; display, sorting, and
+    /// notifications use this normalized occurrence so stale synced records stay useful.
+    func nextLiveRenewalDate(referenceDate: Date = Date(), calendar: Calendar = .current) -> Date {
+        guard itemType == .subscription, isAutoRenew, !isCancelled else { return nextRenewalDate }
+        guard billingCycle != .oneOff, billingCycle != .custom else { return nextRenewalDate }
+
+        let referenceDay = calendar.startOfDay(for: referenceDate)
+        var candidate = nextRenewalDate
+
+        while calendar.startOfDay(for: candidate) < referenceDay {
+            guard let advanced = calendar.date(
+                byAdding: renewalComponent,
+                value: renewalStep,
+                to: candidate
+            ) else {
+                return nextRenewalDate
+            }
+            candidate = advanced
+        }
+
+        return candidate
+    }
+
+    private var renewalComponent: Calendar.Component {
+        switch billingCycle {
+        case .weekly: return .weekOfYear
+        case .monthly: return .month
+        case .yearly: return .year
+        case .oneOff, .custom: return .day
+        }
+    }
+
+    private var renewalStep: Int {
+        switch billingCycle {
+        case .weekly, .monthly, .yearly: return 1
+        case .oneOff, .custom: return 0
+        }
+    }
+
+    private var isPromotionalEndDate: Bool {
+        let lower = name.lowercased()
+        return lower.contains("off ends") ||
+            lower.contains("discount ends") ||
+            lower.contains("offer ends") ||
+            lower.contains("promo ends")
     }
 
     var daysUntilRenewal: Int {
