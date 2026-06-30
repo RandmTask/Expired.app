@@ -8,6 +8,11 @@
 
 /* Begin PBXBuildFile section */
 		7E1C305F2F7CA8410086563F /* AppCatalog.json in Resources */ = {isa = PBXBuildFile; fileRef = 7E1C305E2F7C17E10086563F /* AppCatalog.json */; };
+		7ED538012FF3A95E004321A5 /* ReceiptParser in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538002FF3A95E004321A5 /* ReceiptParser */; };
+		7ED538032FF3A95E004321A5 /* RevenueCat in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538022FF3A95E004321A5 /* RevenueCat */; };
+		7ED538052FF3A95E004321A5 /* RevenueCatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538042FF3A95E004321A5 /* RevenueCatUI */; };
+		7ED538072FF3A95E004321A5 /* RevenueCat_CustomEntitlementComputation in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538062FF3A95E004321A5 /* RevenueCat_CustomEntitlementComputation */; };
+		7ED5380A2FF3A9C9004321A5 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538092FF3A9C9004321A5 /* Supabase */; };
 		7EEA5B7F2F752B8800DF89FC /* CloudKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7EEA5B7E2F752B8800DF89FC /* CloudKit.framework */; };
 /* End PBXBuildFile section */
 
@@ -43,7 +48,12 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7ED538052FF3A95E004321A5 /* RevenueCatUI in Frameworks */,
+				7ED538072FF3A95E004321A5 /* RevenueCat_CustomEntitlementComputation in Frameworks */,
+				7ED5380A2FF3A9C9004321A5 /* Supabase in Frameworks */,
+				7ED538012FF3A95E004321A5 /* ReceiptParser in Frameworks */,
 				7EEA5B7F2F752B8800DF89FC /* CloudKit.framework in Frameworks */,
+				7ED538032FF3A95E004321A5 /* RevenueCat in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +122,11 @@
 			);
 			name = Expired;
 			packageProductDependencies = (
+				7ED538002FF3A95E004321A5 /* ReceiptParser */,
+				7ED538022FF3A95E004321A5 /* RevenueCat */,
+				7ED538042FF3A95E004321A5 /* RevenueCatUI */,
+				7ED538062FF3A95E004321A5 /* RevenueCat_CustomEntitlementComputation */,
+				7ED538092FF3A9C9004321A5 /* Supabase */,
 			);
 			productName = Expired;
 			productReference = 7EEA5B592F7395E200DF89FC /* Expired.app */;
@@ -141,6 +156,10 @@
 			);
 			mainGroup = 7EEA5B502F7395E200DF89FC;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				7ED537FF2FF3A95E004321A5 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */,
+				7ED538082FF3A9C9004321A5 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 7EEA5B5A2F7395E200DF89FC /* Products */;
 			projectDirPath = "";
@@ -409,6 +428,53 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7ED537FF2FF3A95E004321A5 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/RevenueCat/purchases-ios-spm.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.80.0;
+			};
+		};
+		7ED538082FF3A9C9004321A5 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase-community/supabase-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7ED538002FF3A95E004321A5 /* ReceiptParser */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7ED537FF2FF3A95E004321A5 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */;
+			productName = ReceiptParser;
+		};
+		7ED538022FF3A95E004321A5 /* RevenueCat */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7ED537FF2FF3A95E004321A5 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */;
+			productName = RevenueCat;
+		};
+		7ED538042FF3A95E004321A5 /* RevenueCatUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7ED537FF2FF3A95E004321A5 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */;
+			productName = RevenueCatUI;
+		};
+		7ED538062FF3A95E004321A5 /* RevenueCat_CustomEntitlementComputation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7ED537FF2FF3A95E004321A5 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */;
+			productName = RevenueCat_CustomEntitlementComputation;
+		};
+		7ED538092FF3A9C9004321A5 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7ED538082FF3A9C9004321A5 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 7EEA5B512F7395E200DF89FC /* Project object */;
 }

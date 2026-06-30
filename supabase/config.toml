@@ -1,0 +1,13 @@
+project_id = "expired"
+
+# AI endpoints require a valid Supabase session JWT (anonymous sessions count).
+[functions.ai-proxy]
+verify_jwt = true
+
+[functions.models]
+verify_jwt = true
+
+# RevenueCat is not a Supabase user — it authenticates with a shared bearer secret
+# (REVENUECAT_WEBHOOK_SECRET) instead of a Supabase JWT.
+[functions.revenuecat-webhook]
+verify_jwt = false
