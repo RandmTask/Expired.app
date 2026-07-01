@@ -303,24 +303,133 @@ struct AddEditSubscriptionView: View {
 
     // MARK: - Basic section
 
+    @ViewBuilder
     private var basicSection: some View {
+        if itemType == .subscription {
+            subscriptionDetailsSection
+        } else {
+            documentDetailsSection
+        }
+    }
+
+    private var subscriptionDetailsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: itemType == .document ? "Document" : "Details")
+            SectionHeader(title: "Details")
             FormCard {
                 VStack(spacing: 0) {
-                    // Name + icon
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 14) {
+                            iconView
+                                .frame(width: 48, height: 48)
+                            TextField("Name", text: $name)
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundStyle(.primary)
+                                .submitLabel(.next)
+                                .autocorrectionDisabled()
+                                .focused($nameFieldFocused)
+                                .onChange(of: name) { _, newValue in
+                                    handleNameChange(newValue)
+                                }
+                            Spacer(minLength: 10)
+                            if detailsHeaderIsComplete {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundStyle(.green)
+                                    .frame(width: 44, height: 44)
+                                    .background(Color.green.opacity(0.18), in: Circle())
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 14)
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .contentShape(Rectangle())
+                        .onTapGesture { nameFieldFocused = true }
+
+                        if appStoreMatched {
+                            HStack(spacing: 7) {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 12, weight: .bold))
+                                Text("Matched with the App Store")
+                                    .font(.system(size: 15, weight: .medium))
+                            }
+                            .foregroundStyle(.green)
+                            .padding(.horizontal, 8)
+                        } else if canShowAppStoreSearchPrompt {
+                            appSearchResultsView
+                                .padding(.leading, 0)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
+                    .padding(.bottom, 10)
+
+                    FormDivider()
+
+                    HStack(spacing: 12) {
+                        Text("Website")
+                            .font(.system(size: 19, weight: .bold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 92, alignment: .leading)
+                        TextField("eg. netflix.com or App Store URL", text: $url)
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .trailingTextAlignment()
+                            .lineLimit(1)
+                            .autocorrectionDisabled()
+                            .focused($urlFieldFocused)
+#if os(iOS)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+#endif
+                            .onSubmit { scheduleFaviconFetch(url, delay: false) }
+                            .onChange(of: url) { _, newValue in
+                                if isApplyingCatalogMatch { return }
+                                if suppressNextFaviconFetch {
+                                    suppressNextFaviconFetch = false
+                                    return
+                                }
+                                if iconData != nil { return }
+                                scheduleFaviconFetch(newValue, delay: true)
+                            }
+                        if isFetchingIcon {
+                            ProgressView().scaleEffect(0.75)
+                        } else if websiteIsComplete {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(.black)
+                                .frame(width: 34, height: 34)
+                                .background(.green, in: Circle())
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 17)
+                    .contentShape(Rectangle())
+                    .onTapGesture { urlFieldFocused = true }
+
+                    FormDivider()
+
+                    categoryDetailsRow
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 17)
+                }
+            }
+        }
+    }
+
+    private var documentDetailsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title: "Document")
+            FormCard {
+                VStack(spacing: 0) {
                     HStack(spacing: 14) {
                         iconView
                             .padding(.leading, 16)
-                        TextField(itemType == .document ? "Document Name" : "Name", text: $name)
+                        TextField("Document Name", text: $name)
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(.primary)
                             .submitLabel(.next)
                             .autocorrectionDisabled()
                             .focused($nameFieldFocused)
-                            .onChange(of: name) { _, newValue in
-                                handleNameChange(newValue)
-                            }
                             .padding(.vertical, 18)
                             .padding(.trailing, 16)
                     }
@@ -328,201 +437,166 @@ struct AddEditSubscriptionView: View {
                     .contentShape(Rectangle())
                     .onTapGesture { nameFieldFocused = true }
 
-                    if canShowAppStoreSearchPrompt {
-                        appSearchResultsView
-                    }
-
                     FormDivider()
-
-                    // Website — favicon auto-fetches when URL changes (subscriptions only)
-                    if itemType == .subscription {
-                        HStack {
-                            Text("Website")
-                                .font(.system(size: 16))
-                                .frame(minWidth: 80, alignment: .leading)
-                                .foregroundStyle(.primary)
-                            TextField("eg. netflix.com or App Store URL", text: $url)
-                                .foregroundStyle(.primary)
-                                .trailingTextAlignment()
-                                .autocorrectionDisabled()
-                                .focused($urlFieldFocused)
-#if os(iOS)
-                                .keyboardType(.URL)
-                                .textInputAutocapitalization(.never)
+                    FormRow(label: "Expires") {
+                        DatePicker("", selection: $expiryDate, displayedComponents: .date)
+                            .labelsHidden()
+#if os(macOS)
+                            .datePickerStyle(.field)
 #endif
-                                .onSubmit { scheduleFaviconFetch(url, delay: false) }
-                                .onChange(of: url) { _, newValue in
-                                    if isApplyingCatalogMatch { return }
-                                    if suppressNextFaviconFetch {
-                                        suppressNextFaviconFetch = false
-                                        return
-                                    }
-                                    if iconData != nil { return }
-                                    scheduleFaviconFetch(newValue, delay: true)
-                                }
-                            if isFetchingIcon {
-                                ProgressView().scaleEffect(0.75).padding(.leading, 4)
-                            } else if iconData != nil {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                                    .padding(.leading, 4)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                        .contentShape(Rectangle())
-
-                        FormDivider()
                     }
-
-                    // Date field: expiry for documents, renew/trial for subscriptions
-                    if itemType == .document {
-                        FormRow(label: "Expires") {
-                            DatePicker("", selection: $expiryDate, displayedComponents: .date)
-                                .labelsHidden()
+                    FormDivider()
+                    FormRow(label: "Valid From") {
+                        DatePicker("", selection: $validFromDate, displayedComponents: .date)
+                            .labelsHidden()
 #if os(macOS)
-                                .datePickerStyle(.field)
+                            .datePickerStyle(.field)
 #endif
-                        }
-                        FormDivider()
-                        FormRow(label: "Valid From") {
-                            DatePicker("", selection: $validFromDate, displayedComponents: .date)
-                                .labelsHidden()
-#if os(macOS)
-                                .datePickerStyle(.field)
-#endif
-                        }
-                        FormDivider()
-                        HStack {
-                            Text("Reference")
-                                .font(.system(size: 16))
-                                .frame(minWidth: 80, alignment: .leading)
-                                .foregroundStyle(.primary)
-                            TextField("Document / policy number", text: $documentNumber)
-                                .foregroundStyle(.primary)
-                                .trailingTextAlignment()
-                                .autocorrectionDisabled()
-#if os(iOS)
-                                .textInputAutocapitalization(.characters)
-#endif
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                        FormDivider()
-                        // Website field for documents too
-                        HStack {
-                            Text("Website")
-                                .font(.system(size: 16))
-                                .frame(minWidth: 80, alignment: .leading)
-                                .foregroundStyle(.primary)
-                            TextField("agency.gov.au", text: $url)
-                                .foregroundStyle(.primary)
-                                .trailingTextAlignment()
-                                .autocorrectionDisabled()
-#if os(iOS)
-                                .keyboardType(.URL)
-                                .textInputAutocapitalization(.never)
-#endif
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                    } else {
-                        // Category row — matches AccountField layout exactly
-                        HStack(alignment: .center) {
-                            Text("Category")
-                                .font(.system(size: 16))
-                                .fixedSize()
-                                .foregroundStyle(.primary)
-                            Menu {
-                                ForEach(BuiltInCategoryStore.unifiedVisibleItems()) { item in
-                                    switch item {
-                                    case .builtIn(let cat):
-                                        Button {
-                                            hideKeyboard()
-                                            selectedCategoryRaw = cat.rawValue
-                                        } label: {
-                                            Label(cat.displayName, systemImage: cat.icon)
-                                        }
-                                    case .custom(let cat):
-                                        Button {
-                                            hideKeyboard()
-                                            selectedCategoryRaw = cat.name
-                                        } label: {
-                                            Label(cat.name, systemImage: cat.icon)
-                                        }
-                                    }
-                                }
-                            } label: {
-                                if let raw = selectedCategoryRaw {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: UserCategoryStore.icon(for: raw))
-                                            .font(.system(size: 13))
-                                        Text(SubscriptionCategory(rawValue: raw)?.displayName ?? raw)
-                                            .lineLimit(1)
-                                    }
-                                    .foregroundStyle(.primary)
-                                    .frame(maxWidth: .infinity, alignment: .trailing)
-                                } else {
-                                    Text("None")
-                                        .foregroundStyle(.secondary.opacity(0.35))
-                                        .frame(maxWidth: .infinity, alignment: .trailing)
-                                }
-                            }
-                            .menuStyle(.borderlessButton)
-#if os(macOS)
-                            .menuIndicator(.hidden)
-#endif
-                            // Trailing action: × clears when filled, + opens menu when empty
-                            if selectedCategoryRaw != nil {
-                                Button {
-                                    withAnimation { selectedCategoryRaw = nil }
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 18))
-                                        .foregroundStyle(.secondary)
-                                        .padding(.leading, 6)
-                                }
-                                .buttonStyle(.plain)
-                            } else {
-                                // + button also opens the menu (matches AccountField blue +)
-                                Menu {
-                                    ForEach(BuiltInCategoryStore.unifiedVisibleItems()) { item in
-                                        switch item {
-                                        case .builtIn(let cat):
-                                            Button {
-                                                hideKeyboard()
-                                                selectedCategoryRaw = cat.rawValue
-                                            } label: {
-                                                Label(cat.displayName, systemImage: cat.icon)
-                                            }
-                                        case .custom(let cat):
-                                            Button {
-                                                hideKeyboard()
-                                                selectedCategoryRaw = cat.name
-                                            } label: {
-                                                Label(cat.name, systemImage: cat.icon)
-                                            }
-                                        }
-                                    }
-                                } label: {
-                                    Image(systemName: "plus.circle.fill")
-                                        .font(.system(size: 18))
-                                        .foregroundStyle(.blue.opacity(0.8))
-                                        .padding(.leading, 6)
-                                }
-                                .menuStyle(.borderlessButton)
-#if os(macOS)
-                                .menuIndicator(.hidden)
-#endif
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-
                     }
+                    FormDivider()
+                    HStack {
+                        Text("Reference")
+                            .font(.system(size: 16))
+                            .frame(minWidth: 80, alignment: .leading)
+                            .foregroundStyle(.primary)
+                        TextField("Document / policy number", text: $documentNumber)
+                            .foregroundStyle(.primary)
+                            .trailingTextAlignment()
+                            .autocorrectionDisabled()
+#if os(iOS)
+                            .textInputAutocapitalization(.characters)
+#endif
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    FormDivider()
+                    HStack {
+                        Text("Website")
+                            .font(.system(size: 16))
+                            .frame(minWidth: 80, alignment: .leading)
+                            .foregroundStyle(.primary)
+                        TextField("agency.gov.au", text: $url)
+                            .foregroundStyle(.primary)
+                            .trailingTextAlignment()
+                            .autocorrectionDisabled()
+#if os(iOS)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+#endif
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
                 }
             }
         }
+    }
+
+    private var categoryDetailsRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text("Category")
+                .font(.system(size: 19, weight: .bold))
+                .foregroundStyle(.primary)
+                .frame(width: 92, alignment: .leading)
+
+            categoryPicker
+
+            if selectedCategoryRaw != nil {
+                Button {
+                    withAnimation { selectedCategoryRaw = nil }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34, height: 34)
+                        .background(Color.secondary.opacity(0.16), in: Circle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                categoryAddPicker
+            }
+        }
+    }
+
+    private var categoryPicker: some View {
+        Menu {
+            categoryMenuContent
+        } label: {
+            if let raw = selectedCategoryRaw {
+                HStack(spacing: 9) {
+                    Image(systemName: UserCategoryStore.icon(for: raw))
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 25, height: 25)
+                        .background(.blue, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    Text(SubscriptionCategory(rawValue: raw)?.displayName ?? raw)
+                        .font(.system(size: 17, weight: .bold))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.blue)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            } else {
+                Text("None")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.45))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+        .menuStyle(.borderlessButton)
+#if os(macOS)
+        .menuIndicator(.hidden)
+#endif
+    }
+
+    private var categoryAddPicker: some View {
+        Menu {
+            categoryMenuContent
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(.blue)
+                .frame(width: 34, height: 34)
+                .background(Color.blue.opacity(0.13), in: Circle())
+        }
+        .menuStyle(.borderlessButton)
+#if os(macOS)
+        .menuIndicator(.hidden)
+#endif
+    }
+
+    @ViewBuilder
+    private var categoryMenuContent: some View {
+        ForEach(BuiltInCategoryStore.unifiedVisibleItems()) { item in
+            switch item {
+            case .builtIn(let cat):
+                Button {
+                    hideKeyboard()
+                    selectedCategoryRaw = cat.rawValue
+                } label: {
+                    Label(cat.displayName, systemImage: cat.icon)
+                }
+            case .custom(let cat):
+                Button {
+                    hideKeyboard()
+                    selectedCategoryRaw = cat.name
+                } label: {
+                    Label(cat.name, systemImage: cat.icon)
+                }
+            }
+        }
+    }
+
+    private var detailsHeaderIsComplete: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var appStoreMatched: Bool {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.contains("apps.apple.com") || trimmed.contains("itunes.apple.com")
+    }
+
+    private var websiteIsComplete: Bool {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && (iconData != nil || trimmed.contains("."))
     }
 
     @ViewBuilder
@@ -549,10 +623,7 @@ struct AddEditSubscriptionView: View {
             .background(Color.blue.opacity(0.1), in: Capsule())
         }
         .buttonStyle(.plain)
-        // Align chip under the text field, not the icon:
-        // 16pt card inset + 60pt icon + 14pt gap = 90pt
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.leading, 90)
         .padding(.bottom, 8)
     }
 

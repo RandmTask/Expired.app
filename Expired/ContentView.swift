@@ -2324,7 +2324,7 @@ struct SettingsView: View {
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
     @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
-    @AppStorage(ScreenshotAISettings.providerKey) private var screenshotAIProviderRaw = ScreenshotAIProvider.appleIntelligence.rawValue
+    @AppStorage(ScreenshotAISettings.providerKey) private var screenshotAIProviderRaw = ScreenshotAIProvider.automatic.rawValue
     /// Live model picker state. `selectedModels` mirrors the chosen model per
     /// provider; `availableModels` is the last fetched list for the current provider.
     @State private var selectedModels: [String: String] = [:]
@@ -2440,7 +2440,7 @@ struct SettingsView: View {
     }
 
     private var screenshotAIProvider: ScreenshotAIProvider {
-        get { ScreenshotAIProvider(rawValue: screenshotAIProviderRaw) ?? .appleIntelligence }
+        get { ScreenshotAIProvider(rawValue: screenshotAIProviderRaw) ?? .automatic }
         nonmutating set { screenshotAIProviderRaw = newValue.rawValue }
     }
 
@@ -3400,7 +3400,7 @@ struct SettingsView: View {
             } header: {
                 sectionHeader("SCREENSHOT IMPORT")
             } footer: {
-                Text("Apple Intelligence keeps analysis on device. Other providers send the screenshot through Expired's secure proxy — no key needed on your device.")
+                Text("Automatic tries On-Device first, then falls back to Expired's secure proxy if needed. Other providers send the screenshot through the proxy directly — no key needed on your device.")
             }
 
             // MARK: Notifications

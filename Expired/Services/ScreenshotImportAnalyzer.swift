@@ -1,5 +1,7 @@
 import Foundation
 import Vision
+import ImageIO
+import UniformTypeIdentifiers
 
 #if canImport(FoundationModels)
 import FoundationModels
@@ -12,6 +14,7 @@ import AppKit
 #endif
 
 enum ScreenshotAIProvider: String, CaseIterable, Identifiable {
+    case automatic = "Automatic"
     case appleIntelligence = "Apple Intelligence"
     case openAI = "ChatGPT"
     case gemini = "Gemini"
@@ -36,42 +39,34 @@ enum ScreenshotAIProvider: String, CaseIterable, Identifiable {
     }
 
     var requiresAPIKey: Bool {
-        self != .appleIntelligence
+        self != .appleIntelligence && self != .automatic
     }
 
     /// Stable identifier the Supabase `ai-proxy` / `models` functions use to pick the
-    /// provider endpoint and inject the server-held key. nil for the on-device path,
-    /// which is never proxied (and stays free).
+    /// provider endpoint and inject the server-held key. nil for the on-device path
+    /// (never proxied) and for Automatic (the server picks the cascade itself).
     var proxyID: String? {
         switch self {
         case .openAI: return "openai"
         case .claude: return "claude"
         case .gemini: return "gemini"
         case .deepSeek: return "deepseek"
-        case .appleIntelligence: return nil
+        case .appleIntelligence, .automatic: return nil
         }
     }
 
     /// Last-resort offline fallback model per provider. NOT the only source of
     /// truth — `selectedModelID` prefers the user's live-picked override (see the
-    /// model picker in Settings). End state per `_shared/ai-providers.md`: a
-    /// server-side default via the release proxy. Model IDs rot every few months.
+    /// model picker in Settings). Automatic ignores this entirely: the cascade's
+    /// model per provider is resolved server-side from `app_config`, editable
+    /// without a release. Model IDs rot every few months.
     var defaultModelID: String {
         switch self {
         case .openAI: return "gpt-4.1-mini"
         case .deepSeek: return "deepseek-chat"
         case .claude: return "claude-3-5-haiku-latest"
         case .gemini: return "gemini-2.5-flash"
-        case .appleIntelligence: return ""
-        }
-    }
-
-    /// Whether the provider's chosen model accepts image input. Vision providers
-    /// receive the screenshot directly; text-only providers get OCR lines.
-    var supportsVision: Bool {
-        switch self {
-        case .openAI, .claude, .gemini: return true
-        case .deepSeek, .appleIntelligence: return false
+        case .appleIntelligence, .automatic: return ""
         }
     }
 
@@ -106,8 +101,8 @@ struct ScreenshotAISettings {
 
     static var current: ScreenshotAISettings {
         let defaults = UserDefaults.standard
-        let providerRaw = defaults.string(forKey: providerKey) ?? ScreenshotAIProvider.appleIntelligence.rawValue
-        let provider = ScreenshotAIProvider(rawValue: providerRaw) ?? .appleIntelligence
+        let providerRaw = defaults.string(forKey: providerKey) ?? ScreenshotAIProvider.automatic.rawValue
+        let provider = ScreenshotAIProvider(rawValue: providerRaw) ?? .automatic
         return ScreenshotAISettings(
             provider: provider,
             apiKey: KeychainStore.get(provider.keychainAccount),
@@ -223,31 +218,21 @@ enum ScreenshotImportAnalyzer {
         return data
     }
 
-    /// Sends a provider request `body` through the Supabase `ai-proxy` (server holds the
-    /// key, gates Premium, rate-limits, kill-switch). The proxy passes the provider's
-    /// response straight through, so the existing per-provider parsers work unchanged.
-    private static func proxyForData(
-        provider: ScreenshotAIProvider,
-        model: String,
-        body: [String: Any]
-    ) async throws -> Data {
-        guard let proxyID = provider.proxyID else {
-            throw AnalyzerError.appleIntelligenceUnavailable
-        }
-        var request = try await SupabaseService.shared.authorizedFunctionRequest(BackendConfig.Function.aiProxy)
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "provider": proxyID,
-            "model": model,
-            "body": body
-        ])
-        return try await sendForData(request)
-    }
-
     /// Extracts a human error message from a provider error payload.
     /// OpenAI / DeepSeek / Anthropic / Gemini all nest it under `error.message`.
+    /// The proxy's cascade failure additionally nests `error.tried`, naming every
+    /// provider it attempted — surfaced so a real outage reads differently from
+    /// "this wasn't a subscription screenshot".
     private static func providerErrorMessage(from data: Data) -> String? {
         guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
-        if let error = object["error"] as? [String: Any], let message = error["message"] as? String { return message }
+        if let error = object["error"] as? [String: Any] {
+            let message = error["message"] as? String
+            if let tried = error["tried"] as? [[String: Any]], !tried.isEmpty {
+                let names = tried.compactMap { $0["provider"] as? String }
+                if !names.isEmpty { return "\(names.joined(separator: ", ")) unreachable." }
+            }
+            return message
+        }
         if let message = object["error"] as? String { return message }
         return nil
     }
@@ -281,9 +266,19 @@ enum ScreenshotImportAnalyzer {
             warning = fallbackWarning(for: settings.provider, error: error)
             drafts = parse(lines: try await ocrLines(from: imageData), referenceDate: referenceDate)
         }
-        let priceRepaired = await repairMissingPrices(in: drafts, imageData: imageData)
+        let recognizedLines = try? await recognizedTextLines(from: imageData)
+        let localPurchaseDrafts: [ScreenshotSubscriptionDraft] = recognizedLines.map { lines in
+            let reportProblemDrafts = parseReportProblemHistory(lines: lines, referenceDate: referenceDate)
+            return reportProblemDrafts.isEmpty
+                ? parsePurchaseHistory(lines: lines, referenceDate: referenceDate)
+                : reportProblemDrafts
+        } ?? []
+        let detectedDrafts = localPurchaseDrafts.isEmpty
+            ? repairPlanOnlyNames(in: drafts, recognizedLines: recognizedLines ?? [])
+            : localPurchaseDrafts
+        let priceRepaired = repairMissingPrices(in: detectedDrafts, recognizedLines: recognizedLines ?? [])
         // Drop noise: a real subscription has at least a date or a price.
-        let anchored = priceRepaired.filter { $0.renewalDate != nil || $0.cost != nil }
+        let anchored = deduplicatedRecurring(priceRepaired.filter { $0.renewalDate != nil || $0.cost != nil })
         return Result(drafts: matchDuplicates(drafts: anchored, existingItems: existingItems), warning: warning)
     }
 
@@ -299,30 +294,41 @@ enum ScreenshotImportAnalyzer {
             let lines = try await ocrLines(from: imageData)
             return try await parseWithAppleIntelligence(lines: lines, referenceDate: referenceDate)
 
-        default:
-            // The provider key now lives server-side: every remote call goes through the
-            // Supabase proxy (Premium-gated, rate-limited). No on-device key to check.
-            if settings.provider.supportsVision {
-                // Vision models see the screenshot directly — visual grouping is
-                // what disambiguates a plan ("Student") from its service.
-                return try await parseWithRemoteVision(imageData: imageData, settings: settings, referenceDate: referenceDate)
-            } else {
+        case .automatic:
+            // Try on-device first (free, private); only reach the proxy's cascade
+            // (Gemini → DeepSeek, server-configured) if that fails or is unavailable.
+            do {
                 let lines = try await ocrLines(from: imageData)
-                return try await parseWithRemoteText(lines: lines, settings: settings, referenceDate: referenceDate)
+                return try await parseWithAppleIntelligence(lines: lines, referenceDate: referenceDate)
+            } catch {
+                return try await parseWithProxy(mode: .auto, provider: nil, model: nil, imageData: imageData, referenceDate: referenceDate)
             }
+
+        default:
+            // Manual/debug override — forces one named provider through the proxy,
+            // bypassing the cascade. The provider key lives server-side; no on-device
+            // key to check.
+            return try await parseWithProxy(mode: .forced, provider: settings.provider, model: settings.modelID, imageData: imageData, referenceDate: referenceDate)
         }
     }
 
     private static func fallbackWarning(for provider: ScreenshotAIProvider, error: Error) -> String {
         if let analyzerError = error as? AnalyzerError {
+            if case .httpError(let status, _) = analyzerError, status == 402 {
+                return "Expired Pro could not be verified by the AI server yet. Restore purchases, then try again. Showing on-device results — review them carefully."
+            }
             return analyzerError.localizedDescription + " Showing on-device results — review them carefully."
         }
         return "\(provider.rawValue) couldn't analyse the screenshot (\(error.localizedDescription)). Showing on-device results — review them carefully."
     }
 
     private static func ocrLines(from imageData: Data) async throws -> [String] {
+        try await recognizedTextLines(from: imageData).map(\.text)
+    }
+
+    private static func recognizedTextLines(from imageData: Data) async throws -> [RecognizedTextLine] {
         guard let cgImage = cgImage(from: imageData) else { return [] }
-        return try await recognizeTextLines(in: cgImage).map(\.text)
+        return try await recognizeTextLines(in: cgImage)
     }
 
     // MARK: - Shared prompt
@@ -333,11 +339,11 @@ enum ScreenshotImportAnalyzer {
     private static func analysisInstructions(referenceDate: Date) -> String {
         """
         You extract subscriptions from a screenshot of Apple's \
-        Settings → [Apple Account] → Subscriptions screen (or the App Store \
-        Subscriptions screen).
+        Settings → [Apple Account] → Subscriptions screen, the App Store \
+        Subscriptions screen, or Apple Purchase History.
 
         STRUCTURE — the content is repeating blocks, top to bottom. Each \
-        subscription is ONE block of consecutive lines in this order:
+        subscription-list item is ONE block of consecutive lines in this order:
           1. Service name  — the app/service (e.g. "Apple Music", "ChatGPT")
           2. Plan/tier      — optional (e.g. "Student", "ChatGPT Plus", \
         "Clipboard AI Pro Yearly", "iCloud+ with 2 TB storage")
@@ -349,6 +355,24 @@ enum ScreenshotImportAnalyzer {
         attach that right-column price to the current subscription even if OCR/model \
         reading order places it before or after nearby text.
 
+        PURCHASE HISTORY STRUCTURE — the screen title is "Purchase History" and \
+        rows are grouped under purchase dates. Each card has a product/service \
+        name, the word "Subscription", a price, and a "Total" row. These rows are \
+        historical receipts, so repeated monthly charges for the same service are \
+        recurring duplicates. Emit ONLY the newest visible receipt for each unique \
+        service. Use the purchase date plus the inferred billing cycle as \
+        renewalDate where possible. Ignore "Total" rows.
+
+        REPORT A PROBLEM STRUCTURE — reportaproblem.apple.com rows show:
+          1. Plan/product name (e.g. "ChatGPT Plus", "Clipboard AI Pro Yearly")
+          2. App/service name (e.g. "ChatGPT", "Clipboard AI - Paste Keyboard")
+          3. Either "Renews <date>", "Expires: <date>", or a paid access range \
+        like "Nov 1, 2025 - Dec 1, 2025"
+          4. A right-column item price
+        For this source, the app/service name is line 2 and the plan is line 1. \
+        Preserve punctuation in app names, especially hyphens. Ignore free app \
+        downloads and rows without a renewal/expiry/access-range line.
+
         HARD RULES
         - The service name is the FIRST line of a block only. A plan or tier line \
         is NEVER its own subscription. "Student", "PRO", "Premium", "Plus", \
@@ -357,11 +381,15 @@ enum ScreenshotImportAnalyzer {
         - Never emit a subscription whose name is a bare tier word \
         (Student/PRO/Premium/Plus/Basic/Standard).
         - Ignore UI chrome and OCR fragments: "Subscriptions", "Active", \
-        "Inactive", "Sort", "Cancel", "Apply", "Detected", section headers, \
-        truncated tokens like "SortT".
+        "Inactive", "Purchase History", "Showing", "Sort", "Cancel", "Apply", \
+        "Detected", section headers, search placeholders, "Total", truncated \
+        tokens like "SortT".
         - Merge near-duplicates that clearly refer to the same app \
         ("Zynotes" / "ZyNotes: Private Notes" → one item named "Zynotes").
-        - status: "Renews" → Active; "Expiring" → Expiring; "Expired" → Expired.
+        - In Purchase History, silently drop recurring duplicates; never emit \
+        Apple Music five times just because five receipts are visible.
+        - status: "Renews" → Active; "Expiring"/"Expires" → Expiring; \
+        "Expired" or a past date range → Expired.
         - Dates resolve to YYYY-MM-DD relative to the reference date. If the year \
         is missing, assume the next future occurrence. Empty if no date is shown.
         - confidence: 0.9+ only when name, status and date are present and \
@@ -417,100 +445,67 @@ enum ScreenshotImportAnalyzer {
 
     // MARK: - Remote providers
 
-    private static func parseWithRemoteText(
-        lines: [String],
-        settings: ScreenshotAISettings,
-        referenceDate: Date
-    ) async throws -> [ScreenshotSubscriptionDraft] {
-        let prompt = remoteTextPrompt(lines: lines, referenceDate: referenceDate)
-        let content = try await remoteTextResponse(prompt: prompt, settings: settings)
-        return parseAIJSON(content)
+    private enum ProxyMode: String {
+        case auto, forced
     }
 
-    private static func parseWithRemoteVision(
+    /// The one remote call path, for both "Automatic" (server-side cascade, tries
+    /// `app_config.ai_fallback_order` in sequence) and a forced single provider
+    /// (manual override picker). The proxy now builds each provider's request body
+    /// itself — see `providers.ts` `buildRequestBody` — since a cascade may need to
+    /// try a second provider's shape without a client round trip in between. The
+    /// client always sends both prompt variants + the image; the server picks
+    /// whichever fits the provider it's actually calling.
+    private static func parseWithProxy(
+        mode: ProxyMode,
+        provider: ScreenshotAIProvider?,
+        model: String?,
         imageData: Data,
-        settings: ScreenshotAISettings,
         referenceDate: Date
     ) async throws -> [ScreenshotSubscriptionDraft] {
-        let prompt = remoteVisionPrompt(referenceDate: referenceDate)
-        let base64 = imageData.base64EncodedString()
-        let mime = imageMimeType(imageData)
+        let lines = try await ocrLines(from: imageData)
+        let visionPrompt = remoteVisionPrompt(referenceDate: referenceDate)
+        let textPrompt = remoteTextPrompt(lines: lines, referenceDate: referenceDate)
+        let upload = uploadImagePayload(from: imageData)
+
+        var payload: [String: Any] = [
+            "mode": mode.rawValue,
+            "visionPrompt": visionPrompt,
+            "textPrompt": textPrompt,
+            "image": ["mime": upload.mime, "base64": upload.base64]
+        ]
+        if mode == .forced, let proxyID = provider?.proxyID {
+            payload["provider"] = proxyID
+            if let model, !model.isEmpty { payload["model"] = model }
+        }
+
+        var request = try await SupabaseService.shared.authorizedFunctionRequest(BackendConfig.Function.aiProxy)
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let data = try await sendForData(request)
+        return parseProxyResponse(data)
+    }
+
+    /// The proxy replies `{"provider": "<id>", "raw": <upstream JSON>}` — `raw` keeps
+    /// each provider's native shape, so the extractor below still matches its own.
+    private static func parseProxyResponse(_ data: Data) -> [ScreenshotSubscriptionDraft] {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let providerID = object["provider"] as? String,
+              let raw = object["raw"],
+              let rawData = try? JSONSerialization.data(withJSONObject: raw)
+        else { return [] }
+
         let content: String
-        switch settings.provider {
-        case .openAI:
-            content = try await openAIVisionResponse(prompt: prompt, base64: base64, mime: mime, settings: settings)
-        case .claude:
-            content = try await claudeVisionResponse(prompt: prompt, base64: base64, mime: mime, settings: settings)
-        case .gemini:
-            content = try await geminiVisionResponse(prompt: prompt, base64: base64, mime: mime, settings: settings)
+        switch providerID {
+        case "openai", "deepseek":
+            content = openAIContent(from: rawData)
+        case "claude":
+            content = claudeContent(from: rawData)
+        case "gemini":
+            content = geminiContent(from: rawData)
         default:
-            return []
+            content = "[]"
         }
         return parseAIJSON(content)
-    }
-
-    private static func remoteTextResponse(prompt: String, settings: ScreenshotAISettings) async throws -> String {
-        // OpenAI + DeepSeek share the chat-completions body shape; the proxy routes by provider.
-        let body: [String: Any] = [
-            "model": settings.modelID,
-            "temperature": 0,
-            "messages": [
-                ["role": "system", "content": "You extract subscription data and return JSON only."],
-                ["role": "user", "content": prompt]
-            ]
-        ]
-        let data = try await proxyForData(provider: settings.provider, model: settings.modelID, body: body)
-        return openAIContent(from: data)
-    }
-
-    private static func openAIVisionResponse(prompt: String, base64: String, mime: String, settings: ScreenshotAISettings) async throws -> String {
-        let body: [String: Any] = [
-            "model": settings.modelID,
-            "temperature": 0,
-            "messages": [
-                ["role": "system", "content": "You extract subscription data and return JSON only."],
-                ["role": "user", "content": [
-                    ["type": "text", "text": prompt],
-                    ["type": "image_url", "image_url": ["url": "data:\(mime);base64,\(base64)"]]
-                ]]
-            ]
-        ]
-        let data = try await proxyForData(provider: .openAI, model: settings.modelID, body: body)
-        return openAIContent(from: data)
-    }
-
-    private static func claudeVisionResponse(prompt: String, base64: String, mime: String, settings: ScreenshotAISettings) async throws -> String {
-        let body: [String: Any] = [
-            "model": settings.modelID,
-            "max_tokens": 1200,
-            "temperature": 0,
-            "messages": [["role": "user", "content": [
-                ["type": "text", "text": prompt],
-                ["type": "image", "source": ["type": "base64", "media_type": mime, "data": base64]]
-            ]]]
-        ]
-        let data = try await proxyForData(provider: .claude, model: settings.modelID, body: body)
-        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let content = object?["content"] as? [[String: Any]]
-        return content?.compactMap { $0["text"] as? String }.joined(separator: "\n") ?? "[]"
-    }
-
-    private static func geminiVisionResponse(prompt: String, base64: String, mime: String, settings: ScreenshotAISettings) async throws -> String {
-        // Gemini puts the model in the URL — the proxy builds that from the envelope's
-        // `model`, so the body carries only contents + generationConfig.
-        let body: [String: Any] = [
-            "contents": [["parts": [
-                ["text": prompt],
-                ["inline_data": ["mime_type": mime, "data": base64]]
-            ]]],
-            "generationConfig": ["temperature": 0]
-        ]
-        let data = try await proxyForData(provider: .gemini, model: settings.modelID, body: body)
-        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let candidates = object?["candidates"] as? [[String: Any]]
-        let content = candidates?.first?["content"] as? [String: Any]
-        let parts = content?["parts"] as? [[String: Any]]
-        return parts?.compactMap { $0["text"] as? String }.joined(separator: "\n") ?? "[]"
     }
 
     private static func openAIContent(from data: Data) -> String {
@@ -520,8 +515,67 @@ enum ScreenshotImportAnalyzer {
         return message?["content"] as? String ?? "[]"
     }
 
+    private static func claudeContent(from data: Data) -> String {
+        let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let content = object?["content"] as? [[String: Any]]
+        return content?.compactMap { $0["text"] as? String }.joined(separator: "\n") ?? "[]"
+    }
+
+    private static func geminiContent(from data: Data) -> String {
+        let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let candidates = object?["candidates"] as? [[String: Any]]
+        let content = candidates?.first?["content"] as? [String: Any]
+        let parts = content?["parts"] as? [[String: Any]]
+        return parts?.compactMap { $0["text"] as? String }.joined(separator: "\n") ?? "[]"
+    }
+
     private static func imageMimeType(_ data: Data) -> String {
         data.starts(with: [0x89, 0x50, 0x4E, 0x47]) ? "image/png" : "image/jpeg"
+    }
+
+    /// Vision-model providers price images roughly by pixel-tile count, so a
+    /// full-resolution phone screenshot (often 1200×2600+) costs far more than the
+    /// text actually needs — the source table this was scoped against showed a
+    /// ~1024px-wide JPEG costing a fraction of a full-HD upload. This is the copy
+    /// sent over the network only; on-device Vision-framework OCR (`ocrLines`,
+    /// price/plan repair heuristics) still runs against the original full-res data.
+    private static func uploadImagePayload(from imageData: Data) -> (mime: String, base64: String) {
+        guard let cgImage = cgImage(from: imageData),
+              let base64 = downscaledJPEGBase64(from: cgImage)
+        else { return (imageMimeType(imageData), imageData.base64EncodedString()) }
+        return ("image/jpeg", base64)
+    }
+
+    private static func downscaledJPEGBase64(
+        from cgImage: CGImage,
+        maxDimension: CGFloat = 1024,
+        quality: CGFloat = 0.8
+    ) -> String? {
+        let width = CGFloat(cgImage.width)
+        let height = CGFloat(cgImage.height)
+        let scale = min(1, maxDimension / max(width, height))
+        let targetWidth = max(1, Int(width * scale))
+        let targetHeight = max(1, Int(height * scale))
+
+        guard let context = CGContext(
+            data: nil,
+            width: targetWidth,
+            height: targetHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: cgImage.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        context.interpolationQuality = .high
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+        guard let scaledImage = context.makeImage() else { return nil }
+
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, scaledImage, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return (output as Data).base64EncodedString()
     }
 
     // MARK: - Wire decoding
@@ -715,6 +769,456 @@ enum ScreenshotImportAnalyzer {
         return unique(drafts)
     }
 
+    private static func repairPlanOnlyNames(
+        in drafts: [ScreenshotSubscriptionDraft],
+        recognizedLines lines: [RecognizedTextLine]
+    ) -> [ScreenshotSubscriptionDraft] {
+        guard !lines.isEmpty else { return drafts }
+
+        return drafts.map { draft in
+            guard nameLooksLikePlanLine(draft.name, plan: draft.plan),
+                  let planLine = matchingPlanLine(for: draft, lines: lines),
+                  let serviceLine = nearestServiceLine(above: planLine, lines: lines) else {
+                return draft
+            }
+
+            var repaired = draft
+            repaired.name = normalizedServiceDisplayName(serviceLine.text)
+            repaired.plan = cleanedPlan(draft.plan) ?? normalizedDisplayName(draft.name)
+            repaired.billingCycle = inferredBillingCycle(name: repaired.name, plan: repaired.plan)
+            return repaired
+        }
+    }
+
+    private static func nameLooksLikePlanLine(_ name: String, plan: String?) -> Bool {
+        let normalizedName = normalizedDisplayName(name).lowercased()
+        let normalizedPlan = normalizedDisplayName(plan ?? "").lowercased()
+        guard !normalizedName.isEmpty else { return false }
+        if normalizedName == normalizedPlan { return true }
+        return looksLikePlan(normalizedName) &&
+            (normalizedName.contains("yearly") ||
+             normalizedName.contains("annual") ||
+             normalizedName.contains("monthly") ||
+             normalizedName.contains("weekly") ||
+             normalizedName.contains(" pro"))
+    }
+
+    private static func matchingPlanLine(
+        for draft: ScreenshotSubscriptionDraft,
+        lines: [RecognizedTextLine]
+    ) -> RecognizedTextLine? {
+        let names = [draft.name, draft.plan ?? ""]
+            .map(normalizedDisplayName)
+            .filter { !$0.isEmpty }
+        guard !names.isEmpty else { return nil }
+
+        if let exact = lines.first(where: { line in
+            let text = normalizedDisplayName(line.text)
+            return names.contains { text.compare($0, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
+        }) {
+            return exact
+        }
+
+        return lines
+            .compactMap { line -> (line: RecognizedTextLine, score: Double)? in
+                guard looksLikePlan(line.text) else { return nil }
+                let score = names.map { similarity(canonicalName($0), canonicalName(line.text)) }.max() ?? 0
+                return score >= 0.82 ? (line, score) : nil
+            }
+            .max { $0.score < $1.score }?
+            .line
+    }
+
+    private static func nearestServiceLine(
+        above planLine: RecognizedTextLine,
+        lines: [RecognizedTextLine]
+    ) -> RecognizedTextLine? {
+        lines
+            .filter { line in
+                let verticalGap = line.boundingBox.midY - planLine.boundingBox.midY
+                let sameColumn = abs(line.boundingBox.minX - planLine.boundingBox.minX) < 0.16 ||
+                    abs(line.boundingBox.midX - planLine.boundingBox.midX) < 0.18
+                return verticalGap > 0 &&
+                    verticalGap < 0.10 &&
+                    sameColumn &&
+                    looksLikeServiceName(line.text) &&
+                    !looksLikePlan(line.text) &&
+                    !isTierWordOnly(normalizedDisplayName(line.text))
+            }
+            .min { lhs, rhs in
+                lhs.boundingBox.midY - planLine.boundingBox.midY < rhs.boundingBox.midY - planLine.boundingBox.midY
+            }
+    }
+
+    private static func parseReportProblemHistory(
+        lines: [RecognizedTextLine],
+        referenceDate: Date
+    ) -> [ScreenshotSubscriptionDraft] {
+        guard isReportProblemHistoryScreenshot(lines) else { return [] }
+
+        let orderedLines = lines.sorted { lhs, rhs in
+            if abs(lhs.boundingBox.midY - rhs.boundingBox.midY) > 0.01 {
+                return lhs.boundingBox.midY > rhs.boundingBox.midY
+            }
+            return lhs.boundingBox.minX < rhs.boundingBox.minX
+        }
+        let priceLines = orderedLines.compactMap { line -> (line: RecognizedTextLine, price: (amount: Double, currency: String))? in
+            guard let price = extractPrice(from: line.text) else { return nil }
+            return (line, price)
+        }
+
+        let drafts = orderedLines.compactMap { planLine -> ScreenshotSubscriptionDraft? in
+            guard looksLikeReportProblemPlanLine(planLine.text),
+                  let appLine = nearestReportProblemLine(below: planLine, in: orderedLines),
+                  let statusLine = nearestReportProblemStatusLine(below: appLine, in: orderedLines),
+                  let renewal = reportProblemRenewal(from: statusLine.text, referenceDate: referenceDate) else {
+                return nil
+            }
+
+            let plan = normalizedDisplayName(planLine.text)
+            let name = normalizedServiceDisplayName(appLine.text)
+            guard !name.isEmpty, !isTierWordOnly(name) else { return nil }
+
+            let price = reportProblemItemPrice(for: planLine, priceLines: priceLines)
+            let cycle = reportProblemBillingCycle(plan: plan, statusLine: statusLine.text, renewalDate: renewal.date)
+
+            return ScreenshotSubscriptionDraft(
+                name: name,
+                plan: plan == name ? nil : plan,
+                renewalDate: renewal.date,
+                cost: price.flatMap { $0.amount > 0 ? $0.amount : nil },
+                currency: price?.currency ?? "USD",
+                billingCycle: cycle,
+                status: renewal.status,
+                confidence: price == nil ? 0.82 : 0.92,
+                matchedItemID: nil,
+                matchedItemName: nil,
+                action: .addNew
+            )
+        }
+
+        return deduplicatedRecurring(drafts)
+    }
+
+    private static func isReportProblemHistoryScreenshot(_ lines: [RecognizedTextLine]) -> Bool {
+        let lower = lines.map { $0.text.lowercased() }
+        if lower.contains(where: { $0.contains("reportaproblem.apple.com") }) { return true }
+        let hasDateHeadings = lines.contains { extractStandaloneDate(from: $0.text, referenceDate: Date()) != nil }
+        let hasTotals = lower.contains { $0.hasPrefix("total ") || $0 == "total" }
+        let hasReportProblemStatus = lower.contains { line in
+            line.contains("renews ") ||
+                line.contains("expires") ||
+                extractDateRangeEnd(from: line, referenceDate: Date()) != nil
+        }
+        return hasDateHeadings && hasTotals && hasReportProblemStatus
+    }
+
+    private static func nearestReportProblemLine(
+        below planLine: RecognizedTextLine,
+        in lines: [RecognizedTextLine]
+    ) -> RecognizedTextLine? {
+        lines
+            .filter { line in
+                let verticalGap = planLine.boundingBox.midY - line.boundingBox.midY
+                let sameColumn = abs(line.boundingBox.minX - planLine.boundingBox.minX) < 0.16 ||
+                    abs(line.boundingBox.midX - planLine.boundingBox.midX) < 0.18
+                return verticalGap > 0 &&
+                    verticalGap < 0.075 &&
+                    sameColumn &&
+                    looksLikeReportProblemAppLine(line.text)
+            }
+            .min { lhs, rhs in
+                planLine.boundingBox.midY - lhs.boundingBox.midY < planLine.boundingBox.midY - rhs.boundingBox.midY
+            }
+    }
+
+    private static func nearestReportProblemStatusLine(
+        below appLine: RecognizedTextLine,
+        in lines: [RecognizedTextLine]
+    ) -> RecognizedTextLine? {
+        lines
+            .filter { line in
+                let verticalGap = appLine.boundingBox.midY - line.boundingBox.midY
+                let sameColumn = abs(line.boundingBox.minX - appLine.boundingBox.minX) < 0.16 ||
+                    abs(line.boundingBox.midX - appLine.boundingBox.midX) < 0.18
+                return verticalGap > 0 &&
+                    verticalGap < 0.085 &&
+                    sameColumn &&
+                    isReportProblemStatusLine(line.text)
+            }
+            .min { lhs, rhs in
+                appLine.boundingBox.midY - lhs.boundingBox.midY < appLine.boundingBox.midY - rhs.boundingBox.midY
+            }
+    }
+
+    private static func reportProblemRenewal(
+        from line: String,
+        referenceDate: Date
+    ) -> (date: Date, status: ScreenshotSubscriptionDraft.DetectionStatus)? {
+        if let date = extractDate(from: line, referenceDate: referenceDate) {
+            return (date, status(from: line))
+        }
+        if let endDate = extractDateRangeEnd(from: line, referenceDate: referenceDate) {
+            let status: ScreenshotSubscriptionDraft.DetectionStatus = endDate < Calendar.current.startOfDay(for: referenceDate)
+                ? .expired
+                : .expiring
+            return (endDate, status)
+        }
+        return nil
+    }
+
+    private static func reportProblemItemPrice(
+        for planLine: RecognizedTextLine,
+        priceLines: [(line: RecognizedTextLine, price: (amount: Double, currency: String))]
+    ) -> (amount: Double, currency: String)? {
+        let planMidY = planLine.boundingBox.midY
+        return priceLines
+            .filter { candidate in
+                let box = candidate.line.boundingBox
+                return abs(box.midY - planMidY) <= 0.035 &&
+                    (box.minX > planLine.boundingBox.maxX || box.midX > 0.58)
+            }
+            .sorted { lhs, rhs in
+                abs(lhs.line.boundingBox.midY - planMidY) < abs(rhs.line.boundingBox.midY - planMidY)
+            }
+            .first?
+            .price
+    }
+
+    private static func reportProblemBillingCycle(
+        plan: String,
+        statusLine: String,
+        renewalDate: Date
+    ) -> BillingCycle {
+        if let range = extractDateRange(from: statusLine, referenceDate: renewalDate) {
+            let days = Calendar.current.dateComponents([.day], from: range.start, to: range.end).day ?? 0
+            if days >= 330 { return .yearly }
+            if days <= 10 { return .weekly }
+            return .monthly
+        }
+        return inferredBillingCycle(name: plan, plan: plan)
+    }
+
+    private static func parsePurchaseHistory(
+        lines: [RecognizedTextLine],
+        referenceDate: Date
+    ) -> [ScreenshotSubscriptionDraft] {
+        guard isPurchaseHistoryScreenshot(lines) else { return [] }
+
+        let dateHeadings = lines.compactMap { line -> (line: RecognizedTextLine, date: Date)? in
+            guard let date = extractStandaloneDate(from: line.text, referenceDate: referenceDate) else { return nil }
+            return (line, date)
+        }
+        guard !dateHeadings.isEmpty else { return [] }
+
+        let priceLines = lines.compactMap { line -> (line: RecognizedTextLine, price: (amount: Double, currency: String))? in
+            guard let price = extractPrice(from: line.text) else { return nil }
+            return (line, price)
+        }
+
+        let candidates = lines
+            .filter { looksLikePurchaseHistoryItemName($0.text) }
+            .sorted { lhs, rhs in
+                if abs(lhs.boundingBox.midY - rhs.boundingBox.midY) > 0.01 {
+                    return lhs.boundingBox.midY > rhs.boundingBox.midY
+                }
+                return lhs.boundingBox.minX < rhs.boundingBox.minX
+            }
+
+        let drafts = candidates.compactMap { line -> ScreenshotSubscriptionDraft? in
+            let rawName = normalizedDisplayName(line.text)
+            guard !isGenericPurchaseHistoryName(rawName),
+                  purchaseHistoryTypeIsSubscription(for: line, lines: lines),
+                  let purchaseDate = purchaseDate(for: line, dateHeadings: dateHeadings),
+                  let price = purchaseHistoryPrice(for: line, priceLines: priceLines) else {
+                return nil
+            }
+
+            let normalized = purchaseHistoryNameAndPlan(from: rawName)
+            let cycle = inferredBillingCycle(name: rawName, plan: normalized.plan)
+            let renewalDate = renewalDate(fromPurchaseDate: purchaseDate, cycle: cycle, referenceDate: referenceDate)
+
+            return ScreenshotSubscriptionDraft(
+                name: normalized.name,
+                plan: normalized.plan,
+                renewalDate: renewalDate,
+                cost: price.amount,
+                currency: price.currency,
+                billingCycle: cycle,
+                status: .active,
+                confidence: 0.84,
+                matchedItemID: nil,
+                matchedItemName: nil,
+                action: .addNew
+            )
+        }
+
+        return deduplicatedRecurring(drafts)
+    }
+
+    private static func purchaseHistoryTypeIsSubscription(
+        for itemLine: RecognizedTextLine,
+        lines: [RecognizedTextLine]
+    ) -> Bool {
+        lines.contains { line in
+            let lower = normalizedDisplayName(line.text).lowercased()
+            let verticalGap = itemLine.boundingBox.midY - line.boundingBox.midY
+            let sameColumn = abs(line.boundingBox.minX - itemLine.boundingBox.minX) < 0.14 ||
+                abs(line.boundingBox.midX - itemLine.boundingBox.midX) < 0.16
+            return lower == "subscription" &&
+                verticalGap > 0 &&
+                verticalGap < 0.065 &&
+                sameColumn
+        }
+    }
+
+    private static func isPurchaseHistoryScreenshot(_ lines: [RecognizedTextLine]) -> Bool {
+        let lowerLines = lines.map { $0.text.lowercased() }
+        return lowerLines.contains(where: { $0.contains("purchase history") }) &&
+            lowerLines.contains(where: { $0 == "total" || $0.hasPrefix("total ") })
+    }
+
+    private static func purchaseDate(
+        for itemLine: RecognizedTextLine,
+        dateHeadings: [(line: RecognizedTextLine, date: Date)]
+    ) -> Date? {
+        dateHeadings
+            .filter { heading in
+                heading.line.boundingBox.midY > itemLine.boundingBox.midY &&
+                    abs(heading.line.boundingBox.midX - itemLine.boundingBox.midX) < 0.45
+            }
+            .min { lhs, rhs in
+                lhs.line.boundingBox.midY - itemLine.boundingBox.midY < rhs.line.boundingBox.midY - itemLine.boundingBox.midY
+            }?
+            .date
+    }
+
+    private static func purchaseHistoryPrice(
+        for itemLine: RecognizedTextLine,
+        priceLines: [(line: RecognizedTextLine, price: (amount: Double, currency: String))]
+    ) -> (amount: Double, currency: String)? {
+        let itemMidY = itemLine.boundingBox.midY
+
+        if let sameRow = priceLines
+            .filter({ candidate in
+                let box = candidate.line.boundingBox
+                return abs(box.midY - itemMidY) <= 0.035 &&
+                    (box.minX > itemLine.boundingBox.maxX || box.midX > 0.58)
+            })
+            .sorted(by: { lhs, rhs in
+                abs(lhs.line.boundingBox.midY - itemMidY) < abs(rhs.line.boundingBox.midY - itemMidY)
+            })
+            .first {
+            return sameRow.price
+        }
+
+        return priceLines
+            .filter { candidate in
+                let box = candidate.line.boundingBox
+                return box.midY < itemMidY &&
+                    itemMidY - box.midY <= 0.12 &&
+                    box.midX > 0.58
+            }
+            .sorted { lhs, rhs in
+                abs(lhs.line.boundingBox.midY - itemMidY) < abs(rhs.line.boundingBox.midY - itemMidY)
+            }
+            .first?
+            .price
+    }
+
+    private static func purchaseHistoryNameAndPlan(from rawName: String) -> (name: String, plan: String?) {
+        var name = rawName
+        var plan: String?
+
+        if name.lowercased().contains("icloud+") && name.lowercased().contains("storage") {
+            return ("iCloud+", name)
+        }
+
+        if name.range(of: #"\s+subscription$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            name = name.replacingOccurrences(of: #"\s+subscription$"#, with: "", options: [.regularExpression, .caseInsensitive])
+        }
+
+        if let range = name.range(of: #"\s*[-–]\s*(yearly|annual|monthly|weekly)$"#, options: [.regularExpression, .caseInsensitive]) {
+            plan = String(name[range]).replacingOccurrences(of: #"\s*[-–]\s*"#, with: "", options: .regularExpression)
+            name.removeSubrange(range)
+        }
+
+        return (normalizedDisplayName(name), plan.map(normalizedDisplayName))
+    }
+
+    private static func renewalDate(
+        fromPurchaseDate purchaseDate: Date,
+        cycle: BillingCycle,
+        referenceDate: Date
+    ) -> Date? {
+        let calendar = Calendar.current
+        let component: Calendar.Component
+        let value: Int
+        switch cycle {
+        case .weekly:
+            component = .weekOfYear
+            value = 1
+        case .yearly:
+            component = .year
+            value = 1
+        case .oneOff:
+            return purchaseDate
+        case .monthly, .custom:
+            component = .month
+            value = 1
+        }
+
+        var date = purchaseDate
+        repeat {
+            guard let next = calendar.date(byAdding: component, value: value, to: date) else { return nil }
+            date = next
+        } while date < calendar.startOfDay(for: referenceDate)
+        return date
+    }
+
+    private static func deduplicatedRecurring(_ drafts: [ScreenshotSubscriptionDraft]) -> [ScreenshotSubscriptionDraft] {
+        var bestByKey: [String: ScreenshotSubscriptionDraft] = [:]
+        for draft in drafts {
+            let key = canonicalName(draft.name)
+            guard !key.isEmpty else { continue }
+            if let existing = bestByKey[key] {
+                bestByKey[key] = newestOrMostComplete(existing, draft)
+            } else {
+                bestByKey[key] = draft
+            }
+        }
+        return drafts.compactMap { draft in
+            let key = canonicalName(draft.name)
+            guard let best = bestByKey[key], best.id == draft.id else { return nil }
+            return best
+        }
+    }
+
+    private static func newestOrMostComplete(
+        _ lhs: ScreenshotSubscriptionDraft,
+        _ rhs: ScreenshotSubscriptionDraft
+    ) -> ScreenshotSubscriptionDraft {
+        switch (lhs.renewalDate, rhs.renewalDate) {
+        case let (left?, right?):
+            if left != right { return right > left ? rhs : lhs }
+        case (nil, _?):
+            return rhs
+        case (_?, nil):
+            return lhs
+        case (nil, nil):
+            break
+        }
+
+        switch (lhs.cost, rhs.cost) {
+        case (nil, _?):
+            return rhs
+        case (_?, nil):
+            return lhs
+        default:
+            return rhs.confidence > lhs.confidence ? rhs : lhs
+        }
+    }
+
     private static func repairMissingPrices(
         in drafts: [ScreenshotSubscriptionDraft],
         imageData: Data
@@ -867,6 +1371,74 @@ enum ScreenshotImportAnalyzer {
         return trimmed.rangeOfCharacter(from: .letters) != nil
     }
 
+    private static func looksLikePurchaseHistoryItemName(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 3, trimmed.count <= 90 else { return false }
+        guard trimmed.rangeOfCharacter(from: .letters) != nil else { return false }
+        guard extractPrice(from: trimmed) == nil,
+              extractStandaloneDate(from: trimmed, referenceDate: Date()) == nil else {
+            return false
+        }
+
+        let lower = trimmed.lowercased()
+        let blockedExact: Set<String> = [
+            "purchase history", "subscription", "subscriptions", "total",
+            "showing", "this year, paid", "name, price, or order id"
+        ]
+        if blockedExact.contains(lower) { return false }
+        if lower.hasPrefix("showing:") { return false }
+        if lower.contains("order id") { return false }
+        if lower == "paid" || lower == "this year" { return false }
+        return true
+    }
+
+    private static func looksLikeReportProblemPlanLine(_ line: String) -> Bool {
+        let trimmed = normalizedDisplayName(line)
+        guard trimmed.count >= 3, trimmed.count <= 100 else { return false }
+        guard trimmed.rangeOfCharacter(from: .letters) != nil else { return false }
+        guard extractPrice(from: trimmed) == nil,
+              extractStandaloneDate(from: trimmed, referenceDate: Date()) == nil else {
+            return false
+        }
+
+        let lower = trimmed.lowercased()
+        if lower == "free" || lower == "total" || lower.hasPrefix("total ") { return false }
+        if lower.contains("reportaproblem.apple.com") { return false }
+        if lower.contains("purchase history") { return false }
+        if lower.contains("showing:") || lower.contains("order id") { return false }
+        if containsRenewalSignal(trimmed) || extractDateRangeEnd(from: trimmed, referenceDate: Date()) != nil { return false }
+        return true
+    }
+
+    private static func looksLikeReportProblemAppLine(_ line: String) -> Bool {
+        let trimmed = normalizedDisplayName(line)
+        guard trimmed.count >= 2, trimmed.count <= 100 else { return false }
+        guard trimmed.rangeOfCharacter(from: .letters) != nil else { return false }
+        guard extractPrice(from: trimmed) == nil,
+              extractStandaloneDate(from: trimmed, referenceDate: Date()) == nil else {
+            return false
+        }
+
+        let lower = trimmed.lowercased()
+        if lower == "free" || lower == "total" || lower.hasPrefix("total ") { return false }
+        if lower.contains("reportaproblem.apple.com") { return false }
+        if containsRenewalSignal(trimmed) || extractDateRangeEnd(from: trimmed, referenceDate: Date()) != nil { return false }
+        return true
+    }
+
+    private static func isReportProblemStatusLine(_ line: String) -> Bool {
+        containsRenewalSignal(line) || extractDateRangeEnd(from: line, referenceDate: Date()) != nil
+    }
+
+    private static func isGenericPurchaseHistoryName(_ name: String) -> Bool {
+        let key = name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let generic: Set<String> = [
+            "monthly subscription", "yearly subscription", "annual subscription",
+            "weekly subscription", "subscription", "subscriptions"
+        ]
+        return generic.contains(key)
+    }
+
     private static func looksLikePlan(_ line: String) -> Bool {
         let lower = line.lowercased()
         return lower.contains("plus") ||
@@ -895,13 +1467,16 @@ enum ScreenshotImportAnalyzer {
 
     private static func containsRenewalSignal(_ line: String) -> Bool {
         let lower = line.lowercased()
-        return lower.contains("renews") || lower.contains("expiring") || lower.contains("expired")
+        return lower.contains("renews") ||
+            lower.contains("expiring") ||
+            lower.contains("expires") ||
+            lower.contains("expired")
     }
 
     private static func status(from line: String?) -> ScreenshotSubscriptionDraft.DetectionStatus {
         let lower = line?.lowercased() ?? ""
         if lower.contains("expired") { return .expired }
-        if lower.contains("expiring") { return .expiring }
+        if lower.contains("expiring") || lower.contains("expires") { return .expiring }
         return .active
     }
 
@@ -940,7 +1515,7 @@ enum ScreenshotImportAnalyzer {
     private static func extractDate(from line: String, referenceDate: Date) -> Date? {
         let months = DateFormatter().monthSymbols ?? []
         let escaped = months.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|")
-        let pattern = #"(?:renews|expiring|expired)\s+("# + escaped + #")\s+([0-9]{1,2})(?:,\s*([0-9]{4}))?"#
+        let pattern = #"(?:renews|expiring|expires:?|expired)\s+("# + escaped + #")\s+([0-9]{1,2})(?:,\s*([0-9]{4}))?"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
               let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
               let monthRange = Range(match.range(at: 1), in: line),
@@ -971,9 +1546,119 @@ enum ScreenshotImportAnalyzer {
         return cal.date(from: DateComponents(year: year, month: monthIndex + 1, day: day))
     }
 
-    private static func normalizedDisplayName(_ line: String) -> String {
+    private static func extractStandaloneDate(from line: String, referenceDate: Date) -> Date? {
+        let formatter = DateFormatter()
+        let monthNames = (formatter.monthSymbols ?? []) + (formatter.shortMonthSymbols ?? [])
+        let escaped = monthNames
+            .filter { !$0.isEmpty }
+            .map { NSRegularExpression.escapedPattern(for: $0) }
+            .joined(separator: "|")
+        let pattern = #"^\s*("# + escaped + #")\s+([0-9]{1,2})(?:,\s*([0-9]{4}))?\s*$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+              let monthRange = Range(match.range(at: 1), in: line),
+              let dayRange = Range(match.range(at: 2), in: line),
+              let day = Int(line[dayRange]) else {
+            return nil
+        }
+
+        let monthName = String(line[monthRange]).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        let fullMonths = formatter.monthSymbols ?? []
+        let shortMonths = formatter.shortMonthSymbols ?? []
+        let fullIndex = fullMonths.firstIndex { $0.lowercased() == monthName }
+        let shortIndex = shortMonths.firstIndex { $0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")) == monthName }
+        guard let monthIndex = fullIndex ?? shortIndex else { return nil }
+
+        let calendar = Calendar.current
+        let year: Int
+        if match.range(at: 3).location != NSNotFound,
+           let yearRange = Range(match.range(at: 3), in: line),
+           let parsedYear = Int(line[yearRange]) {
+            year = parsedYear
+        } else {
+            year = calendar.component(.year, from: referenceDate)
+        }
+
+        return calendar.date(from: DateComponents(year: year, month: monthIndex + 1, day: day))
+    }
+
+    private static func extractDateRangeEnd(from line: String, referenceDate: Date) -> Date? {
+        extractDateRange(from: line, referenceDate: referenceDate)?.end
+    }
+
+    private static func extractDateRange(from line: String, referenceDate: Date) -> (start: Date, end: Date)? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let monthNames = (formatter.monthSymbols ?? []) + (formatter.shortMonthSymbols ?? [])
+        let escaped = monthNames
+            .filter { !$0.isEmpty }
+            .map { NSRegularExpression.escapedPattern(for: $0) }
+            .joined(separator: "|")
+        let datePart = #"("# + escaped + #")\s+([0-9]{1,2})(?:,\s*([0-9]{4}))?"#
+        let pattern = datePart + #"\s*[-–]\s*"# + datePart
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+              let startMonthRange = Range(match.range(at: 1), in: line),
+              let startDayRange = Range(match.range(at: 2), in: line),
+              let endMonthRange = Range(match.range(at: 4), in: line),
+              let endDayRange = Range(match.range(at: 5), in: line),
+              let startDay = Int(line[startDayRange]),
+              let endDay = Int(line[endDayRange]),
+              let startMonth = monthIndex(String(line[startMonthRange])),
+              let endMonth = monthIndex(String(line[endMonthRange])) else {
+            return nil
+        }
+
+        let calendar = Calendar.current
+        let referenceYear = calendar.component(.year, from: referenceDate)
+        let startYear: Int
+        if match.range(at: 3).location != NSNotFound,
+           let yearRange = Range(match.range(at: 3), in: line),
+           let parsedYear = Int(line[yearRange]) {
+            startYear = parsedYear
+        } else {
+            startYear = referenceYear
+        }
+
+        let endYear: Int
+        if match.range(at: 6).location != NSNotFound,
+           let yearRange = Range(match.range(at: 6), in: line),
+           let parsedYear = Int(line[yearRange]) {
+            endYear = parsedYear
+        } else if endMonth < startMonth {
+            endYear = startYear + 1
+        } else {
+            endYear = startYear
+        }
+
+        guard let start = calendar.date(from: DateComponents(year: startYear, month: startMonth + 1, day: startDay)),
+              let end = calendar.date(from: DateComponents(year: endYear, month: endMonth + 1, day: endDay)) else {
+            return nil
+        }
+        return (start, end)
+    }
+
+    private static func monthIndex(_ raw: String) -> Int? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let month = raw.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        if let index = formatter.monthSymbols.firstIndex(where: { $0.lowercased() == month }) {
+            return index
+        }
+        return formatter.shortMonthSymbols.firstIndex {
+            $0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")) == month
+        }
+    }
+
+    nonisolated private static func normalizedDisplayName(_ line: String) -> String {
         line.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    nonisolated private static func normalizedServiceDisplayName(_ line: String) -> String {
+        let name = normalizedDisplayName(line)
+        guard name.lowercased().hasPrefix("clipboard al") else { return name }
+        return name.replacingOccurrences(of: "Clipboard Al", with: "Clipboard AI", options: [.caseInsensitive])
     }
 
     /// Generic name normalisation for duplicate matching: lowercase, strip

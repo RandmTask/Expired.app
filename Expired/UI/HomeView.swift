@@ -24,13 +24,13 @@ struct HomeView: View {
     @State private var showingImportReview = false
     @State private var editingItem: SubscriptionItem?
     @State private var searchText = ""
-    @State private var importPhotoItem: PhotosPickerItem?
+    @State private var importPhotoItems: [PhotosPickerItem] = []
     @State private var importDrafts: [ScreenshotSubscriptionDraft] = []
     @State private var importWarning: String?
     @State private var importError: String?
     @State private var isAnalyzingScreenshot = false
     @State private var analyzingMessageIndex = 0
-    @State private var importedPhotoIdentifier: String?
+    @State private var importedPhotoIdentifiers: [String] = []
     @State private var pendingScreenshotDeletionIdentifiers: [String] = []
     @State private var showingDeleteImportedScreenshotPrompt = false
     @State private var showPaywall = false
@@ -38,7 +38,6 @@ struct HomeView: View {
     @State private var toastDismissTask: Task<Void, Never>?
 #if os(iOS)
     @State private var showingPhotoImporter = false
-    @State private var importPhotoFilter: PHPickerFilter = .screenshots
 #else
     @State private var showingScreenshotFileImporter = false
 #endif
@@ -174,6 +173,7 @@ struct HomeView: View {
     }
 
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
+    @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
 
     private var monthlyTotal: Double {
         subscriptionItems
@@ -185,6 +185,14 @@ struct HomeView: View {
     private var yearlyTotal: Double { monthlyTotal * 12 }
 
     private var displayCurrency: String { preferredCurrency }
+
+    private var appStoreRegionCode: String {
+        let trimmed = appStoreRegion.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "auto" {
+            return Locale.current.region?.identifier.uppercased() ?? "US"
+        }
+        return trimmed.uppercased()
+    }
 
     // MARK: - Body
 
@@ -236,7 +244,7 @@ struct HomeView: View {
             .largeNavigationTitle()
 #if os(iOS)
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search subscriptions")
-            .photosPicker(isPresented: $showingPhotoImporter, selection: $importPhotoItem, matching: importPhotoFilter)
+            .photosPicker(isPresented: $showingPhotoImporter, selection: $importPhotoItems, maxSelectionCount: 0, matching: .images)
 #endif
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -261,42 +269,42 @@ struct HomeView: View {
             }
 #if os(iOS)
             .confirmationDialog(
-                "Delete imported screenshot?",
+                pendingScreenshotDeletionIdentifiers.count == 1 ? "Delete imported photo?" : "Delete imported photos?",
                 isPresented: $showingDeleteImportedScreenshotPrompt,
                 titleVisibility: .visible
             ) {
                 Button("Move to Recently Deleted", role: .destructive) {
                     deleteImportedScreenshots()
                 }
-                Button("Keep Screenshot", role: .cancel) {
+                Button(pendingScreenshotDeletionIdentifiers.count == 1 ? "Keep Photo" : "Keep Photos", role: .cancel) {
                     pendingScreenshotDeletionIdentifiers = []
                 }
             } message: {
-                Text("The import is complete. You can remove the screenshot from Photos now.")
+                Text("The import is complete. You can remove the imported image\(pendingScreenshotDeletionIdentifiers.count == 1 ? "" : "s") from Photos now.")
             }
 #endif
 #if os(iOS)
-            .onChange(of: importPhotoItem) { _, newItem in
-                guard let newItem else { return }
+            .onChange(of: importPhotoItems) { _, newItems in
+                guard !newItems.isEmpty else { return }
                 Task {
-                    importedPhotoIdentifier = newItem.itemIdentifier
-                    if let data = try? await newItem.loadTransferable(type: Data.self) {
-                        await analyzeScreenshot(data)
-                    }
-                    importPhotoItem = nil
+                    await analyzeSelectedPhotos(newItems)
+                    importPhotoItems = []
                 }
             }
 #else
             .fileImporter(
                 isPresented: $showingScreenshotFileImporter,
                 allowedContentTypes: [.image],
-                allowsMultipleSelection: false
+                allowsMultipleSelection: true
             ) { result in
-                guard let url = try? result.get().first else { return }
-                guard url.startAccessingSecurityScopedResource() else { return }
-                defer { url.stopAccessingSecurityScopedResource() }
-                if let data = try? Data(contentsOf: url) {
-                    Task { await analyzeScreenshot(data) }
+                guard let urls = try? result.get(), !urls.isEmpty else { return }
+                let imageData = urls.compactMap { url -> Data? in
+                    guard url.startAccessingSecurityScopedResource() else { return nil }
+                    defer { url.stopAccessingSecurityScopedResource() }
+                    return try? Data(contentsOf: url)
+                }
+                if !imageData.isEmpty {
+                    Task { await analyzeScreenshots(imageData) }
                 }
             }
 #endif
@@ -609,28 +617,138 @@ struct HomeView: View {
 
     @MainActor
     private func analyzeScreenshot(_ data: Data) async {
+        await analyzeScreenshots([data])
+    }
+
+#if os(iOS)
+    @MainActor
+    private func analyzeSelectedPhotos(_ items: [PhotosPickerItem]) async {
+        importedPhotoIdentifiers = items.compactMap(\.itemIdentifier)
+        var imageData: [Data] = []
+        for item in items {
+            if let data = try? await item.loadTransferable(type: Data.self) {
+                imageData.append(data)
+            }
+        }
+        await analyzeScreenshots(imageData)
+    }
+#endif
+
+    @MainActor
+    private func analyzeScreenshots(_ images: [Data]) async {
+        guard !images.isEmpty else { return }
         isAnalyzingScreenshot = true
         defer { isAnalyzingScreenshot = false }
 
         do {
-            let result = try await ScreenshotImportAnalyzer.analyze(
-                imageData: data,
-                existingItems: allItems
-            )
-            guard !result.drafts.isEmpty else {
-                importError = result.warning ?? "No subscriptions were detected in that screenshot."
+            var allDrafts: [ScreenshotSubscriptionDraft] = []
+            var warnings: [String] = []
+
+            for data in images {
+                let result = try await ScreenshotImportAnalyzer.analyze(
+                    imageData: data,
+                    existingItems: allItems
+                )
+                allDrafts.append(contentsOf: result.drafts)
+                if let warning = result.warning, !warning.isEmpty {
+                    warnings.append(warning)
+                }
+            }
+
+            let uniqueDrafts = deduplicatedImportDrafts(allDrafts)
+            guard !uniqueDrafts.isEmpty else {
+                importError = warnings.first ?? "No subscriptions were detected in the selected images."
                 return
             }
-            importDrafts = result.drafts
-            importWarning = result.warning
+
+            importDrafts = uniqueDrafts
+            importWarning = warnings.isEmpty ? nil : Array(Set(warnings)).joined(separator: "\n")
             showingImportReview = true
             Haptics.fire(.success)
 
             Task {
-                await enrichVisibleDraftsWithAppStoreIcons(result.drafts)
+                await enrichVisibleDraftsWithAppStoreIcons(uniqueDrafts)
             }
         } catch {
             importError = error.localizedDescription
+        }
+    }
+
+    private func deduplicatedImportDrafts(_ drafts: [ScreenshotSubscriptionDraft]) -> [ScreenshotSubscriptionDraft] {
+        var bestByKey: [String: ScreenshotSubscriptionDraft] = [:]
+        for draft in drafts {
+            let key = ScreenshotImportAnalyzer.canonicalName(draft.name)
+            guard !key.isEmpty else { continue }
+            if let existingKey = bestByKey.keys.first(where: { importDraftKeysMatch($0, key) }),
+               let existing = bestByKey[existingKey] {
+                bestByKey[existingKey] = preferredImportDraft(existing, draft)
+            } else {
+                bestByKey[key] = draft
+            }
+        }
+
+        return drafts.compactMap { draft in
+            let key = ScreenshotImportAnalyzer.canonicalName(draft.name)
+            guard let best = bestByKey.first(where: { importDraftKeysMatch($0.key, key) })?.value,
+                  best.id == draft.id else {
+                return nil
+            }
+            return best
+        }
+    }
+
+    private func importDraftKeysMatch(_ lhs: String, _ rhs: String) -> Bool {
+        guard !lhs.isEmpty, !rhs.isEmpty else { return false }
+        if lhs == rhs || lhs.contains(rhs) || rhs.contains(lhs) { return true }
+        return importDraftSimilarity(lhs, rhs) >= 0.78
+    }
+
+    private func importDraftSimilarity(_ lhs: String, _ rhs: String) -> Double {
+        let a = Array(lhs)
+        let b = Array(rhs)
+        guard !a.isEmpty, !b.isEmpty else { return 0 }
+        var matrix = Array(repeating: Array(repeating: 0, count: b.count + 1), count: a.count + 1)
+        for i in 0...a.count { matrix[i][0] = i }
+        for j in 0...b.count { matrix[0][j] = j }
+
+        for i in 1...a.count {
+            for j in 1...b.count {
+                let cost = a[i - 1] == b[j - 1] ? 0 : 1
+                matrix[i][j] = min(
+                    matrix[i - 1][j] + 1,
+                    matrix[i][j - 1] + 1,
+                    matrix[i - 1][j - 1] + cost
+                )
+            }
+        }
+
+        return 1 - (Double(matrix[a.count][b.count]) / Double(max(a.count, b.count)))
+    }
+
+    private func preferredImportDraft(
+        _ lhs: ScreenshotSubscriptionDraft,
+        _ rhs: ScreenshotSubscriptionDraft
+    ) -> ScreenshotSubscriptionDraft {
+        if lhs.hasMatch != rhs.hasMatch { return lhs.hasMatch ? lhs : rhs }
+
+        switch (lhs.renewalDate, rhs.renewalDate) {
+        case let (left?, right?):
+            if left != right { return right > left ? rhs : lhs }
+        case (nil, _?):
+            return rhs
+        case (_?, nil):
+            return lhs
+        case (nil, nil):
+            break
+        }
+
+        switch (lhs.cost, rhs.cost) {
+        case (nil, _?):
+            return rhs
+        case (_?, nil):
+            return lhs
+        default:
+            return rhs.confidence > lhs.confidence ? rhs : lhs
         }
     }
 
@@ -638,7 +756,7 @@ struct HomeView: View {
         await withTaskGroup(of: (UUID, FaviconFetcher.AppStoreIconMatch?).self) { group in
             for draft in drafts {
                 group.addTask {
-                    let match = await FaviconFetcher.fetchAppStoreIconMatch(for: draft.name)
+                    let match = await FaviconFetcher.fetchAppStoreIconMatch(for: draft.name, country: appStoreRegionCode)
                     return (draft.id, match)
                 }
             }
@@ -689,11 +807,11 @@ struct HomeView: View {
 
         try? modelContext.save()
 #if os(iOS)
-        if let importedPhotoIdentifier {
-            pendingScreenshotDeletionIdentifiers = [importedPhotoIdentifier]
+        if !importedPhotoIdentifiers.isEmpty {
+            pendingScreenshotDeletionIdentifiers = importedPhotoIdentifiers
             showingDeleteImportedScreenshotPrompt = true
         }
-        importedPhotoIdentifier = nil
+        importedPhotoIdentifiers = []
 #endif
         showingImportReview = false
         importDrafts = []
@@ -750,7 +868,7 @@ struct HomeView: View {
             guard status == .authorized || status == .limited else {
                 Task { @MainActor in
                     Haptics.fire(.warning)
-                    importError = "Photos permission is needed to delete the imported screenshot."
+                    importError = "Photos permission is needed to delete the imported images."
                 }
                 return
             }
@@ -786,16 +904,6 @@ struct HomeView: View {
                       systemImage: isAnalyzingScreenshot ? "hourglass" : (locked ? "lock.fill" : "doc.viewfinder"))
             }
             .disabled(isAnalyzingScreenshot)
-
-#if os(iOS)
-            Button {
-                Haptics.fire(.light)
-                triggerScreenshotImport(screenshotsOnly: false)
-            } label: {
-                Label("Choose from All Photos", systemImage: "photo.on.rectangle")
-            }
-            .disabled(isAnalyzingScreenshot)
-#endif
 
             Divider()
 
@@ -889,7 +997,7 @@ struct HomeView: View {
 #endif
     }
 
-    private func triggerScreenshotImport(screenshotsOnly: Bool = true) {
+    private func triggerScreenshotImport() {
         // AI / screenshot import is a Pro feature (also enforced server-side by the proxy).
         guard purchaseManager.isPremium else {
             Haptics.fire(.warning)
@@ -897,7 +1005,6 @@ struct HomeView: View {
             return
         }
 #if os(iOS)
-        importPhotoFilter = screenshotsOnly ? .screenshots : .images
         showingPhotoImporter = true
 #else
         showingScreenshotFileImporter = true
@@ -1536,6 +1643,7 @@ struct ScreenshotImportReviewSheet: View {
     @State private var showingPriceEditor = false
     @State private var isAdvancing = false
     @State private var dragThresholdDirection = 0
+    @State private var stackPromotionProgress: CGFloat = 0
 
     private var handledCount: Int { drafts.prefix(currentIndex).count }
     private var addedDrafts: [ScreenshotSubscriptionDraft] { drafts.filter { $0.action == .addNew } }
@@ -1578,12 +1686,19 @@ struct ScreenshotImportReviewSheet: View {
                         .padding(.horizontal, 28)
 
                     ZStack {
-                        if hasNextCard {
-                            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                                .fill(.white.opacity(0.68))
-                                .frame(width: 300, height: 480)
-                                .offset(x: 34, y: 16)
-                                .transition(.opacity)
+                        if hasNextCard, drafts.indices.contains(currentIndex + 1) {
+                            ScreenshotImportCard(
+                                draft: $drafts[currentIndex + 1],
+                                dragOffset: 0,
+                                onEditPrice: {}
+                            )
+                            .frame(maxWidth: 330)
+                            .scaleEffect(nextCardScale)
+                            .offset(x: nextCardOffsetX, y: nextCardOffsetY)
+                            .opacity(nextCardOpacity)
+                            .allowsHitTesting(false)
+                            .animation(.spring(response: 0.34, dampingFraction: 0.86), value: nextCardPromotionProgress)
+                            .transition(.opacity)
                         }
 
                         if isComplete {
@@ -1610,7 +1725,7 @@ struct ScreenshotImportReviewSheet: View {
                                     }
                             )
                             .animation(.spring(duration: 0.28), value: dragOffset)
-                            .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                            .transition(.asymmetric(insertion: .identity,
                                                     removal: .scale(scale: 0.94).combined(with: .opacity)))
                         }
                     }
@@ -1658,6 +1773,26 @@ struct ScreenshotImportReviewSheet: View {
 
     private var title: String {
         currentIndex == 0 ? "Swipe to sort" : "Subscription \(currentIndex + 1) of \(drafts.count)"
+    }
+
+    private var nextCardPromotionProgress: CGFloat {
+        max(stackPromotionProgress, min(abs(dragOffset) / 170, 1) * 0.72)
+    }
+
+    private var nextCardScale: CGFloat {
+        0.94 + (0.06 * nextCardPromotionProgress)
+    }
+
+    private var nextCardOffsetX: CGFloat {
+        34 * (1 - nextCardPromotionProgress)
+    }
+
+    private var nextCardOffsetY: CGFloat {
+        16 * (1 - nextCardPromotionProgress)
+    }
+
+    private var nextCardOpacity: Double {
+        Double(0.68 + (0.32 * nextCardPromotionProgress))
     }
 
     private var progressStrip: some View {
@@ -1765,15 +1900,15 @@ struct ScreenshotImportReviewSheet: View {
         Haptics.fire(action == .skip ? .light : .success)
         withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
             dragOffset = exitOffset
+            stackPromotionProgress = 1
         }
 
         Task {
-            try? await Task.sleep(for: .milliseconds(180))
+            try? await Task.sleep(for: .milliseconds(240))
             await MainActor.run {
-                withAnimation(.spring(duration: 0.3)) {
-                    currentIndex += 1
-                    dragOffset = 0
-                }
+                currentIndex += 1
+                dragOffset = 0
+                stackPromotionProgress = 0
                 isAdvancing = false
                 dragThresholdDirection = 0
             }
@@ -1787,6 +1922,7 @@ struct ScreenshotImportReviewSheet: View {
             currentIndex -= 1
             drafts[currentIndex].action = drafts[currentIndex].hasMatch ? .updateExisting : .addNew
             dragOffset = 0
+            stackPromotionProgress = 0
             dragThresholdDirection = 0
         }
     }

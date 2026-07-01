@@ -185,7 +185,7 @@ struct FaviconFetcher {
         guard !resultKey.isEmpty else { return 0 }
 
         let tokenCoverage = appStoreTokenCoverage(original: original, resultName: resultName)
-        guard tokenCoverage >= 0.5 else { return 0 }
+        guard tokenCoverage >= minimumAppStoreTokenCoverage(for: original) else { return 0 }
 
         let baseScore: Double
         if resultKey == originalKey || resultKey == queryKey {
@@ -207,6 +207,11 @@ struct FaviconFetcher {
         let resultTokens = Set(appStoreTokens(resultName))
         let matched = originalTokens.intersection(resultTokens).count
         return Double(matched) / Double(originalTokens.count)
+    }
+
+    private static func minimumAppStoreTokenCoverage(for original: String) -> Double {
+        let tokenCount = Set(appStoreTokens(original)).count
+        return tokenCount <= 1 ? 1 : 0.67
     }
 
     private static func canonicalAppName(_ value: String) -> String {
