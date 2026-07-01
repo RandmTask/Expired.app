@@ -14,7 +14,11 @@ on conflict (key) do nothing;
 -- running the cascade. Seeded with the same defaults already hardcoded in
 -- ScreenshotAIProvider.swift — update the value here (not the Swift code)
 -- when a provider renames/retires a model.
+-- gemini-3.1-flash-lite: cheaper than 2.5 Flash ($0.25/$1.50 vs $0.30/$2.50 per
+-- 1M tokens) and Google positions it specifically for "simple data processing" —
+-- a closer fit for structured screenshot extraction than the general-purpose
+-- 2.5 Flash tier.
 insert into public.app_config (key, value) values
-    ('ai_model_gemini',   '"gemini-2.5-flash"'::jsonb),
+    ('ai_model_gemini',   '"gemini-3.1-flash-lite"'::jsonb),
     ('ai_model_deepseek', '"deepseek-chat"'::jsonb)
 on conflict (key) do nothing;

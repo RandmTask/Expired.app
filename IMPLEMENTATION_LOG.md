@@ -277,4 +277,62 @@ entry UI + RED security warning (key now lives server-side).
 
 **Deferred:** currency-conversion gating (ambiguous — needs a behaviour decision).
 
+## 2026-07-01 — Server-side AI fallback cascade + cost controls
+
+- **Cascade replaces single-provider selection.** New "Automatic" mode (now the default
+  `ScreenshotAIProvider` case): tries Apple Intelligence on-device first, and only on
+  failure calls `ai-proxy` with `mode: "auto"`, which tries cloud providers from
+  `app_config.ai_fallback_order` (seeded `["gemini", "deepseek"]`) in one round trip —
+  no client round-trip between provider attempts. `ai-proxy` now builds each provider's
+  request body itself (`providers.ts` `buildRequestBody`); the client sends one generic
+  `{visionPrompt, textPrompt, image}` payload and gets back `{provider, model, raw}`, then
+  picks the matching extractor client-side. Manual/debug single-provider picker still
+  works (`mode: "forced"`), now going through the same endpoint. Removed 5 near-duplicate
+  per-provider request-builder functions from the Swift client as a result.
+- **Config-driven models, not hardcoded.** `app_config.ai_model_<provider>` rows resolve
+  the cascade's model IDs — changing a provider's model is a Table Editor row edit, no
+  release. Swift/`providers.ts` hardcoded defaults are last-resort fallbacks only, used
+  if the config row is missing.
+- **Gemini default corrected mid-session:** seeded `gemini-2.5-flash`, then corrected to
+  `gemini-3.1-flash-lite` after checking Google's actual pricing page (Deon caught this) —
+  cheaper ($0.25/$1.50 vs $0.30/$2.50 per 1M tokens) and explicitly positioned by Google
+  for "simple data processing" tasks, a closer fit than the general-purpose 2.5 Flash tier.
+- **Cost controls, added after realizing the shipped cascade had none:**
+  - App-wide `global_daily_request_cap` (500/day default) on top of the existing per-user
+    `daily_request_cap` (50/day) — a per-user cap alone doesn't catch a viral spike or a
+    client retry-storm bug spread thin across many accounts.
+  - `usage.token_estimate` was dead code (always 0, `increment_usage` never got a token
+    count). Now extracts each provider's real usage field
+    (`usage.total_tokens` / Claude's input+output / Gemini's `usageMetadata.totalTokenCount`)
+    and records it per successful call.
+  - Screenshots are downscaled to a 1024px long edge + re-encoded JPEG (quality 0.8)
+    before upload to any vision provider — only the network copy; on-device Vision-framework
+    OCR (used for local heuristics/repair and Apple Intelligence) still runs against the
+    original full-resolution image.
+  - **Decision, not yet built:** cropping to the OCR-recognized content bounding box before
+    downscaling would get much closer to genuinely cheap "UI crop" pricing (vs. a naive
+    full-frame downscale) without the legibility risk of just shrinking further (e.g. to
+    512px) — screenshots are dense with small price/date text, and misreading a digit is a
+    data-integrity problem, not just a cost one. **Deferred until real usage data shows the
+    AI bill is actually worth optimizing further** — at pre-launch scale (no App Store users
+    yet) the whole monthly bill is a few dollars regardless, so the accuracy trade isn't
+    worth it yet.
+  - True dollar-based spend caps live in each provider's own dashboard (OpenAI billing
+    limits, Google Cloud budget alerts, DeepSeek's prepaid balance is self-limiting by
+    design) — the app's own caps are insurance on top of that, not a replacement for it.
+- **Debug/testing tooling (Phase 2):** hidden long-press on the Settings "Analyzer" row
+  opens a debug sheet with a per-provider "force fail" toggle, so the cascade's skip-on-
+  failure path can be exercised without a real outage (`ai-proxy` already supported
+  `simulateFailures` from the Phase 1 design — no server change needed). Client tracks
+  consecutive fallback-to-heuristic events in UserDefaults and appends a note to the
+  existing import-warning banner once it crosses a threshold, rather than adding new UI.
+  `provider_health` table + `record_provider_health()` fn track consecutive
+  failures/last-success per provider as a byproduct of **real cascade traffic** — chose
+  this over a separately scheduled synthetic health-check ping (the original plan) because
+  pinging providers on a timer to check health would itself spend real tokens; deriving it
+  from real calls is free and a more accurate signal anyway. A real alert channel
+  (Slack/email on sustained failure) is still a genuine follow-up, not built this batch.
+- **No CloudKit/SwiftData schema change.** Everything above is Supabase config
+  (`app_config` rows, new `provider_health` table) + Swift `UserDefaults`.
+
 **No schema changes.** SwiftData/CloudKit model untouched.

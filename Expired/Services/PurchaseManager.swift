@@ -80,6 +80,30 @@ final class PurchaseManager: NSObject, PurchasesDelegate {
         return isPremium
     }
 
+    /// Repairs the identity split `logOutForTesting()` can cause: that function moves
+    /// RevenueCat's client-side identity to a fresh random UUID, decoupled from the
+    /// Supabase session UUID the server actually checks (`ai-proxy`'s entitlement gate
+    /// reads the JWT's subject, not whatever RevenueCat's SDK currently thinks it is).
+    /// The device ends up showing Pro (old, purchased identity) while every server
+    /// call 402s (new, Supabase-matching identity has no purchase). Logging back into
+    /// the Supabase UUID, then restoring, re-attaches the App Store receipt to the
+    /// correct identity — no reinstall, no SwiftData/CloudKit data touched.
+    @discardableResult
+    func resyncIdentityToCurrentSession(supabaseUserID: String?) async -> Bool {
+        guard isConfigured, let supabaseUserID else { return false }
+        do {
+            let (info, _) = try await Purchases.shared.logIn(supabaseUserID)
+            apply(info)
+        } catch {
+            print("[PurchaseManager] resyncIdentityToCurrentSession: logIn failed: \(error)")
+            return false
+        }
+        if let info = try? await Purchases.shared.restorePurchases() {
+            apply(info)
+        }
+        return isPremium
+    }
+
     private func apply(_ info: CustomerInfo) {
         isPremium = info.entitlements[BackendConfig.proEntitlementID]?.isActive == true
     }

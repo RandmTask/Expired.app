@@ -30,6 +30,7 @@ struct HomeView: View {
     @State private var importError: String?
     @State private var isAnalyzingScreenshot = false
     @State private var analyzingMessageIndex = 0
+    @State private var analyzingMessages: [String] = Self.shuffledAnalyzingMessages()
     @State private var importedPhotoIdentifiers: [String] = []
     @State private var pendingScreenshotDeletionIdentifiers: [String] = []
     @State private var showingDeleteImportedScreenshotPrompt = false
@@ -231,12 +232,12 @@ struct HomeView: View {
             .animation(.spring(duration: 0.28), value: isAnalyzingScreenshot)
             .task(id: isAnalyzingScreenshot) {
                 guard isAnalyzingScreenshot else { return }
-                analyzingMessageIndex = 0
+                resetAnalyzingMessages()
                 while !Task.isCancelled && isAnalyzingScreenshot {
-                    try? await Task.sleep(for: .seconds(1.6))
+                    try? await Task.sleep(for: .seconds(3.4))
                     guard !Task.isCancelled && isAnalyzingScreenshot else { break }
                     withAnimation(.easeInOut(duration: 0.22)) {
-                        analyzingMessageIndex += 1
+                        advanceAnalyzingMessage()
                     }
                 }
             }
@@ -326,27 +327,23 @@ struct HomeView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 16) {
-                ZStack {
-                    Circle()
-                        .fill(Color.blue.opacity(0.14))
-                        .frame(width: 74, height: 74)
-                    ProgressView()
-                        .controlSize(.large)
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.blue)
-                        .offset(x: 26, y: -24)
-                }
+                AnalyzingScanIcon()
 
                 VStack(spacing: 5) {
                     Text(analyzingMessage)
                         .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(.primary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .center)
                         .contentTransition(.opacity)
                     Text("AI is sorting subscriptions from your screenshot.")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
             .padding(.horizontal, 26)
@@ -358,15 +355,98 @@ struct HomeView: View {
         }
     }
 
+    private static let analyzingLoadingMessages = [
+        "Parsing the fine print",
+        "Sussing out the details",
+        "Deciphering the subtext",
+        "Untangling the nodes",
+        "Consulting the oracle",
+        "Correlating the coordinates",
+        "Defragmenting the thought stream",
+        "Extrapolating the obvious",
+        "Synthesizing the signals",
+        "Distilling the core logic",
+        "Percolating the data",
+        "Herding the digital cats",
+        "Reticulating the splines",
+        "Recombobulating the data stream",
+        "Calibrating the flux capacitor",
+        "Polishing the pixels",
+        "Consulting the magic 8-ball",
+        "Untwisting the hyperdrive",
+        "Un-fuddling the logic",
+        "Chasing down the loose ends",
+        "Excavating the details",
+        "Forging the framework",
+        "Assembling the scaffolding",
+        "Tightening the loose bolts",
+        "Lubricating the gears",
+        "Stoking the engine room",
+        "Routing the pathways",
+        "Mining the deep layers",
+        "Casting the foundation",
+        "Welding the connections",
+        "Brewing the data",
+        "Fermenting the feedback",
+        "Stirring the secret sauce",
+        "Simmering the code base",
+        "Marinating the variables",
+        "Cultivating the results",
+        "Infusing the logic gates",
+        "Crystallizing the concepts",
+        "Sprouting new connections",
+        "Steeping the telemetry",
+        "Scouting the perimeter",
+        "Mapping the uncharted zones",
+        "Aligning the constellations",
+        "Scanning the stratosphere",
+        "Traversing the network grid",
+        "Navigating the labyrinth",
+        "Plumbing the depths",
+        "Sifting through the ether",
+        "Unearthing hidden patterns",
+        "Tuning into the frequency"
+    ]
+
+    private static func shuffledAnalyzingMessages(avoiding firstMessageToAvoid: String? = nil) -> [String] {
+        var messages = analyzingLoadingMessages.shuffled()
+        guard
+            let firstMessageToAvoid,
+            messages.count > 1,
+            messages.first == firstMessageToAvoid,
+            let replacementIndex = messages.dropFirst().firstIndex(where: { $0 != firstMessageToAvoid })
+        else {
+            return messages
+        }
+
+        messages.swapAt(0, replacementIndex)
+        return messages
+    }
+
     private var analyzingMessage: String {
-        let messages = [
-            "Crunching the data",
-            "Percolating renewals",
-            "Sorting the tiny print",
-            "Matching icons",
-            "Checking the receipts"
-        ]
-        return messages[analyzingMessageIndex % messages.count]
+        guard !analyzingMessages.isEmpty else { return Self.analyzingLoadingMessages[0] }
+        return analyzingMessages[analyzingMessageIndex]
+    }
+
+    private func resetAnalyzingMessages() {
+        analyzingMessages = Self.shuffledAnalyzingMessages()
+        analyzingMessageIndex = 0
+    }
+
+    private func advanceAnalyzingMessage() {
+        guard !analyzingMessages.isEmpty else {
+            resetAnalyzingMessages()
+            return
+        }
+
+        guard analyzingMessageIndex < analyzingMessages.count - 1 else {
+            let previousMessage = analyzingMessages[analyzingMessageIndex]
+            analyzingMessages = Self.shuffledAnalyzingMessages(avoiding: previousMessage)
+            analyzingMessageIndex = 0
+            return
+        }
+
+        analyzingMessageIndex += 1
     }
 
     @ViewBuilder
@@ -655,6 +735,12 @@ struct HomeView: View {
                 }
             }
 
+            // Track whether AI is degrading over repeated tries — a lone blip isn't
+            // worth surfacing, but a sustained streak means something's actually down.
+            let consecutiveFallbacks = warnings.isEmpty
+                ? { ScreenshotAIHealthLog.recordSuccess(); return 0 }()
+                : ScreenshotAIHealthLog.recordFallback()
+
             let uniqueDrafts = deduplicatedImportDrafts(allDrafts)
             guard !uniqueDrafts.isEmpty else {
                 importError = warnings.first ?? "No subscriptions were detected in the selected images."
@@ -662,7 +748,12 @@ struct HomeView: View {
             }
 
             importDrafts = uniqueDrafts
-            importWarning = warnings.isEmpty ? nil : Array(Set(warnings)).joined(separator: "\n")
+            var warningText = warnings.isEmpty ? nil : Array(Set(warnings)).joined(separator: "\n")
+            if consecutiveFallbacks >= ScreenshotAIHealthLog.alertThreshold {
+                let streakNote = "AI import has failed \(consecutiveFallbacks) times in a row — check your connection, or look for an app update."
+                warningText = [warningText, streakNote].compactMap { $0 }.joined(separator: "\n")
+            }
+            importWarning = warningText
             showingImportReview = true
             Haptics.fire(.success)
 
@@ -937,19 +1028,21 @@ struct HomeView: View {
                         }
                     }
                 }
+
+                Divider()
+
+                Button {
+                    Haptics.fire(.selectionChanged)
+                    hideExpired.toggle()
+                } label: {
+                    if hideExpired {
+                        Text("Show Expired")
+                    } else {
+                        Label("Show Expired", systemImage: "checkmark")
+                    }
+                }
             } label: {
                 Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
-            }
-
-            Button {
-                Haptics.fire(.selectionChanged)
-                hideExpired.toggle()
-            } label: {
-                if hideExpired {
-                    Text("Show Expired")
-                } else {
-                    Label("Show Expired", systemImage: "checkmark")
-                }
             }
 
             Divider()
@@ -1539,6 +1632,71 @@ private struct UndoToastView: View {
         .padding(.vertical, 13)
         .background(.black.opacity(0.86), in: Capsule())
         .shadow(color: .black.opacity(0.28), radius: 16, x: 0, y: 8)
+    }
+}
+
+private struct AnalyzingScanIcon: View {
+    @State private var isScanning = false
+    @State private var isPulsing = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.blue.opacity(0.14))
+                .frame(width: 78, height: 78)
+
+            Circle()
+                .stroke(Color.blue.opacity(isPulsing ? 0.08 : 0.28), lineWidth: 1.5)
+                .frame(width: 78, height: 78)
+                .scaleEffect(isPulsing ? 1.12 : 0.92)
+
+            scanTile
+
+            Image(systemName: "sparkles")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.blue)
+                .offset(x: 27, y: -25)
+                .scaleEffect(isPulsing ? 1.08 : 0.94)
+        }
+        .frame(width: 88, height: 88)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
+                isPulsing = true
+            }
+            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: false)) {
+                isScanning = true
+            }
+        }
+    }
+
+    private var scanTile: some View {
+        RoundedRectangle(cornerRadius: 15, style: .continuous)
+            .fill(Color.blue.opacity(0.16))
+            .frame(width: 52, height: 52)
+            .overlay {
+                Image(systemName: "doc.viewfinder")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(.blue.opacity(0.9))
+            }
+            .overlay {
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                .clear,
+                                Color.white.opacity(0.35),
+                                Color.blue.opacity(0.75),
+                                Color.white.opacity(0.35),
+                                .clear
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: 42, height: 3)
+                    .offset(y: isScanning ? 20 : -20)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
     }
 }
 

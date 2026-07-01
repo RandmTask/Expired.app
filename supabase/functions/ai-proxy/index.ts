@@ -81,9 +81,19 @@ Deno.serve(async (req) => {
   const dailyCap = Number(config.daily_request_cap ?? 50);
 
   // 3. Premium entitlement (AI import is a Premium feature)
-  const active = await hasPremiumEntitlement(db, userId, entitlementIDs(config));
-  if (!active) {
-    return json({ error: { message: "Expired Pro verification required. Restore purchases and try again." } }, 402);
+  const ids = entitlementIDs(config);
+  const check = await hasPremiumEntitlement(db, userId, ids);
+  if (!check.active) {
+    // checkedEntitlementIDs + revenueCatCheck are diagnostic only (not sensitive) —
+    // lets the client's console log show exactly which identifier(s) were checked
+    // and why the RevenueCat lookup didn't resolve active, without server access.
+    return json({
+      error: {
+        message: "Expired Pro verification required. Restore purchases and try again.",
+        checkedEntitlementIDs: ids,
+        revenueCatCheck: check.detail,
+      },
+    }, 402);
   }
 
   // 4. Daily cap (check before spending; increment only after success)
@@ -152,11 +162,13 @@ Deno.serve(async (req) => {
       });
     } catch (e) {
       tried.push({ provider, status: `network_error: ${e}` });
+      db.rpc("record_provider_health", { p_provider: provider, p_success: false, p_status: "network_error" }).then(() => {});
       continue;
     }
 
     if (!upstream.ok) {
       tried.push({ provider, status: upstream.status });
+      db.rpc("record_provider_health", { p_provider: provider, p_success: false, p_status: String(upstream.status) }).then(() => {});
       continue;
     }
 
@@ -165,6 +177,7 @@ Deno.serve(async (req) => {
     const raw = await upstream.json();
     const tokenCount = extractTokenCount(provider, raw);
     db.rpc("increment_usage", { p_user: userId, p_tokens: tokenCount }).then(() => {});
+    db.rpc("record_provider_health", { p_provider: provider, p_success: true }).then(() => {});
     return json({ provider, model, raw }, 200);
   }
 
@@ -187,18 +200,28 @@ function entitlementIDs(config: Record<string, unknown>): string[] {
   )];
 }
 
+interface EntitlementCheck {
+  active: boolean;
+  /** Diagnostic only (not sensitive) — surfaced in the 402 body so a failure mode
+   * (wrong/missing secret key, RevenueCat 401/404, vs. a genuinely inactive
+   * customer) is visible from the client's console log without server access. */
+  detail: string;
+}
+
 async function hasPremiumEntitlement(
   db: ReturnType<typeof serviceClient>,
   userId: string,
   ids: string[],
-): Promise<boolean> {
+): Promise<EntitlementCheck> {
   const { data: ent } = await db
     .from("entitlements")
     .select("premium_active, expires_at")
     .eq("user_id", userId)
     .maybeSingle();
 
-  if (entitlementActive(ent?.premium_active, ent?.expires_at)) return true;
+  if (entitlementActive(ent?.premium_active, ent?.expires_at)) {
+    return { active: true, detail: "local_mirror_active" };
+  }
 
   // Webhooks can be delayed, disabled in sandbox, or missed during setup. When the
   // local mirror says "no", ask RevenueCat directly and repair the mirror.
@@ -214,9 +237,9 @@ async function refreshRevenueCatEntitlement(
   db: ReturnType<typeof serviceClient>,
   userId: string,
   ids: string[],
-): Promise<boolean> {
+): Promise<EntitlementCheck> {
   const apiKey = Deno.env.get("REVENUECAT_SECRET_API_KEY") ?? Deno.env.get("REVENUECAT_API_KEY");
-  if (!apiKey) return false;
+  if (!apiKey) return { active: false, detail: "no_secret_key_configured" };
 
   let response: Response;
   try {
@@ -224,10 +247,14 @@ async function refreshRevenueCatEntitlement(
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(8_000),
     });
-  } catch {
-    return false;
+  } catch (e) {
+    return { active: false, detail: `revenuecat_fetch_failed: ${e}` };
   }
-  if (!response.ok) return false;
+  if (!response.ok) {
+    // 401/403 -> wrong or expired secret key. 404 -> this userId has never been
+    // seen by RevenueCat at all (classic anon-session / appUserID mismatch).
+    return { active: false, detail: `revenuecat_http_${response.status}` };
+  }
 
   const body = await response.json();
   const entitlements = body?.subscriber?.entitlements ?? {};
@@ -250,5 +277,5 @@ async function refreshRevenueCatEntitlement(
       { onConflict: "user_id" },
     );
 
-  return active;
+  return { active, detail: active ? "active" : (matched ? "expired" : "no_matching_entitlement_on_revenuecat_customer") };
 }

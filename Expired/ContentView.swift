@@ -2331,6 +2331,7 @@ struct SettingsView: View {
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
     @State private var modelLoadError: String?
+    @State private var showDebugAIFailureSimulator = false
     @AppStorage("appearanceMode") private var appearanceMode = 0
     @AppStorage("notificationHour")   private var notificationHour: Int = 9
     @AppStorage("notificationMinute") private var notificationMinute: Int = 0
@@ -2784,6 +2785,7 @@ struct SettingsView: View {
                 settingsSection(title: "Screenshot Import", icon: "doc.viewfinder") {
                     settingsRow {
                         macSettingsLabel("Analyzer", icon: "sparkles")
+                            .onLongPressGesture { showDebugAIFailureSimulator = true }
                         Spacer()
                         Menu {
                             ForEach(ScreenshotAIProvider.allCases) { provider in
@@ -3099,6 +3101,9 @@ struct SettingsView: View {
         } message: {
             Text("Please restart the app for the iCloud sync change to take effect.")
         }
+        .sheet(isPresented: $showDebugAIFailureSimulator) {
+            DebugAIFailureSimulatorView()
+        }
     }
 
     /// Consistent icon + label row element with fixed icon width for alignment.
@@ -3351,6 +3356,7 @@ struct SettingsView: View {
                 HStack {
                     rowIcon("sparkles")
                     Text("Analyzer").foregroundStyle(.primary)
+                        .onLongPressGesture { showDebugAIFailureSimulator = true }
                     Spacer()
                     Menu {
                         ForEach(ScreenshotAIProvider.allCases) { provider in
@@ -3617,6 +3623,9 @@ struct SettingsView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Please restart the app for the iCloud sync change to take effect.")
+        }
+        .sheet(isPresented: $showDebugAIFailureSimulator) {
+            DebugAIFailureSimulatorView()
         }
     }
 

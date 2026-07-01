@@ -65,7 +65,7 @@ enum ScreenshotAIProvider: String, CaseIterable, Identifiable {
         case .openAI: return "gpt-4.1-mini"
         case .deepSeek: return "deepseek-chat"
         case .claude: return "claude-3-5-haiku-latest"
-        case .gemini: return "gemini-2.5-flash"
+        case .gemini: return "gemini-3.1-flash-lite"
         case .appleIntelligence, .automatic: return ""
         }
     }
@@ -127,6 +127,60 @@ struct ScreenshotAISettings {
             defaults.removeObject(forKey: provider.apiKeyDefaultsKey)
         }
         defaults.set(true, forKey: flagKey)
+    }
+}
+
+/// Testing-only: lets Automatic's cascade skip-on-failure path be exercised without a
+/// real provider outage. Reachable only via a hidden long-press in Settings (never a
+/// visible control) — see `DebugAIFailureSimulatorView`.
+enum DebugAIFailureSimulator {
+    /// Cloud providers currently reachable via the Automatic cascade.
+    static let cascadeProviders: [ScreenshotAIProvider] = [.gemini, .deepSeek]
+
+    /// Every provider a debug toggle can force-fail, including on-device — without
+    /// this, exercising the full cascade (AFM fails → Gemini → DeepSeek) required a
+    /// device/simulator where Apple Intelligence is genuinely unavailable.
+    static var allDebuggableProviders: [ScreenshotAIProvider] { [.appleIntelligence] + cascadeProviders }
+
+    private static func key(_ provider: ScreenshotAIProvider) -> String {
+        "screenshotAI.debug.simulateFailure.\(provider.rawValue)"
+    }
+
+    static func isForcedToFail(_ provider: ScreenshotAIProvider) -> Bool {
+        UserDefaults.standard.bool(forKey: key(provider))
+    }
+
+    static func setForcedToFail(_ provider: ScreenshotAIProvider, _ value: Bool) {
+        UserDefaults.standard.set(value, forKey: key(provider))
+    }
+
+    static var activeProxyIDs: [String] {
+        cascadeProviders.filter(isForcedToFail).compactMap(\.proxyID)
+    }
+}
+
+/// Persisted count of consecutive screenshot imports that had to fall back all the way
+/// to the local heuristic parser (every AI path failed). Lets the UI surface "this has
+/// been failing for a while" without any server-side alerting infrastructure.
+enum ScreenshotAIHealthLog {
+    private static let consecutiveFallbackKey = "screenshotAI.consecutiveFallbackCount"
+
+    /// Below this, a single blip isn't worth bothering the user about.
+    static let alertThreshold = 3
+
+    static var consecutiveFallbackCount: Int {
+        UserDefaults.standard.integer(forKey: consecutiveFallbackKey)
+    }
+
+    static func recordSuccess() {
+        UserDefaults.standard.set(0, forKey: consecutiveFallbackKey)
+    }
+
+    @discardableResult
+    static func recordFallback() -> Int {
+        let next = consecutiveFallbackCount + 1
+        UserDefaults.standard.set(next, forKey: consecutiveFallbackKey)
+        return next
     }
 }
 
@@ -213,6 +267,9 @@ enum ScreenshotImportAnalyzer {
     private static func sendForData(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            #if DEBUG
+            print("[ScreenshotImportAnalyzer] ai-proxy returned \(http.statusCode): \(String(data: data, encoding: .utf8) ?? "<non-utf8 body>")")
+            #endif
             throw AnalyzerError.httpError(status: http.statusCode, message: providerErrorMessage(from: data))
         }
         return data
@@ -298,6 +355,9 @@ enum ScreenshotImportAnalyzer {
             // Try on-device first (free, private); only reach the proxy's cascade
             // (Gemini → DeepSeek, server-configured) if that fails or is unavailable.
             do {
+                guard !DebugAIFailureSimulator.isForcedToFail(.appleIntelligence) else {
+                    throw AnalyzerError.appleIntelligenceUnavailable
+                }
                 let lines = try await ocrLines(from: imageData)
                 return try await parseWithAppleIntelligence(lines: lines, referenceDate: referenceDate)
             } catch {
@@ -478,6 +538,10 @@ enum ScreenshotImportAnalyzer {
             payload["provider"] = proxyID
             if let model, !model.isEmpty { payload["model"] = model }
         }
+        if mode == .auto {
+            let simulated = DebugAIFailureSimulator.activeProxyIDs
+            if !simulated.isEmpty { payload["simulateFailures"] = simulated }
+        }
 
         var request = try await SupabaseService.shared.authorizedFunctionRequest(BackendConfig.Function.aiProxy)
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
@@ -543,6 +607,10 @@ enum ScreenshotImportAnalyzer {
         guard let cgImage = cgImage(from: imageData),
               let base64 = downscaledJPEGBase64(from: cgImage)
         else { return (imageMimeType(imageData), imageData.base64EncodedString()) }
+        #if DEBUG
+        let rawUploadBytes = base64.utf8.count * 3 / 4
+        print("[ScreenshotImportAnalyzer] upload image: original \(imageData.count) bytes -> resized ~\(rawUploadBytes) bytes (\(cgImage.width)x\(cgImage.height) source)")
+        #endif
         return ("image/jpeg", base64)
     }
 

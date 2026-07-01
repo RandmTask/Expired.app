@@ -108,7 +108,7 @@ export const DEFAULT_MODEL: Record<ProviderID, string> = {
   openai: "gpt-4.1-mini",
   deepseek: "deepseek-chat",
   claude: "claude-3-5-haiku-latest",
-  gemini: "gemini-2.5-flash",
+  gemini: "gemini-3.1-flash-lite",
 };
 
 export interface ImagePayload {
