@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		7E1C305F2F7CA8410086563F /* AppCatalog.json in Resources */ = {isa = PBXBuildFile; fileRef = 7E1C305E2F7C17E10086563F /* AppCatalog.json */; };
+		7E1C30612F7D00010086563F /* iCloud icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 7E1C30622F7D00010086563F /* iCloud icon.png */; };
 		7ED538012FF3A95E004321A5 /* ReceiptParser in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538002FF3A95E004321A5 /* ReceiptParser */; };
 		7ED538032FF3A95E004321A5 /* RevenueCat in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538022FF3A95E004321A5 /* RevenueCat */; };
 		7ED538052FF3A95E004321A5 /* RevenueCatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 7ED538042FF3A95E004321A5 /* RevenueCatUI */; };
@@ -17,6 +18,7 @@
 
 /* Begin PBXFileReference section */
 		7E1C305E2F7C17E10086563F /* AppCatalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = AppCatalog.json; sourceTree = "<group>"; };
+		7E1C30622F7D00010086563F /* iCloud icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "iCloud icon.png"; sourceTree = "<group>"; };
 		7EEA5B592F7395E200DF89FC /* Expired.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Expired.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7EEA5B7E2F752B8800DF89FC /* CloudKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CloudKit.framework; path = System/Library/Frameworks/CloudKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
@@ -69,6 +71,7 @@
 		7E1C30602F7CD0E40086563F /* AppCatalogIcons */ = {
 			isa = PBXGroup;
 			children = (
+				7E1C30622F7D00010086563F /* iCloud icon.png */,
 			);
 			path = AppCatalogIcons;
 			sourceTree = "<group>";
@@ -173,6 +176,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7E1C305F2F7CA8410086563F /* AppCatalog.json in Resources */,
+				7E1C30612F7D00010086563F /* iCloud icon.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

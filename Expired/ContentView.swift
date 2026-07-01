@@ -16,6 +16,7 @@ struct ContentView: View {
         TabView(selection: Binding(
             get: { selectedTab },
             set: { newTab in
+                Haptics.fire(.selectionChanged)
                 if selectedTab == 3 && newTab != 3 {
                     // Leaving Settings → reset nav so returning always shows root
                     settingsNavID = UUID()
@@ -42,6 +43,7 @@ struct ContentView: View {
         }
         .environmentObject(CloudKitDebugStore.shared)
         .onReceive(NotificationCenter.default.publisher(for: .expiredShowSettings)) { _ in
+            Haptics.fire(.selectionChanged)
             selectedTab = 3
         }
 #if os(iOS)
@@ -1032,6 +1034,7 @@ struct MonthStripView: View {
 #endif
                 .frame(width: geo.size.width, height: 130)
                 .onChange(of: currentPeriodID) { _, _ in
+                    Haptics.fire(.selectionChanged)
                     selectedDay = nil
                 }
 

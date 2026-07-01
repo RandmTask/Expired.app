@@ -52,7 +52,14 @@
     {
         "name": "iCloud+",
         "appStoreId": "500654020",
-        "category": "Digital Utilities & Cloud"
+        "category": "Digital Utilities & Cloud",
+        "iconFilename": "iCloud icon.png",
+        "aliases": [
+            "iCloud",
+            "iCloud Plus",
+            "iCloud+ with storage",
+            "iCloud storage"
+        ]
     },
     {
         "name": "Microsoft 365",

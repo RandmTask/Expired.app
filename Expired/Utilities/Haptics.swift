@@ -18,6 +18,13 @@ enum Haptics {
         case selectionChanged
     }
 
+#if os(iOS)
+    private static let selectionGenerator = UISelectionFeedbackGenerator()
+    private static let lightGenerator = UIImpactFeedbackGenerator(style: .light)
+    private static let mediumGenerator = UIImpactFeedbackGenerator(style: .medium)
+    private static let heavyGenerator = UIImpactFeedbackGenerator(style: .heavy)
+#endif
+
     static func fire(_ type: FeedbackType) {
 #if os(iOS)
         switch type {
@@ -28,13 +35,17 @@ enum Haptics {
         case .error:
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         case .light:
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            lightGenerator.impactOccurred()
+            lightGenerator.prepare()
         case .medium:
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            mediumGenerator.impactOccurred()
+            mediumGenerator.prepare()
         case .heavy:
-            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+            heavyGenerator.impactOccurred()
+            heavyGenerator.prepare()
         case .selectionChanged:
-            UISelectionFeedbackGenerator().selectionChanged()
+            selectionGenerator.selectionChanged()
+            selectionGenerator.prepare()
         }
 #elseif os(macOS)
         switch type {

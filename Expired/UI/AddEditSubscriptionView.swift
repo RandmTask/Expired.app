@@ -59,6 +59,7 @@ struct AddEditSubscriptionView: View {
     @State private var appStoreTotal = 0
     @State private var appStoreLastFetchCount = 0
     @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
+    private let minimumAppStoreSearchLength = 3
 
     // Cost & payment
     @State private var cost: Double? = nil
@@ -327,7 +328,7 @@ struct AddEditSubscriptionView: View {
                     .contentShape(Rectangle())
                     .onTapGesture { nameFieldFocused = true }
 
-                    if itemType == .subscription && nameFieldFocused {
+                    if canShowAppStoreSearchPrompt {
                         appSearchResultsView
                     }
 
@@ -1338,19 +1339,51 @@ struct AddEditSubscriptionView: View {
         !isSearchingAppStore && !appStoreResults.isEmpty && appStoreLastFetchCount > 0
     }
 
+    private var canShowAppStoreSearchPrompt: Bool {
+        itemType == .subscription &&
+        nameFieldFocused &&
+        name.trimmingCharacters(in: .whitespacesAndNewlines).count >= minimumAppStoreSearchLength
+    }
+
     private func handleNameChange(_ value: String) {
         guard !isApplyingCatalogMatch, itemType == .subscription else { return }
 
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 2 else {
+        guard trimmed.count >= minimumAppStoreSearchLength else {
             appStoreSearchTask?.cancel()
             appStoreResults = []
+            appStoreTotal = 0
             appStoreLastFetchCount = 0
             isSearchingAppStore = false
+            appStoreSearchError = nil
+            return
+        }
+
+        if applyLocalCatalogIconIfAvailable(for: trimmed) {
             return
         }
 
         appStoreQuery = trimmed
+    }
+
+    @discardableResult
+    private func applyLocalCatalogIconIfAvailable(for query: String) -> Bool {
+        guard let match = AppCatalog.localIconMatch(for: query) else { return false }
+
+        isApplyingCatalogMatch = true
+        defer { isApplyingCatalogMatch = false }
+
+        suppressNextFaviconFetch = true
+        name = match.name
+        url = match.appStoreURL
+        iconData = match.iconData
+        iconSource = .customImage
+        appStoreResults = []
+        appStoreTotal = 0
+        appStoreLastFetchCount = 0
+        appStoreSearchError = nil
+        pulseSelection()
+        return true
     }
 
     private func scheduleAppStoreSearch(for query: String) {
@@ -1377,7 +1410,7 @@ struct AddEditSubscriptionView: View {
 
     private func searchAppStore(query: String, offset: Int = 0) async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
+        guard trimmed.count >= minimumAppStoreSearchLength,
               let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "https://itunes.apple.com/search?term=\(encoded)&entity=software&limit=\(appStoreLimit)&offset=\(offset)&country=\(appStoreRegionCode)") else {
             await MainActor.run {

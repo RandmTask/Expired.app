@@ -543,13 +543,16 @@ final class SubscriptionItem {
 
         if combined.contains("netflix") { return "play.tv.fill" }
         if combined.contains("spotify") { return "music.note" }
-        if combined.contains("apple") || combined.contains("icloud") { return "apple.logo" }
+        if combined.contains("icloud") { return "icloud.fill" }
+        if combined.contains("fitness") { return "figure.run" }
+        if combined.contains("news") { return "newspaper.fill" }
+        if combined.contains("apple") { return "apple.logo" }
         if combined.contains("amazon") || combined.contains("prime") { return "shippingbox.fill" }
         if combined.contains("audible") { return "headphones" }
         if combined.contains("youtube") { return "play.rectangle.fill" }
         if combined.contains("disney") { return "sparkles" }
         if combined.contains("hbo") || combined.contains("max") { return "tv.fill" }
-        if combined.contains("gym") || combined.contains("fitness") { return "figure.run" }
+        if combined.contains("gym") { return "figure.run" }
         if combined.contains("microsoft") || combined.contains("office") { return "doc.fill" }
         if combined.contains("adobe") { return "paintbrush.fill" }
         if combined.contains("dropbox") || combined.contains("drive") { return "internaldrive.fill" }

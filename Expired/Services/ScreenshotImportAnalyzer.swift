@@ -260,6 +260,11 @@ enum ScreenshotImportAnalyzer {
         var warning: String?
     }
 
+    private struct RecognizedTextLine {
+        let text: String
+        let boundingBox: CGRect
+    }
+
     static func analyze(
         imageData: Data,
         existingItems: [SubscriptionItem],
@@ -276,8 +281,9 @@ enum ScreenshotImportAnalyzer {
             warning = fallbackWarning(for: settings.provider, error: error)
             drafts = parse(lines: try await ocrLines(from: imageData), referenceDate: referenceDate)
         }
+        let priceRepaired = await repairMissingPrices(in: drafts, imageData: imageData)
         // Drop noise: a real subscription has at least a date or a price.
-        let anchored = drafts.filter { $0.renewalDate != nil || $0.cost != nil }
+        let anchored = priceRepaired.filter { $0.renewalDate != nil || $0.cost != nil }
         return Result(drafts: matchDuplicates(drafts: anchored, existingItems: existingItems), warning: warning)
     }
 
@@ -316,7 +322,7 @@ enum ScreenshotImportAnalyzer {
 
     private static func ocrLines(from imageData: Data) async throws -> [String] {
         guard let cgImage = cgImage(from: imageData) else { return [] }
-        return try await recognizeText(in: cgImage)
+        return try await recognizeTextLines(in: cgImage).map(\.text)
     }
 
     // MARK: - Shared prompt
@@ -339,6 +345,9 @@ enum ScreenshotImportAnalyzer {
           4. Price           — optional (e.g. "$5.99")
         A new block begins only at the NEXT service name. One block = exactly one \
         subscription.
+        Prices are often right-aligned on the same visual row as the service block; \
+        attach that right-column price to the current subscription even if OCR/model \
+        reading order places it before or after nearby text.
 
         HARD RULES
         - The service name is the FIRST line of a block only. A plan or tier line \
@@ -517,14 +526,36 @@ enum ScreenshotImportAnalyzer {
 
     // MARK: - Wire decoding
 
+    private struct FlexiblePrice: Decodable {
+        let value: Double
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let double = try? container.decode(Double.self) {
+                value = double
+                return
+            }
+            let raw = try container.decode(String.self)
+            let normalized = raw
+                .replacingOccurrences(of: ",", with: ".")
+                .filter { $0.isNumber || $0 == "." }
+            value = Double(normalized) ?? 0
+        }
+    }
+
     private struct AIDraft: Decodable {
         let name: String
         let plan: String?
         let renewalDate: String?
-        let cost: Double?
+        let cost: FlexiblePrice?
+        let price: FlexiblePrice?
         let currency: String?
         let status: String?
         let confidence: Double?
+
+        var amount: Double? {
+            cost?.value ?? price?.value
+        }
     }
 
     private static func parseAIJSON(_ content: String) -> [ScreenshotSubscriptionDraft] {
@@ -536,11 +567,12 @@ enum ScreenshotImportAnalyzer {
         return decoded.compactMap { draft in
             let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty, !isTierWordOnly(name) else { return nil }
+            let amount = draft.amount
             return ScreenshotSubscriptionDraft(
                 name: normalizedDisplayName(name),
                 plan: cleanedPlan(draft.plan),
                 renewalDate: draft.renewalDate.flatMap(parseISODate),
-                cost: draft.cost.flatMap { $0 > 0 ? $0 : nil },
+                cost: amount.flatMap { $0 > 0 ? $0 : nil },
                 currency: draft.currency?.uppercased() ?? "USD",
                 billingCycle: inferredBillingCycle(name: name, plan: draft.plan),
                 status: detectionStatus(from: draft.status),
@@ -615,7 +647,7 @@ enum ScreenshotImportAnalyzer {
         return formatter.string(from: date)
     }
 
-    private static func recognizeText(in cgImage: CGImage) async throws -> [String] {
+    private static func recognizeTextLines(in cgImage: CGImage) async throws -> [RecognizedTextLine] {
         try await withCheckedThrowingContinuation { continuation in
             let request = VNRecognizeTextRequest { request, error in
                 if let error {
@@ -624,10 +656,11 @@ enum ScreenshotImportAnalyzer {
                 }
 
                 let observations = request.results as? [VNRecognizedTextObservation] ?? []
-                let lines = observations.compactMap {
-                    $0.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                let lines: [RecognizedTextLine] = observations.compactMap { observation -> RecognizedTextLine? in
+                    let text = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    guard !text.isEmpty else { return nil }
+                    return RecognizedTextLine(text: text, boundingBox: observation.boundingBox)
                 }
-                .filter { !$0.isEmpty }
 
                 continuation.resume(returning: lines)
             }
@@ -680,6 +713,99 @@ enum ScreenshotImportAnalyzer {
         }
 
         return unique(drafts)
+    }
+
+    private static func repairMissingPrices(
+        in drafts: [ScreenshotSubscriptionDraft],
+        imageData: Data
+    ) async -> [ScreenshotSubscriptionDraft] {
+        guard drafts.contains(where: { $0.cost == nil }),
+              let cgImage = cgImage(from: imageData),
+              let lines = try? await recognizeTextLines(in: cgImage) else {
+            return drafts
+        }
+        return repairMissingPrices(in: drafts, recognizedLines: lines)
+    }
+
+    private static func repairMissingPrices(
+        in drafts: [ScreenshotSubscriptionDraft],
+        recognizedLines lines: [RecognizedTextLine]
+    ) -> [ScreenshotSubscriptionDraft] {
+        let priceLines = lines.compactMap { line -> (line: RecognizedTextLine, price: (amount: Double, currency: String))? in
+            guard let price = extractPrice(from: line.text) else { return nil }
+            return (line, price)
+        }
+        guard !priceLines.isEmpty else { return drafts }
+
+        var repaired = drafts
+        for index in repaired.indices where repaired[index].cost == nil {
+            let draft = repaired[index]
+
+            if let inlinePrice = inlinePrice(for: draft, lines: lines) {
+                repaired[index].cost = inlinePrice.amount
+                repaired[index].currency = inlinePrice.currency
+                continue
+            }
+
+            guard let serviceLine = bestServiceLine(for: draft, lines: lines) else { continue }
+            let serviceMidY = serviceLine.boundingBox.midY
+            let sameRowPrices = priceLines
+                .filter { candidate in
+                    let box = candidate.line.boundingBox
+                    let sameRow = abs(box.midY - serviceMidY) <= 0.035
+                    let rightColumn = box.minX > serviceLine.boundingBox.maxX || box.midX > 0.58
+                    return sameRow && rightColumn
+                }
+                .sorted { lhs, rhs in
+                    abs(lhs.line.boundingBox.midY - serviceMidY) < abs(rhs.line.boundingBox.midY - serviceMidY)
+                }
+
+            if let match = sameRowPrices.first {
+                repaired[index].cost = match.price.amount
+                repaired[index].currency = match.price.currency
+            }
+        }
+
+        return repaired
+    }
+
+    private static func inlinePrice(
+        for draft: ScreenshotSubscriptionDraft,
+        lines: [RecognizedTextLine]
+    ) -> (amount: Double, currency: String)? {
+        lines.first { line in
+            extractPrice(from: line.text) != nil && lineMatchesDraftName(line.text, draft: draft)
+        }.flatMap { extractPrice(from: $0.text) }
+    }
+
+    private static func bestServiceLine(
+        for draft: ScreenshotSubscriptionDraft,
+        lines: [RecognizedTextLine]
+    ) -> RecognizedTextLine? {
+        lines
+            .compactMap { line -> (line: RecognizedTextLine, score: Double)? in
+                guard extractPrice(from: line.text) == nil,
+                      !containsRenewalSignal(line.text) else {
+                    return nil
+                }
+                let score = lineMatchScore(line.text, draft: draft)
+                return score >= 0.72 ? (line, score) : nil
+            }
+            .max { $0.score < $1.score }?
+            .line
+    }
+
+    private static func lineMatchesDraftName(_ line: String, draft: ScreenshotSubscriptionDraft) -> Bool {
+        lineMatchScore(line, draft: draft) >= 0.72
+    }
+
+    private static func lineMatchScore(_ line: String, draft: ScreenshotSubscriptionDraft) -> Double {
+        let lineKey = canonicalName(line)
+        let draftKey = canonicalName(draft.name)
+        guard !lineKey.isEmpty, !draftKey.isEmpty else { return 0 }
+        if lineKey == draftKey { return 1 }
+        if lineKey.contains(draftKey) || draftKey.contains(lineKey) { return 0.9 }
+        return similarity(lineKey, draftKey)
     }
 
     private static func matchDuplicates(
