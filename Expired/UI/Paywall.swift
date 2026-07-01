@@ -61,7 +61,8 @@ private struct MacManageSubscriptionSheet: View {
             Button {
                 isRestoring = true
                 Task {
-                    await PurchaseManager.shared.restore()
+                    let restored = await PurchaseManager.shared.restore()
+                    await Haptics.fire(restored ? .success : .warning)
                     isRestoring = false
                 }
             } label: {

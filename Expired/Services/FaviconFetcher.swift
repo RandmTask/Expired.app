@@ -1,6 +1,11 @@
 import Foundation
 
 struct FaviconFetcher {
+    struct AppStoreIconMatch: Hashable {
+        var name: String
+        var appStoreURL: String
+        var artworkData: Data?
+    }
 
     /// Accepts any of: "netflix.com", "www.netflix.com", "http://...", "https://..."
     static func fetch(from rawInput: String) async -> Data? {
@@ -82,6 +87,38 @@ struct FaviconFetcher {
               let first = results.first,
               let trackName = first["trackName"] as? String else { return nil }
         return trackName
+    }
+
+    static func fetchAppStoreIconMatch(for query: String, country: String = Locale.current.region?.identifier ?? "US") async -> AppStoreIconMatch? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://itunes.apple.com/search?term=\(encoded)&entity=software&limit=1&country=\(country.lowercased())") else {
+            return nil
+        }
+
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let results = json["results"] as? [[String: Any]],
+              let first = results.first,
+              let name = first["trackName"] as? String,
+              let appStoreURL = first["trackViewUrl"] as? String else {
+            return nil
+        }
+
+        let artworkURLString = (first["artworkUrl512"] as? String) ?? (first["artworkUrl100"] as? String)
+        let artworkData: Data?
+        if let artworkURLString, let artworkURL = URL(string: artworkURLString) {
+            artworkData = try? await URLSession.shared.data(from: artworkURL).0
+        } else {
+            artworkData = nil
+        }
+
+        return AppStoreIconMatch(name: name, appStoreURL: appStoreURL, artworkData: artworkData.flatMap { isImage($0) ? $0 : nil })
     }
 
     /// Extracts the numeric App Store app ID from an apps.apple.com URL, if present.

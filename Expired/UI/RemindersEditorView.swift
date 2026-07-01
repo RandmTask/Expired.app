@@ -27,13 +27,13 @@ struct NotificationRuleDraft: Identifiable, Equatable {
         self.id = rule.id
         self.offsetType = rule.offsetType
         self.value = rule.value
-        self.isCritical = rule.isCritical
+        self.isCritical = false
         self.customDate = rule.customDate
     }
 
     /// Builds a fresh managed rule from this draft (used when creating a new item).
     func makeRule() -> NotificationRule {
-        NotificationRule(id: id, offsetType: offsetType, value: value, isCritical: isCritical, customDate: customDate)
+        NotificationRule(id: id, offsetType: offsetType, value: value, isCritical: false, customDate: customDate)
     }
 }
 
@@ -46,7 +46,6 @@ struct RemindersEditorView: View {
             rulesList
             Divider().padding(.leading, 16)
             presetsRow
-            criticalAlertDisclaimer
         }
     }
 
@@ -98,30 +97,6 @@ struct RemindersEditorView: View {
         .padding(.vertical, 10)
     }
 
-    /// Shows a contextual disclaimer about critical alerts.
-    /// On macOS: warns that critical alerts actually fire on the user's iPhone.
-    /// On iOS: confirms that critical alerts bypass Do Not Disturb.
-    @ViewBuilder
-    private var criticalAlertDisclaimer: some View {
-        let hasCritical = notifications.contains { $0.isCritical }
-        if hasCritical {
-            Divider().padding(.leading, 16)
-            #if os(macOS)
-            CriticalAlertBanner(
-                icon: "iphone.radiowaves.left.and.right",
-                color: .orange,
-                message: "Critical alerts scheduled on Mac will fire on your iPhone (same iCloud account). This Mac will not play a sound."
-            )
-            #else
-            CriticalAlertBanner(
-                icon: "exclamationmark.circle.fill",
-                color: .red,
-                message: "Critical alerts will play a sound and bypass Do Not Disturb and Silent mode."
-            )
-            #endif
-        }
-    }
-
     private func addRule(_ type: NotificationOffsetType, _ value: Int) {
         guard !notifications.contains(where: { $0.offsetType == type && $0.value == value && $0.customDate == nil }) else { return }
         withAnimation {
@@ -166,31 +141,6 @@ struct RemindersEditorView: View {
     }
 }
 
-// MARK: - Critical Alert Banner
-
-private struct CriticalAlertBanner: View {
-    let icon: String
-    let color: Color
-    let message: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(color)
-            Text(message)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color.opacity(0.07))
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
-    }
-}
-
 // MARK: - Single Rule Row
 
 struct ReminderRuleRow: View {
@@ -201,7 +151,6 @@ struct ReminderRuleRow: View {
 
     @State private var offsetType: NotificationOffsetType
     @State private var value: Int
-    @State private var isCritical: Bool
     @State private var customDate: Date
 
     init(rule: NotificationRuleDraft,
@@ -214,7 +163,6 @@ struct ReminderRuleRow: View {
         self.onUpdate = onUpdate
         _offsetType = State(initialValue: rule.offsetType)
         _value = State(initialValue: rule.value)
-        _isCritical = State(initialValue: rule.isCritical)
         _customDate = State(initialValue: rule.customDate ?? baseDate)
     }
 
@@ -230,8 +178,6 @@ struct ReminderRuleRow: View {
                     .fixedSize()
             }
             Spacer(minLength: 0)
-            criticalButton
-                .fixedSize()
             deleteButton
                 .fixedSize()
         }
@@ -242,7 +188,11 @@ struct ReminderRuleRow: View {
     private var valueStepper: some View {
         HStack(spacing: 6) {
             Button {
-                if value > 1 { value -= 1; propagate() }
+                if value > 1 {
+                    Haptics.fire(.selectionChanged)
+                    value -= 1
+                    propagate()
+                }
             } label: {
                 Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
             }
@@ -253,7 +203,11 @@ struct ReminderRuleRow: View {
                 .frame(minWidth: 24)
 
             Button {
-                if value < 365 { value += 1; propagate() }
+                if value < 365 {
+                    Haptics.fire(.selectionChanged)
+                    value += 1
+                    propagate()
+                }
             } label: {
                 Image(systemName: "plus.circle.fill").foregroundStyle(.blue)
             }
@@ -269,6 +223,7 @@ struct ReminderRuleRow: View {
         }
         .pickerStyle(.menu)
         .onChange(of: offsetType) { _, newValue in
+            Haptics.fire(.selectionChanged)
             if newValue != .exactDate, value < 1 {
                 value = 1
             }
@@ -302,33 +257,11 @@ struct ReminderRuleRow: View {
         }
     }
 
-    private var criticalButton: some View {
-        Button {
-            isCritical.toggle()
-            propagate()
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: isCritical ? "exclamationmark.circle.fill" : "bell.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                if isCritical {
-                    Text("Critical")
-                        .font(.system(size: 11, weight: .semibold))
-                }
-            }
-            .foregroundStyle(isCritical ? Color.white : Color.secondary)
-            .padding(.horizontal, isCritical ? 8 : 6)
-            .padding(.vertical, 5)
-            .background(isCritical ? Color.red : Color.clear, in: Capsule())
-            .overlay(
-                Capsule().strokeBorder(isCritical ? Color.clear : Color.secondary.opacity(0.3), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(duration: 0.2), value: isCritical)
-    }
-
     private var deleteButton: some View {
-        Button(role: .destructive, action: onDelete) {
+        Button(role: .destructive) {
+            Haptics.fire(.error)
+            onDelete()
+        } label: {
             Image(systemName: "trash")
                 .font(.system(size: 14))
                 .foregroundStyle(Color.red.opacity(0.8))
@@ -338,7 +271,7 @@ struct ReminderRuleRow: View {
 
     private func propagate() {
         let date = offsetType == .exactDate ? customDate : nil
-        onUpdate(NotificationRuleDraft(id: rule.id, offsetType: offsetType, value: value, isCritical: isCritical, customDate: date))
+        onUpdate(NotificationRuleDraft(id: rule.id, offsetType: offsetType, value: value, isCritical: false, customDate: date))
     }
 }
 

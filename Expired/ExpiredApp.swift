@@ -447,7 +447,12 @@ struct ExpiredApp: App {
                     // Resolve the anonymous Supabase identity, then hand that same UUID to
                     // RevenueCat so server (proxy) and client agree on one user. Non-blocking:
                     // a failure here just means AI/purchase calls surface their own errors later.
-                    try? await SupabaseService.shared.ensureSession()
+                    do {
+                        try await SupabaseService.shared.ensureSession()
+                        print("[Supabase] Session OK — user ID: \(SupabaseService.shared.currentUserID ?? "nil")")
+                    } catch {
+                        print("[Supabase] ensureSession FAILED: \(error)")
+                    }
                     PurchaseManager.shared.configure(appUserID: SupabaseService.shared.currentUserID)
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in

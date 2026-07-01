@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
+import RevenueCat
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
@@ -133,8 +134,10 @@ struct TimelineView: View {
                             let locked = mode.isPro && !purchaseManager.isPremium
                             Button {
                                 if locked {
+                                    Haptics.fire(.warning)
                                     showPaywall = true
                                 } else {
+                                    Haptics.fire(.selectionChanged)
                                     withAnimation(.spring(duration: 0.3)) { viewModeRaw = mode.rawValue }
                                 }
                             } label: {
@@ -1563,6 +1566,7 @@ struct ArchiveView: View {
                         .onTapGesture { editingItem = item }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
+                                Haptics.fire(.error)
                                 NotificationManager.shared.removeAll(for: item)
                                 modelContext.delete(item)
                                 try? modelContext.save()
@@ -1572,6 +1576,7 @@ struct ArchiveView: View {
                         }
                         .swipeActions(edge: .leading, allowsFullSwipe: true) {
                             Button {
+                                Haptics.fire(.success)
                                 withAnimation {
                                     item.isArchived = false
                                     item.updatedAt = Date()
@@ -1734,9 +1739,11 @@ struct CategoriesView: View {
     /// Custom categories are a Pro feature; a free user gets the paywall instead of the editor.
     private func beginAddCategory() {
         guard purchaseManager.isPremium else {
+            Haptics.fire(.warning)
             showPaywall = true
             return
         }
+        Haptics.fire(.light)
         newCategoryName = ""
         newCategoryIcon = UserCategory.defaultIcon
         newCategoryDescription = ""
@@ -1762,6 +1769,7 @@ struct CategoriesView: View {
                     .listRowSeparator(.hidden)
                 }
                 .onMove { from, to in
+                    Haptics.fire(.light)
                     unifiedCategories.move(fromOffsets: from, toOffset: to)
                     saveUnified()
                 }
@@ -1778,6 +1786,7 @@ struct CategoriesView: View {
                             reassignItems(named: c.name, to: nil)
                         }
                     }
+                    Haptics.fire(.error)
                     unifiedCategories.remove(atOffsets: IndexSet(toRemove))
                     saveUnified()
                 }
@@ -1801,6 +1810,7 @@ struct CategoriesView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(isEditing ? "Done" : "Edit") {
+                    Haptics.fire(.selectionChanged)
                     withAnimation { isEditing.toggle() }
                 }
                 .fontWeight(isEditing ? .semibold : .regular)
@@ -2355,20 +2365,32 @@ struct SettingsView: View {
         let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
         let hour   = comps.hour   ?? 9
         let minute = comps.minute ?? 0
+        let changed = notificationHour != hour || notificationMinute != minute
         notificationHour   = hour
         notificationMinute = minute
         let kv = NSUbiquitousKeyValueStore.default
         kv.set(Int64(hour),   forKey: Self.kvHourKey)
         kv.set(Int64(minute), forKey: Self.kvMinuteKey)
         kv.synchronize()
+        if changed {
+            let items = allItems.filter { !$0.isArchived }
+            Task { await NotificationManager.shared.rescheduleAll(items) }
+        }
     }
 
     /// Pulls the notification time from iCloud KV store into @AppStorage.
     private func pullNotificationTimeFromKVStore() {
         let kv = NSUbiquitousKeyValueStore.default
         guard kv.object(forKey: Self.kvHourKey) != nil else { return }
-        notificationHour   = Int(kv.longLong(forKey: Self.kvHourKey))
-        notificationMinute = Int(kv.longLong(forKey: Self.kvMinuteKey))
+        let hour = Int(kv.longLong(forKey: Self.kvHourKey))
+        let minute = Int(kv.longLong(forKey: Self.kvMinuteKey))
+        let changed = notificationHour != hour || notificationMinute != minute
+        notificationHour = hour
+        notificationMinute = minute
+        if changed {
+            let items = allItems.filter { !$0.isArchived }
+            Task { await NotificationManager.shared.rescheduleAll(items) }
+        }
     }
 
     /// Best-guess currency from the device locale, falling back to USD.
@@ -2560,9 +2582,11 @@ struct SettingsView: View {
     /// Pro export is gated: a free user gets the paywall instead of the export warning.
     private func beginExport() {
         guard purchaseManager.isPremium else {
+            Haptics.fire(.warning)
             showPaywall = true
             return
         }
+        Haptics.fire(.light)
         showExportWarning = true
     }
 
@@ -2578,8 +2602,10 @@ struct SettingsView: View {
         do {
             let data = try BackupService.export(allItems)
             exportDocument = BackupDocument(data: data)
+            Haptics.fire(.success)
             showingExporter = true
         } catch {
+            Haptics.fire(.error)
             backupErrorMessage = "Could not create backup: \(error.localizedDescription)"
         }
     }
@@ -2587,6 +2613,7 @@ struct SettingsView: View {
     private func handleImport(_ result: Result<[URL], Error>) {
         guard let url = try? result.get().first else { return }
         guard url.startAccessingSecurityScopedResource() else {
+            Haptics.fire(.warning)
             backupErrorMessage = "Could not access the selected file."
             return
         }
@@ -2596,9 +2623,11 @@ struct SettingsView: View {
             let file = try BackupService.decode(data)
             let counts = BackupService.merge(file, into: modelContext, existing: allItems)
             importResultMessage = "Imported \(counts.added) new, updated \(counts.updated)."
+            Haptics.fire(.success)
             let items = allItems
             Task { await NotificationManager.shared.rescheduleAll(items) }
         } catch {
+            Haptics.fire(.error)
             backupErrorMessage = "Could not read backup: \(error.localizedDescription)"
         }
     }
@@ -2612,7 +2641,10 @@ struct SettingsView: View {
 
                 // DISPLAY
                 settingsSection(title: "Display", icon: "paintbrush") {
-                    Button { showCurrencyPicker = true } label: {
+                    Button {
+                        Haptics.fire(.light)
+                        showCurrencyPicker = true
+                    } label: {
                         settingsRow {
                             macSettingsLabel("Currency", icon: "dollarsign.circle")
                             Spacer()
@@ -2632,7 +2664,10 @@ struct SettingsView: View {
                         Spacer()
                         Menu {
                             ForEach(Self.appStoreRegions, id: \.code) { region in
-                                Button { appStoreRegion = region.code } label: {
+                                Button {
+                                    Haptics.fire(.selectionChanged)
+                                    appStoreRegion = region.code
+                                } label: {
                                     macMenuOptionTitle(region.name, isSelected: appStoreRegion == region.code)
                                 }
                             }
@@ -2650,13 +2685,22 @@ struct SettingsView: View {
                         macSettingsLabel("Appearance", icon: "paintbrush")
                         Spacer()
                         Menu {
-                            Button { appearanceMode = 0 } label: {
+                            Button {
+                                Haptics.fire(.selectionChanged)
+                                appearanceMode = 0
+                            } label: {
                                 macMenuOptionTitle("System", isSelected: appearanceMode == 0)
                             }
-                            Button { appearanceMode = 1 } label: {
+                            Button {
+                                Haptics.fire(.selectionChanged)
+                                appearanceMode = 1
+                            } label: {
                                 macMenuOptionTitle("Light", isSelected: appearanceMode == 1)
                             }
-                            Button { appearanceMode = 2 } label: {
+                            Button {
+                                Haptics.fire(.selectionChanged)
+                                appearanceMode = 2
+                            } label: {
                                 macMenuOptionTitle("Dark", isSelected: appearanceMode == 2)
                             }
                         } label: {
@@ -2677,7 +2721,10 @@ struct SettingsView: View {
                             Text("Active").foregroundStyle(.green)
                         }
                         FormDivider()
-                        Button { showCustomerCenter = true } label: {
+                        Button {
+                            Haptics.fire(.light)
+                            showCustomerCenter = true
+                        } label: {
                             settingsRow {
                                 macSettingsLabel("Manage Subscription", icon: "person.crop.circle")
                                 Spacer()
@@ -2685,10 +2732,14 @@ struct SettingsView: View {
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.tertiary)
                             }
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     } else {
-                        Button { showPaywall = true } label: {
+                        Button {
+                            Haptics.fire(.light)
+                            showPaywall = true
+                        } label: {
                             settingsRow {
                                 macSettingsLabel("Upgrade to Pro", icon: "crown.fill")
                                     .foregroundStyle(.blue)
@@ -2697,16 +2748,33 @@ struct SettingsView: View {
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.tertiary)
                             }
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         FormDivider()
-                        Button { showCustomerCenter = true } label: {
+                        Button {
+                            Haptics.fire(.light)
+                            showCustomerCenter = true
+                        } label: {
                             settingsRow {
                                 macSettingsLabel("Restore Purchases", icon: "arrow.clockwise")
                             }
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
+                    FormDivider()
+                    Button {
+                        Haptics.fire(.warning)
+                        Task { await PurchaseManager.shared.logOutForTesting() }
+                    } label: {
+                        settingsRow {
+                            macSettingsLabel("Reset for Testing", icon: "arrow.counterclockwise")
+                                .foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 // SCREENSHOT IMPORT
@@ -2716,7 +2784,10 @@ struct SettingsView: View {
                         Spacer()
                         Menu {
                             ForEach(ScreenshotAIProvider.allCases) { provider in
-                                Button { screenshotAIProviderRaw = provider.rawValue } label: {
+                                Button {
+                                    Haptics.fire(.selectionChanged)
+                                    screenshotAIProviderRaw = provider.rawValue
+                                } label: {
                                     macMenuOptionTitle(provider.displayName, isSelected: screenshotAIProvider == provider)
                                 }
                             }
@@ -2739,7 +2810,10 @@ struct SettingsView: View {
                             }
                             Menu {
                                 ForEach(modelPickerOptions, id: \.self) { model in
-                                    Button { setSelectedModel(model) } label: {
+                                    Button {
+                                        Haptics.fire(.selectionChanged)
+                                        setSelectedModel(model)
+                                    } label: {
                                         macMenuOptionTitle(modelLabel(model), isSelected: currentSelectedModel == model)
                                     }
                                 }
@@ -2750,6 +2824,7 @@ struct SettingsView: View {
                             .menuIndicator(.hidden)
                             .fixedSize()
                             Button {
+                                Haptics.fire(.light)
                                 loadModels()
                             } label: {
                                 Image(systemName: "arrow.clockwise")
@@ -2813,7 +2888,10 @@ struct SettingsView: View {
 
                     FormDivider()
 
-                    Button { refreshAllFavicons() } label: {
+                    Button {
+                        Haptics.fire(.light)
+                        refreshAllFavicons()
+                    } label: {
                         settingsRow {
                             macSettingsLabel("Refresh Icons", icon: "arrow.clockwise.circle")
                                 .foregroundStyle(isRefreshingFavicons ? Color.secondary : Color.blue)
@@ -2841,13 +2919,17 @@ struct SettingsView: View {
                             .labelsHidden()
                             .toggleStyle(.switch)
                             .tint(.green)
-                            .onChange(of: iCloudSyncEnabled) { _, _ in showRestartAlert = true }
+                            .onChange(of: iCloudSyncEnabled) { _, _ in
+                                Haptics.fire(.selectionChanged)
+                                showRestartAlert = true
+                            }
                     }
 
                     FormDivider()
 
                     Button {
                         guard !isSyncing else { return }
+                        Haptics.fire(.light)
                         isSyncing = true
                         NotificationCenter.default.post(name: .expiredManualSync, object: nil)
                         Task {
@@ -2884,6 +2966,9 @@ struct SettingsView: View {
                             .labelsHidden()
                             .toggleStyle(.switch)
                             .tint(.green)
+                            .onChange(of: autoBackupEnabled) { _, _ in
+                                Haptics.fire(.selectionChanged)
+                            }
                     }
 
                     FormDivider()
@@ -2898,7 +2983,10 @@ struct SettingsView: View {
 
                     FormDivider()
 
-                    Button { showingImporter = true } label: {
+                    Button {
+                        Haptics.fire(.light)
+                        showingImporter = true
+                    } label: {
                         settingsRow {
                             macSettingsLabel("Import Backup", icon: "square.and.arrow.down")
                                 .foregroundStyle(.blue)
@@ -2941,18 +3029,27 @@ struct SettingsView: View {
                     FormDivider()
 
                     HStack(spacing: 10) {
-                        Button { refreshCloudKitDiagnostics() } label: {
+                        Button {
+                            Haptics.fire(.light)
+                            refreshCloudKitDiagnostics()
+                        } label: {
                             Label("Refresh", systemImage: "arrow.clockwise")
                         }
                         .buttonStyle(.borderedProminent)
 
-                        Button { copyCloudKitDiagnostics() } label: {
+                        Button {
+                            Haptics.fire(.success)
+                            copyCloudKitDiagnostics()
+                        } label: {
                             Image(systemName: "doc.on.doc")
                         }
                         .buttonStyle(.bordered)
                         .help("Copy CloudKit debug log")
 
-                        Button(role: .destructive) { cloudKitDebug.clear() } label: {
+                        Button(role: .destructive) {
+                            Haptics.fire(.error)
+                            cloudKitDebug.clear()
+                        } label: {
                             Label("Clear", systemImage: "trash")
                         }
                         .buttonStyle(.bordered)
@@ -3115,7 +3212,10 @@ struct SettingsView: View {
 
             // MARK: Display
             Section {
-                Button { showCurrencyPicker = true } label: {
+                Button {
+                    Haptics.fire(.light)
+                    showCurrencyPicker = true
+                } label: {
                     HStack {
                         rowIcon("dollarsign.circle")
                         Text("Currency").foregroundStyle(.primary)
@@ -3135,7 +3235,10 @@ struct SettingsView: View {
                     Spacer()
                     Menu {
                         ForEach(Self.appStoreRegions, id: \.code) { region in
-                            Button { appStoreRegion = region.code } label: {
+                            Button {
+                                Haptics.fire(.selectionChanged)
+                                appStoreRegion = region.code
+                            } label: {
                                 macMenuOptionTitle(region.name, isSelected: appStoreRegion == region.code)
                             }
                         }
@@ -3150,9 +3253,18 @@ struct SettingsView: View {
                     Text("Appearance").foregroundStyle(.primary)
                     Spacer()
                     Menu {
-                        Button { appearanceMode = 0 } label: { macMenuOptionTitle("System", isSelected: appearanceMode == 0) }
-                        Button { appearanceMode = 1 } label: { macMenuOptionTitle("Light", isSelected: appearanceMode == 1) }
-                        Button { appearanceMode = 2 } label: { macMenuOptionTitle("Dark", isSelected: appearanceMode == 2) }
+                        Button {
+                            Haptics.fire(.selectionChanged)
+                            appearanceMode = 0
+                        } label: { macMenuOptionTitle("System", isSelected: appearanceMode == 0) }
+                        Button {
+                            Haptics.fire(.selectionChanged)
+                            appearanceMode = 1
+                        } label: { macMenuOptionTitle("Light", isSelected: appearanceMode == 1) }
+                        Button {
+                            Haptics.fire(.selectionChanged)
+                            appearanceMode = 2
+                        } label: { macMenuOptionTitle("Dark", isSelected: appearanceMode == 2) }
                     } label: {
                         macMenuValueLabel(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
                     }
@@ -3173,7 +3285,10 @@ struct SettingsView: View {
                         Spacer()
                         Text("Active").foregroundStyle(.green)
                     }
-                    Button { showCustomerCenter = true } label: {
+                    Button {
+                        Haptics.fire(.light)
+                        showCustomerCenter = true
+                    } label: {
                         HStack {
                             rowIcon("person.crop.circle")
                             Text("Manage Subscription").foregroundStyle(.primary)
@@ -3182,10 +3297,14 @@ struct SettingsView: View {
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(.tertiary)
                         }
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 } else {
-                    Button { showPaywall = true } label: {
+                    Button {
+                        Haptics.fire(.light)
+                        showPaywall = true
+                    } label: {
                         HStack {
                             rowIcon("crown.fill", color: .blue)
                             Text("Upgrade to Pro").foregroundStyle(.blue)
@@ -3194,16 +3313,32 @@ struct SettingsView: View {
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(.tertiary)
                         }
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    Button { showCustomerCenter = true } label: {
+                    Button {
+                        Haptics.fire(.light)
+                        showCustomerCenter = true
+                    } label: {
                         HStack {
                             rowIcon("arrow.clockwise", color: .blue)
                             Text("Restore Purchases").foregroundStyle(.blue)
                         }
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
+                Button {
+                    Haptics.fire(.warning)
+                    Task { await PurchaseManager.shared.logOutForTesting() }
+                } label: {
+                    HStack {
+                        rowIcon("arrow.counterclockwise", color: .secondary)
+                        Text("Reset for Testing").foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             } header: {
                 sectionHeader("EXPIRED PRO")
             }
@@ -3216,7 +3351,10 @@ struct SettingsView: View {
                     Spacer()
                     Menu {
                         ForEach(ScreenshotAIProvider.allCases) { provider in
-                            Button { screenshotAIProviderRaw = provider.rawValue } label: {
+                            Button {
+                                Haptics.fire(.selectionChanged)
+                                screenshotAIProviderRaw = provider.rawValue
+                            } label: {
                                 macMenuOptionTitle(provider.displayName, isSelected: screenshotAIProvider == provider)
                             }
                         }
@@ -3234,7 +3372,10 @@ struct SettingsView: View {
                         if isLoadingModels { ProgressView().controlSize(.small) }
                         Menu {
                             ForEach(modelPickerOptions, id: \.self) { model in
-                                Button { setSelectedModel(model) } label: {
+                                Button {
+                                    Haptics.fire(.selectionChanged)
+                                    setSelectedModel(model)
+                                } label: {
                                     macMenuOptionTitle(modelLabel(model), isSelected: currentSelectedModel == model)
                                 }
                             }
@@ -3242,7 +3383,10 @@ struct SettingsView: View {
                             macMenuValueLabel(modelLabel(currentSelectedModel))
                         }
                         .buttonStyle(.plain)
-                        Button { loadModels() } label: {
+                        Button {
+                            Haptics.fire(.light)
+                            loadModels()
+                        } label: {
                             Image(systemName: "arrow.clockwise").font(.system(size: 16, weight: .semibold))
                         }
                         .buttonStyle(.plain)
@@ -3296,7 +3440,10 @@ struct SettingsView: View {
                         Text("Categories").foregroundStyle(.primary)
                     }
                 }
-                Button { refreshAllFavicons() } label: {
+                Button {
+                    Haptics.fire(.light)
+                    refreshAllFavicons()
+                } label: {
                     HStack {
                         rowIcon("arrow.clockwise.circle", color: isRefreshingFavicons ? Color.secondary : Color.blue)
                         Text("Refresh Icons")
@@ -3327,7 +3474,10 @@ struct SettingsView: View {
                     Toggle("", isOn: $iCloudSyncEnabled)
                         .labelsHidden()
                         .tint(.green)
-                        .onChange(of: iCloudSyncEnabled) { _, _ in showRestartAlert = true }
+                        .onChange(of: iCloudSyncEnabled) { _, _ in
+                            Haptics.fire(.selectionChanged)
+                            showRestartAlert = true
+                        }
                 }
 
                 HStack {
@@ -3342,6 +3492,9 @@ struct SettingsView: View {
                     Toggle("", isOn: $autoBackupEnabled)
                         .labelsHidden()
                         .tint(.green)
+                        .onChange(of: autoBackupEnabled) { _, _ in
+                            Haptics.fire(.selectionChanged)
+                        }
                 }
 
                 Button { beginExport() } label: {
@@ -3352,7 +3505,10 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
 
-                Button { showingImporter = true } label: {
+                Button {
+                    Haptics.fire(.light)
+                    showingImporter = true
+                } label: {
                     HStack {
                         rowIcon("square.and.arrow.down", color: .blue)
                         Text("Import Backup").foregroundStyle(.blue)
@@ -3396,15 +3552,24 @@ struct SettingsView: View {
                 }
 
                 HStack(spacing: 10) {
-                    Button { refreshCloudKitDiagnostics() } label: {
+                    Button {
+                        Haptics.fire(.light)
+                        refreshCloudKitDiagnostics()
+                    } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
                     .buttonStyle(.borderedProminent)
-                    Button { copyCloudKitDiagnostics() } label: {
+                    Button {
+                        Haptics.fire(.success)
+                        copyCloudKitDiagnostics()
+                    } label: {
                         Image(systemName: "doc.on.doc")
                     }
                     .buttonStyle(.bordered)
-                    Button(role: .destructive) { cloudKitDebug.clear() } label: {
+                    Button(role: .destructive) {
+                        Haptics.fire(.error)
+                        cloudKitDebug.clear()
+                    } label: {
                         Label("Clear", systemImage: "trash")
                     }
                     .buttonStyle(.bordered)

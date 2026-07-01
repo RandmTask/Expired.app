@@ -2,6 +2,9 @@ import SwiftUI
 import SwiftData
 import PhotosUI
 import UniformTypeIdentifiers
+#if os(iOS)
+import Photos
+#endif
 
 struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
@@ -26,11 +29,15 @@ struct HomeView: View {
     @State private var importWarning: String?
     @State private var importError: String?
     @State private var isAnalyzingScreenshot = false
+    @State private var importedPhotoIdentifier: String?
+    @State private var pendingScreenshotDeletionIdentifiers: [String] = []
+    @State private var showingDeleteImportedScreenshotPrompt = false
     @State private var showPaywall = false
     @State private var undoToast: UndoToast?
     @State private var toastDismissTask: Task<Void, Never>?
 #if os(iOS)
     @State private var showingPhotoImporter = false
+    @State private var importPhotoFilter: PHPickerFilter = .screenshots
 #else
     @State private var showingScreenshotFileImporter = false
 #endif
@@ -205,12 +212,19 @@ struct HomeView: View {
                     }
                     .animation(.spring(duration: 0.28), value: undoToast.id)
                 }
+
+                if isAnalyzingScreenshot {
+                    analyzingScreenshotOverlay
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        .zIndex(10)
+                }
             }
+            .animation(.spring(duration: 0.28), value: isAnalyzingScreenshot)
             .navigationTitle("Subscriptions")
             .largeNavigationTitle()
 #if os(iOS)
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search subscriptions")
-            .photosPicker(isPresented: $showingPhotoImporter, selection: $importPhotoItem, matching: .images)
+            .photosPicker(isPresented: $showingPhotoImporter, selection: $importPhotoItem, matching: importPhotoFilter)
 #endif
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -234,9 +248,26 @@ struct HomeView: View {
                 )
             }
 #if os(iOS)
+            .confirmationDialog(
+                "Delete imported screenshot?",
+                isPresented: $showingDeleteImportedScreenshotPrompt,
+                titleVisibility: .visible
+            ) {
+                Button("Move to Recently Deleted", role: .destructive) {
+                    deleteImportedScreenshots()
+                }
+                Button("Keep Screenshot", role: .cancel) {
+                    pendingScreenshotDeletionIdentifiers = []
+                }
+            } message: {
+                Text("The import is complete. You can remove the screenshot from Photos now.")
+            }
+#endif
+#if os(iOS)
             .onChange(of: importPhotoItem) { _, newItem in
                 guard let newItem else { return }
                 Task {
+                    importedPhotoIdentifier = newItem.itemIdentifier
                     if let data = try? await newItem.loadTransferable(type: Data.self) {
                         await analyzeScreenshot(data)
                     }
@@ -265,6 +296,44 @@ struct HomeView: View {
             } message: {
                 Text(importError ?? "")
             }
+        }
+    }
+
+    private var analyzingScreenshotOverlay: some View {
+        ZStack {
+            Rectangle()
+                .fill(.black.opacity(0.18))
+                .ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .fill(Color.blue.opacity(0.14))
+                        .frame(width: 74, height: 74)
+                    ProgressView()
+                        .controlSize(.large)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.blue)
+                        .offset(x: 26, y: -24)
+                }
+
+                VStack(spacing: 5) {
+                    Text("Crushing the data")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.primary)
+                    Text("AI is sorting subscriptions from your screenshot.")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .padding(.horizontal, 26)
+            .padding(.vertical, 24)
+            .frame(maxWidth: 310)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .shadow(color: .black.opacity(0.16), radius: 24, y: 14)
+            .padding(.horizontal, 24)
         }
     }
 
@@ -528,7 +597,7 @@ struct HomeView: View {
                 importError = result.warning ?? "No subscriptions were detected in that screenshot."
                 return
             }
-            importDrafts = result.drafts
+            importDrafts = await enrichDraftsWithAppStoreIcons(result.drafts)
             importWarning = result.warning
             showingImportReview = true
         } catch {
@@ -536,8 +605,36 @@ struct HomeView: View {
         }
     }
 
+    private func enrichDraftsWithAppStoreIcons(_ drafts: [ScreenshotSubscriptionDraft]) async -> [ScreenshotSubscriptionDraft] {
+        await withTaskGroup(of: (UUID, FaviconFetcher.AppStoreIconMatch?).self) { group in
+            for draft in drafts {
+                group.addTask {
+                    let match = await FaviconFetcher.fetchAppStoreIconMatch(for: draft.name)
+                    return (draft.id, match)
+                }
+            }
+
+            var matches: [UUID: FaviconFetcher.AppStoreIconMatch] = [:]
+            for await (id, match) in group {
+                if let match {
+                    matches[id] = match
+                }
+            }
+
+            return drafts.map { draft in
+                var copy = draft
+                if let match = matches[draft.id] {
+                    copy.appStoreURL = match.appStoreURL
+                    copy.iconData = match.artworkData
+                }
+                return copy
+            }
+        }
+    }
+
     private func applyImportDrafts() {
         let selected = importDrafts.filter { $0.action != .skip }
+        Haptics.fire(selected.isEmpty ? .light : .success)
         for draft in selected {
             switch draft.action {
             case .updateExisting:
@@ -549,13 +646,17 @@ struct HomeView: View {
                 let item = SubscriptionItem(
                     itemType: .subscription,
                     name: draft.name,
+                    provider: draft.plan ?? "",
+                    iconSource: draft.iconData == nil ? .system : .customImage,
+                    iconData: draft.iconData,
                     cost: draft.cost,
                     currency: draft.currency,
-                    billingCycle: .monthly,
+                    billingCycle: draft.billingCycle,
                     nextRenewalDate: draft.renewalDate ?? Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date(),
                     isAutoRenew: draft.status == .active,
                     isCancelled: draft.status != .active,
-                    activeUntilDate: draft.status != .active ? draft.renewalDate : nil
+                    activeUntilDate: draft.status != .active ? draft.renewalDate : nil,
+                    url: draft.appStoreURL ?? ""
                 )
                 item.notes = importNote(for: draft)
                 modelContext.insert(item)
@@ -565,6 +666,13 @@ struct HomeView: View {
         }
 
         try? modelContext.save()
+#if os(iOS)
+        if let importedPhotoIdentifier {
+            pendingScreenshotDeletionIdentifiers = [importedPhotoIdentifier]
+            showingDeleteImportedScreenshotPrompt = true
+        }
+        importedPhotoIdentifier = nil
+#endif
         showingImportReview = false
         importDrafts = []
         importWarning = nil
@@ -577,6 +685,16 @@ struct HomeView: View {
         if let cost = draft.cost {
             item.cost = cost
             item.currency = draft.currency
+        }
+        if draft.cost != nil || draft.billingCycle != .monthly {
+            item.billingCycle = draft.billingCycle
+        }
+        if let iconData = draft.iconData, item.iconData == nil {
+            item.iconData = iconData
+            item.iconSource = .customImage
+        }
+        if let appStoreURL = draft.appStoreURL, item.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            item.url = appStoreURL
         }
         if draft.status == .expired || draft.status == .expiring {
             item.isAutoRenew = false
@@ -600,11 +718,45 @@ struct HomeView: View {
         return parts.joined(separator: " ")
     }
 
+#if os(iOS)
+    private func deleteImportedScreenshots() {
+        let identifiers = pendingScreenshotDeletionIdentifiers
+        pendingScreenshotDeletionIdentifiers = []
+        guard !identifiers.isEmpty else { return }
+
+        PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+            guard status == .authorized || status == .limited else {
+                Task { @MainActor in
+                    Haptics.fire(.warning)
+                    importError = "Photos permission is needed to delete the imported screenshot."
+                }
+                return
+            }
+
+            let assets = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
+            guard assets.count > 0 else { return }
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.deleteAssets(assets)
+            } completionHandler: { success, error in
+                Task { @MainActor in
+                    if success {
+                        Haptics.fire(.success)
+                    } else if let error {
+                        Haptics.fire(.error)
+                        importError = error.localizedDescription
+                    }
+                }
+            }
+        }
+    }
+#endif
+
     // MARK: - Overflow menu (sort, filter, expired toggle, header style, import)
 
     private var overflowMenu: some View {
         Menu {
             Button {
+                Haptics.fire(.light)
                 triggerScreenshotImport()
             } label: {
                 let locked = !purchaseManager.isPremium
@@ -613,11 +765,22 @@ struct HomeView: View {
             }
             .disabled(isAnalyzingScreenshot)
 
+#if os(iOS)
+            Button {
+                Haptics.fire(.light)
+                triggerScreenshotImport(screenshotsOnly: false)
+            } label: {
+                Label("Choose from All Photos", systemImage: "photo.on.rectangle")
+            }
+            .disabled(isAnalyzingScreenshot)
+#endif
+
             Divider()
 
             Menu {
                 ForEach(SortOrder.allCases, id: \.self) { option in
                     Button {
+                        Haptics.fire(.selectionChanged)
                         sortOrderRaw = option.rawValue
                     } label: {
                         if sortOrder == option {
@@ -634,6 +797,7 @@ struct HomeView: View {
             Menu {
                 ForEach(FilterOption.allCases, id: \.self) { option in
                     Button {
+                        Haptics.fire(.selectionChanged)
                         filterOptionRaw = option.rawValue
                     } label: {
                         if filterOption == option {
@@ -648,6 +812,7 @@ struct HomeView: View {
             }
 
             Button {
+                Haptics.fire(.selectionChanged)
                 hideExpired.toggle()
             } label: {
                 if hideExpired {
@@ -662,6 +827,7 @@ struct HomeView: View {
             Menu {
                 ForEach(SectionHeaderStyle.allCases, id: \.self) { style in
                     Button {
+                        Haptics.fire(.selectionChanged)
                         headerStyleRaw = style.rawValue
                     } label: {
                         if headerStyle == style {
@@ -678,6 +844,7 @@ struct HomeView: View {
             Menu {
                 ForEach(IconDisplayStyle.allCases, id: \.self) { style in
                     Button {
+                        Haptics.fire(.selectionChanged)
                         iconStyleRaw = style.rawValue
                     } label: {
                         let isCurrent = iconStyleRaw == style.rawValue
@@ -700,13 +867,15 @@ struct HomeView: View {
 #endif
     }
 
-    private func triggerScreenshotImport() {
+    private func triggerScreenshotImport(screenshotsOnly: Bool = true) {
         // AI / screenshot import is a Pro feature (also enforced server-side by the proxy).
         guard purchaseManager.isPremium else {
+            Haptics.fire(.warning)
             showPaywall = true
             return
         }
 #if os(iOS)
+        importPhotoFilter = screenshotsOnly ? .screenshots : .images
         showingPhotoImporter = true
 #else
         showingScreenshotFileImporter = true
@@ -891,14 +1060,17 @@ struct HomeView: View {
     private func openAddSheet() {
         // Free tier is capped at `freeItemLimit` active items; adding beyond that is Pro.
         if allItems.count >= Self.freeItemLimit && !purchaseManager.isPremium {
+            Haptics.fire(.warning)
             showPaywall = true
             return
         }
+        Haptics.fire(.light)
         editingItem = nil
         showingAdd = true
     }
 
     private func deleteItem(_ item: SubscriptionItem) {
+        Haptics.fire(.error)
         let snapshot = SubscriptionSnapshot(item: item)
         withAnimation {
             NotificationManager.shared.removeAll(for: item)
@@ -911,6 +1083,7 @@ struct HomeView: View {
     }
 
     private func toggleCancelled(_ item: SubscriptionItem) {
+        Haptics.fire(item.isCancelled ? .success : .light)
         let itemID = item.id
         let previousCancelled = item.isCancelled
         let previousAutoRenew = item.isAutoRenew
@@ -939,6 +1112,7 @@ struct HomeView: View {
     }
 
     private func archiveItem(_ item: SubscriptionItem) {
+        Haptics.fire(.light)
         let name = item.name
         withAnimation {
             item.isArchived = true
@@ -969,6 +1143,7 @@ struct HomeView: View {
     }
 
     private func restore(_ snapshot: SubscriptionSnapshot) {
+        Haptics.fire(.success)
         withAnimation {
             modelContext.insert(snapshot.restoredItem())
             try? modelContext.save()
@@ -982,6 +1157,7 @@ struct HomeView: View {
         activeUntilDate: Date?
     ) {
         guard let item = allItems.first(where: { $0.id == itemID }) else { return }
+        Haptics.fire(.light)
         withAnimation {
             item.isCancelled = isCancelled
             item.isAutoRenew = isAutoRenew
@@ -992,6 +1168,7 @@ struct HomeView: View {
     }
 
     private func restoreArchive(_ item: SubscriptionItem) {
+        Haptics.fire(.success)
         withAnimation {
             item.isArchived = false
             item.updatedAt = Date()
@@ -1243,107 +1420,459 @@ struct ScreenshotImportReviewSheet: View {
     var warning: String?
     let onApply: () -> Void
 
-    private var selectedCount: Int {
-        drafts.filter { $0.action != .skip }.count
+    @State private var currentIndex = 0
+    @State private var dragOffset: CGFloat = 0
+    @State private var showingPriceEditor = false
+
+    private var handledCount: Int { drafts.prefix(currentIndex).count }
+    private var addedDrafts: [ScreenshotSubscriptionDraft] { drafts.filter { $0.action == .addNew } }
+    private var selectedCount: Int { drafts.filter { $0.action != .skip }.count }
+    private var addedCount: Int { addedDrafts.count }
+    private var addedMonthlyTotal: Double {
+        addedDrafts.compactMap { draft in
+            draft.cost.map { $0 * draft.billingCycle.monthlyMultiplier }
+        }.reduce(0, +)
     }
+    private var summaryCurrency: String { addedDrafts.first?.currency ?? drafts.first?.currency ?? Locale.current.currency?.identifier ?? "USD" }
+    private var isComplete: Bool { currentIndex >= drafts.count }
 
     var body: some View {
         NavigationStack {
-            List {
-                if let warning {
-                    Section {
+            ZStack {
+                groupedBackground.ignoresSafeArea()
+
+                VStack(alignment: .leading, spacing: 18) {
+                    if let warning {
                         HStack(alignment: .top, spacing: 8) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
                             Text(warning)
                                 .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.horizontal, 18)
+                    }
+
+                    Text(isComplete ? "Ready to import" : title)
+                        .font(.system(size: 32, weight: .bold))
+                        .padding(.horizontal, 28)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.75)
+
+                    progressStrip
+                        .padding(.horizontal, 28)
+
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 30, style: .continuous)
+                            .fill(.white.opacity(0.68))
+                            .frame(width: 300, height: 480)
+                            .offset(x: 34, y: 16)
+                            .opacity(isComplete ? 0 : 1)
+
+                        if isComplete {
+                            completionView
+                                .transition(.scale.combined(with: .opacity))
+                        } else if drafts.indices.contains(currentIndex) {
+                            ScreenshotImportCard(
+                                draft: $drafts[currentIndex],
+                                dragOffset: dragOffset,
+                                onEditPrice: { showingPriceEditor = true }
+                            )
+                            .frame(maxWidth: 330)
+                            .rotationEffect(.degrees(Double(dragOffset / 22)))
+                            .offset(x: dragOffset)
+                            .gesture(
+                                DragGesture()
+                                    .onChanged { value in dragOffset = value.translation.width }
+                                    .onEnded { value in
+                                        finishDrag(value.translation.width)
+                                    }
+                            )
+                            .animation(.spring(duration: 0.28), value: dragOffset)
+                            .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .opacity))
                         }
                     }
-                }
-                Section {
-                    ForEach($drafts) { $draft in
-                        ScreenshotImportDraftRow(draft: $draft)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 510)
+
+                    actionButtons
+                        .padding(.top, 4)
+
+                    HStack {
+                        Text("\(addedCount) added · \(CurrencyInfo.format(addedMonthlyTotal, code: summaryCurrency))/mo")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Done") { onApply() }
+                            .font(.system(size: 17, weight: .semibold))
+                            .buttonStyle(.borderedProminent)
+                            .tint(.blue.opacity(isComplete && selectedCount > 0 ? 1 : 0.35))
+                            .disabled(!isComplete || selectedCount == 0)
                     }
-                } header: {
-                    Text("Detected")
-                } footer: {
-                    Text("Possible duplicates default to updating the existing subscription. Review each row before applying.")
+                    .padding(.horizontal, 28)
+                    .padding(.top, 8)
                 }
+                .padding(.top, 18)
             }
-            .navigationTitle("Import Screenshot")
+            .navigationTitle("")
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply") { onApply() }
-                        .fontWeight(.semibold)
-                        .disabled(selectedCount == 0)
+                    Button("Undo") { undoLast() }
+                        .disabled(currentIndex == 0)
                 }
             }
+            .sheet(isPresented: $showingPriceEditor) {
+                if drafts.indices.contains(currentIndex) {
+                    ScreenshotImportPriceEditor(draft: $drafts[currentIndex])
+                        .presentationDetents([.medium])
+                }
+            }
+        }
+    }
+
+    private var title: String {
+        currentIndex == 0 ? "Swipe to sort" : "Subscription \(currentIndex + 1) of \(drafts.count)"
+    }
+
+    private var progressStrip: some View {
+        HStack(spacing: 8) {
+            ForEach(drafts.indices, id: \.self) { index in
+                Capsule()
+                    .fill(progressColor(for: index))
+                    .frame(height: 5)
+            }
+        }
+    }
+
+    private func progressColor(for index: Int) -> Color {
+        if index < handledCount {
+            return drafts[index].action == .skip ? .red.opacity(0.75) : .green
+        }
+        if index == currentIndex && !isComplete { return .blue }
+        return .secondary.opacity(0.18)
+    }
+
+    private var completionView: some View {
+        VStack(spacing: 14) {
+            Image(systemName: selectedCount == 0 ? "xmark.circle" : "checkmark.circle.fill")
+                .font(.system(size: 62, weight: .semibold))
+                .foregroundStyle(selectedCount == 0 ? Color.secondary : Color.green)
+            Text(selectedCount == 0 ? "Nothing selected" : "\(selectedCount) ready")
+                .font(.system(size: 24, weight: .bold))
+            Text("Tap Done to apply your choices.")
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: 330, minHeight: 420)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+    }
+
+    private var actionButtons: some View {
+        HStack(spacing: 34) {
+            Button {
+                Haptics.fire(.light)
+                markCurrent(.skip)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundStyle(.red)
+                    .frame(width: 72, height: 72)
+                    .background(.white, in: Circle())
+                    .shadow(color: .black.opacity(0.08), radius: 16, y: 8)
+            }
+            .disabled(isComplete)
+
+            Button {
+                Haptics.fire(.success)
+                acceptCurrent()
+            } label: {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 36, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(width: 92, height: 92)
+                    .background(.green, in: Circle())
+                    .shadow(color: .green.opacity(0.28), radius: 18, y: 10)
+            }
+            .disabled(isComplete)
+
+            Button {
+                Haptics.fire(.light)
+                markCurrent(.addNew)
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(.blue)
+                    .frame(width: 72, height: 72)
+                    .background(.white, in: Circle())
+                    .shadow(color: .black.opacity(0.08), radius: 16, y: 8)
+            }
+            .opacity(canAddDuplicateAsNew ? 1 : 0)
+            .disabled(!canAddDuplicateAsNew)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var canAddDuplicateAsNew: Bool {
+        drafts.indices.contains(currentIndex) && drafts[currentIndex].hasMatch && !isComplete
+    }
+
+    private func finishDrag(_ width: CGFloat) {
+        if width < -110 {
+            markCurrent(.skip)
+        } else if width > 110 {
+            acceptCurrent()
+        } else {
+            dragOffset = 0
+        }
+    }
+
+    private func acceptCurrent() {
+        guard drafts.indices.contains(currentIndex) else { return }
+        markCurrent(drafts[currentIndex].hasMatch ? .updateExisting : .addNew)
+    }
+
+    private func markCurrent(_ action: ScreenshotSubscriptionDraft.ImportAction) {
+        guard drafts.indices.contains(currentIndex) else { return }
+        drafts[currentIndex].action = action
+        withAnimation(.spring(duration: 0.3)) {
+            dragOffset = 0
+            currentIndex += 1
+        }
+    }
+
+    private func undoLast() {
+        guard currentIndex > 0 else { return }
+        withAnimation(.spring(duration: 0.3)) {
+            currentIndex -= 1
+            drafts[currentIndex].action = drafts[currentIndex].hasMatch ? .updateExisting : .addNew
+            dragOffset = 0
         }
     }
 }
 
-private struct ScreenshotImportDraftRow: View {
+private struct ScreenshotImportCard: View {
     @Binding var draft: ScreenshotSubscriptionDraft
+    let dragOffset: CGFloat
+    let onEditPrice: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: draft.hasMatch ? "arrow.triangle.2.circlepath.circle.fill" : "plus.circle.fill")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(draft.hasMatch ? .blue : .green)
-                    .frame(width: 26)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(draft.name)
-                        .font(.system(size: 16, weight: .semibold))
-                    if let plan = draft.plan {
-                        Text(plan)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(summary)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                    if let matched = draft.matchedItemName {
-                        Text("Possible duplicate: \(matched)")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.blue)
-                    }
+        VStack(spacing: 20) {
+            HStack {
+                if dragOffset < 0 {
+                    Spacer()
+                    statusStamp
+                } else {
+                    statusStamp
+                    Spacer()
                 }
+            }
+            .frame(height: 34)
 
+            iconView
+
+            VStack(spacing: 5) {
+                Text(draft.name)
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.black)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.72)
+                if let plan = draft.plan {
+                    Text(plan)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(Color.gray)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.82)
+                }
+            }
+
+            Button(action: onEditPrice) {
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(priceText)
+                        .font(.system(size: priceFontSize, weight: .bold))
+                        .foregroundStyle(.black)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                    Text(draft.billingCycle.shortSuffix)
+                        .font(.system(size: suffixFontSize, weight: .semibold))
+                        .foregroundStyle(Color.gray)
+                }
+            }
+            .buttonStyle(.plain)
+
+            Divider()
+
+            HStack {
+                Text(dateLabel)
+                    .font(.system(size: 17))
+                    .foregroundStyle(Color.gray)
                 Spacer()
+                Text(dateText)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(.black)
             }
 
-            Picker("", selection: $draft.action) {
-                ForEach(availableActions, id: \.self) { action in
-                    Text(action.rawValue).tag(action)
+            if draft.hasMatch {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(.orange)
+                        .frame(width: 8, height: 8)
+                    Text("Possible duplicate")
+                        .font(.system(size: 15, weight: .semibold))
+                    Spacer()
+                }
+                .foregroundStyle(.brown)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(24)
+        .frame(height: 480)
+        .background(cardBackground)
+        .shadow(color: .black.opacity(0.10), radius: 28, y: 16)
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        if let data = draft.iconData, let image = platformImage(from: data) {
+#if os(iOS)
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 76, height: 76)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+#else
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 76, height: 76)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+#endif
+        } else {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(.pink.gradient)
+                .frame(width: 76, height: 76)
+                .overlay(
+                    Text(initials)
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundStyle(.white)
+                )
+        }
+    }
+
+    private var statusStamp: some View {
+        Text(stampText)
+            .font(.system(size: 16, weight: .heavy))
+            .tracking(1.5)
+            .foregroundStyle(stampColor)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(stampColor, lineWidth: 2)
+            )
+            .rotationEffect(.degrees(stampRotation))
+            .opacity(abs(dragOffset) > 45 ? 1 : 0)
+    }
+
+    private var stampText: String { dragOffset < 0 ? "SKIP" : (draft.hasMatch ? "UPDATE" : "ADD") }
+    private var stampColor: Color { dragOffset < 0 ? .red : .green }
+    private var stampRotation: Double { dragOffset < 0 ? 4 : -4 }
+    private var tintProgress: Double { min(Double(abs(dragOffset)) / 150, 1) }
+    private var cardTint: Color { dragOffset < 0 ? .red : .green }
+    private var cardTintOpacity: Double { tintProgress * 0.26 }
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 30, style: .continuous)
+            .fill(.white)
+            .overlay(
+                RoundedRectangle(cornerRadius: 30, style: .continuous)
+                    .fill(cardTint.opacity(cardTintOpacity))
+            )
+    }
+    private var initials: String {
+        draft.name.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
+    }
+    private var priceText: String {
+        if let cost = draft.cost {
+            return CurrencyInfo.format(cost, code: draft.currency)
+        }
+        return "Set price"
+    }
+    private var isPricePlaceholder: Bool { draft.cost == nil }
+    private var priceFontSize: CGFloat { isPricePlaceholder ? 40 : 48 }
+    private var suffixFontSize: CGFloat { isPricePlaceholder ? 20 : 22 }
+    private var dateLabel: String {
+        draft.status == .active ? "Next charge" : "Access until"
+    }
+    private var dateText: String {
+        draft.renewalDate?.formatted(date: .abbreviated, time: .omitted) ?? "Unknown"
+    }
+}
+
+private struct ScreenshotImportPriceEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var draft: ScreenshotSubscriptionDraft
+    @State private var priceText = ""
+    @State private var currency = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Price", text: $priceText)
+#if os(iOS)
+                        .keyboardType(.decimalPad)
+#endif
+#if os(iOS)
+                    TextField("Currency", text: $currency)
+                        .textInputAutocapitalization(.characters)
+#else
+                    TextField("Currency", text: $currency)
+#endif
+                    Picker("Billing", selection: $draft.billingCycle) {
+                        ForEach(BillingCycle.allCases, id: \.self) { cycle in
+                            Text(cycle.rawValue).tag(cycle)
+                        }
+                    }
                 }
             }
-            .pickerStyle(.segmented)
+            .navigationTitle("Price")
+            .inlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        save()
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+            .onAppear {
+                priceText = draft.cost.map { String(format: "%.2f", $0) } ?? ""
+                currency = draft.currency
+            }
         }
-        .padding(.vertical, 6)
     }
 
-    private var availableActions: [ScreenshotSubscriptionDraft.ImportAction] {
-        draft.hasMatch ? [.updateExisting, .addNew, .skip] : [.addNew, .skip]
-    }
-
-    private var summary: String {
-        var parts: [String] = []
-        if let renewalDate = draft.renewalDate {
-            let verb = draft.status == .expiring ? "Expires" : "Renews"
-            parts.append("\(verb) \(renewalDate.formatted(date: .abbreviated, time: .omitted))")
+    private func save() {
+        let normalized = priceText.replacingOccurrences(of: ",", with: ".")
+        draft.cost = Double(normalized)
+        let trimmedCurrency = currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if !trimmedCurrency.isEmpty {
+            draft.currency = trimmedCurrency
         }
-        if let cost = draft.cost {
-            parts.append(CurrencyInfo.format(cost, code: draft.currency))
-        }
-        parts.append("\(Int(draft.confidence * 100))% confidence")
-        return parts.joined(separator: " • ")
     }
 }
 

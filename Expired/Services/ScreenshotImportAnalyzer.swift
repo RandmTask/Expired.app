@@ -154,6 +154,9 @@ struct ScreenshotSubscriptionDraft: Identifiable, Hashable {
     var renewalDate: Date?
     var cost: Double?
     var currency: String
+    var billingCycle: BillingCycle = .monthly
+    var appStoreURL: String?
+    var iconData: Data?
     var status: DetectionStatus
     var confidence: Double
     var matchedItemID: UUID?
@@ -539,6 +542,7 @@ enum ScreenshotImportAnalyzer {
                 renewalDate: draft.renewalDate.flatMap(parseISODate),
                 cost: draft.cost.flatMap { $0 > 0 ? $0 : nil },
                 currency: draft.currency?.uppercased() ?? "USD",
+                billingCycle: inferredBillingCycle(name: name, plan: draft.plan),
                 status: detectionStatus(from: draft.status),
                 confidence: min(max(draft.confidence ?? 0.8, 0), 1),
                 matchedItemID: nil,
@@ -558,6 +562,7 @@ enum ScreenshotImportAnalyzer {
             renewalDate: draft.date.isEmpty ? nil : parseISODate(draft.date),
             cost: draft.cost > 0 ? draft.cost : nil,
             currency: draft.currency.isEmpty ? "USD" : draft.currency.uppercased(),
+            billingCycle: inferredBillingCycle(name: name, plan: draft.plan),
             status: detectionStatus(from: draft.status),
             confidence: min(max(draft.confidence, 0), 1),
             matchedItemID: nil,
@@ -664,6 +669,7 @@ enum ScreenshotImportAnalyzer {
                     renewalDate: date,
                     cost: price?.amount,
                     currency: price?.currency ?? "USD",
+                    billingCycle: inferredBillingCycle(name: line, plan: plan),
                     status: status,
                     confidence: confidence(renewalLine: renewalLine, price: price),
                     matchedItemID: nil,
@@ -745,6 +751,20 @@ enum ScreenshotImportAnalyzer {
             lower.contains("subscription") ||
             lower.contains("storage") ||
             lower.contains("pro")
+    }
+
+    private static func inferredBillingCycle(name: String, plan: String?) -> BillingCycle {
+        let combined = [name, plan ?? ""].joined(separator: " ").lowercased()
+        if combined.contains("annual") || combined.contains("yearly") || combined.contains("year") {
+            return .yearly
+        }
+        if combined.contains("weekly") || combined.contains("week") {
+            return .weekly
+        }
+        if combined.contains("one-time") || combined.contains("one time") || combined.contains("lifetime") {
+            return .oneOff
+        }
+        return .monthly
     }
 
     private static func containsRenewalSignal(_ line: String) -> Bool {

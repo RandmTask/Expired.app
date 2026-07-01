@@ -15,8 +15,11 @@ final class NotificationManager {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .notDetermined else { return }
-        // criticalAlert requires a separate entitlement; the system will show an extra prompt
-        _ = try? await center.requestAuthorization(options: [.alert, .badge, .sound, .criticalAlert])
+        do {
+            _ = try await center.requestAuthorization(options: [.alert, .badge, .sound])
+        } catch {
+            print("[Notifications] Authorization request failed: \(error)")
+        }
     }
 
     // MARK: - Notification categories (enables "View" action on lock screen)
@@ -92,16 +95,8 @@ final class NotificationManager {
             content.userInfo = ["itemID": item.id.uuidString]
             content.badge = 1
 
-            if rule.isCritical {
-                // Critical alerts bypass Do Not Disturb / Silent mode
-                // On macOS they're delivered normally; they push to iPhone when
-                // the device is signed into the same iCloud account.
-                content.sound = .defaultCritical
-                content.interruptionLevel = .critical
-            } else {
-                content.sound = .default
-                content.interruptionLevel = .timeSensitive
-            }
+            content.sound = .default
+            content.interruptionLevel = .timeSensitive
 
             let components = Calendar.current.dateComponents(
                 [.year, .month, .day, .hour, .minute], from: fireDate

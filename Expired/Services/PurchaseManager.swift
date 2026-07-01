@@ -49,6 +49,27 @@ final class PurchaseManager: NSObject, PurchasesDelegate {
         offerings = try? await Purchases.shared.offerings()
     }
 
+    /// Switches to a brand-new RevenueCat identity with no purchases.
+    /// `logOut()` is rejected for anonymous users; `logIn` with a fresh UUID sidesteps that.
+    /// Use for testing only.
+    func logOutForTesting() async {
+        guard isConfigured else {
+            print("[PurchaseManager] logOutForTesting: not configured yet")
+            return
+        }
+        let newID = UUID().uuidString
+        print("[PurchaseManager] logOutForTesting: switching to new user \(newID)")
+        do {
+            let (info, isNew) = try await Purchases.shared.logIn(newID)
+            let hasPro = info.entitlements[BackendConfig.proEntitlementID]?.isActive == true
+            print("[PurchaseManager] logOutForTesting: logIn OK. isNew=\(isNew), hasPro=\(hasPro)")
+            apply(info)
+        } catch {
+            print("[PurchaseManager] logOutForTesting: logIn FAILED: \(error)")
+            isPremium = false
+        }
+    }
+
     /// Restore purchases (e.g. on a new device, same Apple ID).
     @discardableResult
     func restore() async -> Bool {

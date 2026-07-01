@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Expired needs Photos access to move imported subscription screenshots to Recently Deleted when you choose to clean them up.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Expired may save or update images you choose for subscription icons.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>processing</string>

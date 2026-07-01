@@ -1224,6 +1224,7 @@ struct AddEditSubscriptionView: View {
         HStack(spacing: 12) {
             // Archive / Unarchive button
             Button {
+                Haptics.fire(.light)
                 showArchiveConfirmation = true
             } label: {
                 HStack {
@@ -1252,6 +1253,7 @@ struct AddEditSubscriptionView: View {
 
             // Delete button
             Button {
+                Haptics.fire(.warning)
                 showDeleteConfirmation = true
             } label: {
                 HStack {
@@ -1573,7 +1575,7 @@ struct AddEditSubscriptionView: View {
             if let rule = existingByID[draft.id] {
                 rule.offsetType = draft.offsetType
                 rule.value = draft.value
-                rule.isCritical = draft.isCritical
+                rule.isCritical = false
                 rule.customDate = draft.customDate
                 result.append(rule)
             } else {
@@ -1585,7 +1587,10 @@ struct AddEditSubscriptionView: View {
 
     private func saveAndDismiss() {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmedName.isEmpty else { return }
+        guard !trimmedName.isEmpty else {
+            Haptics.fire(.warning)
+            return
+        }
 
         // Trim all text fields
         let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1663,10 +1668,12 @@ struct AddEditSubscriptionView: View {
         // Persist before scheduling so CloudKit export and notifications act on saved data.
         try? modelContext.save()
         Task { await NotificationManager.shared.reschedule(for: savedItem) }
+        Haptics.fire(.success)
         dismiss()
     }
 
     private func deleteAndDismiss() {
+        Haptics.fire(.error)
         if let item {
             NotificationManager.shared.removeAll(for: item)
             modelContext.delete(item)
@@ -1676,6 +1683,7 @@ struct AddEditSubscriptionView: View {
     }
 
     private func archiveAndDismiss() {
+        Haptics.fire(isCurrentlyArchived ? .success : .light)
         if let item {
             item.isArchived = !item.isArchived
             item.updatedAt = Date()
@@ -1751,6 +1759,7 @@ struct AccountField: View {
                 if suggestions.isEmpty {
                     // No saved values yet — tapping the value area opens add-new
                     Button {
+                        Haptics.fire(.light)
                         showAddNew = true
                     } label: {
                         Text(text.isEmpty ? placeholder : text)
@@ -1763,6 +1772,7 @@ struct AccountField: View {
                     Menu {
                         ForEach(suggestions, id: \.self) { suggestion in
                             Button {
+                                Haptics.fire(.selectionChanged)
                                 text = suggestion
                             } label: {
                                 if suggestion == text {
@@ -1791,6 +1801,7 @@ struct AccountField: View {
                 // Trailing action: × clears when filled (red), + opens sheet when empty
                 if text.isEmpty {
                     Button {
+                        Haptics.fire(.light)
                         showAddNew = true
                     } label: {
                         Image(systemName: "plus.circle.fill")
@@ -1801,6 +1812,7 @@ struct AccountField: View {
                     .buttonStyle(.plain)
                 } else {
                     Button {
+                        Haptics.fire(.light)
                         text = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill")
@@ -2041,7 +2053,12 @@ struct AddAccountValueSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { dismiss(); return }
+                        guard !trimmed.isEmpty else {
+                            Haptics.fire(.warning)
+                            dismiss()
+                            return
+                        }
+                        Haptics.fire(.success)
                         onSave(trimmed, shouldSave)
                         dismiss()
                     }
