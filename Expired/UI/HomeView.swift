@@ -27,6 +27,7 @@ struct HomeView: View {
     @State private var importPhotoItems: [PhotosPickerItem] = []
     @State private var importDrafts: [ScreenshotSubscriptionDraft] = []
     @State private var importWarning: String?
+    @State private var importDebugLog: String?
     @State private var importError: String?
     @State private var isAnalyzingScreenshot = false
     @State private var analyzingMessageIndex = 0
@@ -265,6 +266,7 @@ struct HomeView: View {
                 ScreenshotImportReviewSheet(
                     drafts: $importDrafts,
                     warning: importWarning,
+                    debugLog: importDebugLog,
                     onApply: applyImportDrafts
                 )
             }
@@ -338,6 +340,7 @@ struct HomeView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .contentTransition(.opacity)
+                        .animation(.easeInOut(duration: 0.35), value: analyzingMessage)
                     Text("AI is sorting subscriptions from your screenshot.")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -723,6 +726,7 @@ struct HomeView: View {
         do {
             var allDrafts: [ScreenshotSubscriptionDraft] = []
             var warnings: [String] = []
+            var debugDetails: [String] = []
 
             for data in images {
                 let result = try await ScreenshotImportAnalyzer.analyze(
@@ -732,6 +736,9 @@ struct HomeView: View {
                 allDrafts.append(contentsOf: result.drafts)
                 if let warning = result.warning, !warning.isEmpty {
                     warnings.append(warning)
+                }
+                if let debugDetail = result.debugDetail, !debugDetail.isEmpty {
+                    debugDetails.append(debugDetail)
                 }
             }
 
@@ -750,10 +757,11 @@ struct HomeView: View {
             importDrafts = uniqueDrafts
             var warningText = warnings.isEmpty ? nil : Array(Set(warnings)).joined(separator: "\n")
             if consecutiveFallbacks >= ScreenshotAIHealthLog.alertThreshold {
-                let streakNote = "AI import has failed \(consecutiveFallbacks) times in a row — check your connection, or look for an app update."
+                let streakNote = "AI import failed again — that's \(consecutiveFallbacks) in a row. Check your connection, or look for an app update."
                 warningText = [warningText, streakNote].compactMap { $0 }.joined(separator: "\n")
             }
             importWarning = warningText
+            importDebugLog = debugDetails.isEmpty ? nil : buildDebugLog(details: Array(Set(debugDetails)), consecutiveFallbacks: consecutiveFallbacks)
             showingImportReview = true
             Haptics.fire(.success)
 
@@ -763,6 +771,24 @@ struct HomeView: View {
         } catch {
             importError = error.localizedDescription
         }
+    }
+
+    /// Assembles the copyable diagnostic log for an AI-import failure — everything
+    /// needed to root-cause it (server-reported entitlement check, local RevenueCat
+    /// identity/premium state, failure streak, app version, timestamp) in one paste,
+    /// without the user needing to attach an Xcode console.
+    private func buildDebugLog(details: [String], consecutiveFallbacks: Int) -> String {
+        var lines: [String] = ["Expired AI import debug log"]
+        let formatter = ISO8601DateFormatter()
+        lines.append("time: \(formatter.string(from: Date()))")
+        if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+           let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String {
+            lines.append("appVersion: \(version) (\(build))")
+        }
+        lines.append("consecutiveFallbacks: \(consecutiveFallbacks)")
+        lines.append("localPurchaseManager: isPremium=\(purchaseManager.isPremium) appUserID=\(purchaseManager.appUserID ?? "nil")")
+        lines.append(contentsOf: details)
+        return lines.joined(separator: "\n")
     }
 
     private func deduplicatedImportDrafts(_ drafts: [ScreenshotSubscriptionDraft]) -> [ScreenshotSubscriptionDraft] {
@@ -907,6 +933,7 @@ struct HomeView: View {
         showingImportReview = false
         importDrafts = []
         importWarning = nil
+        importDebugLog = nil
     }
 
     private func apply(_ draft: ScreenshotSubscriptionDraft, to item: SubscriptionItem) {
@@ -1660,10 +1687,10 @@ private struct AnalyzingScanIcon: View {
         }
         .frame(width: 88, height: 88)
         .onAppear {
-            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
+            withAnimation(.easeInOut(duration: 2.1).repeatForever(autoreverses: true)) {
                 isPulsing = true
             }
-            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: false)) {
+            withAnimation(.smooth(duration: 2.6).repeatForever(autoreverses: true)) {
                 isScanning = true
             }
         }
@@ -1794,6 +1821,7 @@ struct ScreenshotImportReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var drafts: [ScreenshotSubscriptionDraft]
     var warning: String?
+    var debugLog: String?
     let onApply: () -> Void
 
     @State private var currentIndex = 0
@@ -1830,8 +1858,23 @@ struct ScreenshotImportReviewSheet: View {
                                 .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            Button {
+                                copyImportWarning(debugLog ?? warning)
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Copy detailed debug log")
+                            .help("Copies a detailed technical log for troubleshooting — not the message shown above.")
                         }
                         .padding(.horizontal, 18)
+                        // 44pt wasn't enough on device (iOS 26's floating toolbar
+                        // capsules don't reserve normal nav-bar safe-area space) —
+                        // going generous rather than guess again with another small bump.
+                        .padding(.top, 100)
                     }
 
                     Text(isComplete ? "Ready to import" : title)
@@ -2083,6 +2126,16 @@ struct ScreenshotImportReviewSheet: View {
             stackPromotionProgress = 0
             dragThresholdDirection = 0
         }
+    }
+
+    private func copyImportWarning(_ text: String) {
+#if os(iOS)
+        UIPasteboard.general.string = text
+#elseif os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+#endif
+        Haptics.fire(.light)
     }
 
     private func updateDragThresholdFeedback(for width: CGFloat) {

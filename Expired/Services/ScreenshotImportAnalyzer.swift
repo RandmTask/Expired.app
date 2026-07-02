@@ -246,13 +246,13 @@ struct AIDetectionResult {
 enum ScreenshotImportAnalyzer {
     enum AnalyzerError: LocalizedError {
         case appleIntelligenceUnavailable
-        case httpError(status: Int, message: String?)
+        case httpError(status: Int, message: String?, technicalDetail: String?)
 
         var errorDescription: String? {
             switch self {
             case .appleIntelligenceUnavailable:
                 return "Apple Intelligence isn't available on this device. Choose another analyzer in Settings, or add an API key."
-            case .httpError(let status, let message):
+            case .httpError(let status, let message, _):
                 if let message, !message.isEmpty {
                     return "HTTP \(status): \(message)"
                 }
@@ -270,7 +270,11 @@ enum ScreenshotImportAnalyzer {
             #if DEBUG
             print("[ScreenshotImportAnalyzer] ai-proxy returned \(http.statusCode): \(String(data: data, encoding: .utf8) ?? "<non-utf8 body>")")
             #endif
-            throw AnalyzerError.httpError(status: http.statusCode, message: providerErrorMessage(from: data))
+            throw AnalyzerError.httpError(
+                status: http.statusCode,
+                message: providerErrorMessage(from: data),
+                technicalDetail: technicalDetail(from: data)
+            )
         }
         return data
     }
@@ -294,12 +298,50 @@ enum ScreenshotImportAnalyzer {
         return nil
     }
 
+    /// Machine-decipherable facts from the proxy's error payload (entitlement IDs
+    /// checked, why the RevenueCat lookup didn't resolve active, per-provider cascade
+    /// results) — kept separate from the human message so it can be appended as a
+    /// copyable suffix. Lets a failure be diagnosed from the in-app banner alone,
+    /// without an Xcode console attached (e.g. testing off a cable).
+    private static func technicalDetail(from data: Data) -> String? {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let error = object["error"] as? [String: Any]
+        else { return nil }
+
+        var parts: [String] = []
+        if let ids = error["checkedEntitlementIDs"] as? [String], !ids.isEmpty {
+            parts.append("ids=\(ids.joined(separator: ","))")
+        }
+        if let detail = error["revenueCatCheck"] as? String {
+            parts.append("check=\(detail)")
+        }
+        if let userId = error["checkedUserId"] as? String {
+            parts.append("serverUserId=\(userId)")
+        }
+        if let available = error["availableEntitlements"] as? [String] {
+            parts.append(available.isEmpty ? "availableEntitlements=none" : "availableEntitlements=\(available.joined(separator: ","))")
+        }
+        if let tried = error["tried"] as? [[String: Any]], !tried.isEmpty {
+            let summary = tried.map { entry -> String in
+                let provider = entry["provider"] as? String ?? "?"
+                let status = entry["status"].map { "\($0)" } ?? "?"
+                return "\(provider):\(status)"
+            }.joined(separator: ",")
+            parts.append("tried=\(summary)")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
     /// Result of an analysis pass. `warning` is non-nil when the chosen AI
     /// provider failed and the on-device heuristic was used instead — surfaced to
     /// the user so a silent fallback never masquerades as a real AI result.
+    /// `warning` is kept short and user-friendly; `debugDetail` (non-nil only when
+    /// the server returned diagnostic fields) holds the technical breakdown meant
+    /// to be copied and pasted for troubleshooting, not read in the banner.
     struct Result {
         var drafts: [ScreenshotSubscriptionDraft]
         var warning: String?
+        var debugDetail: String?
     }
 
     private struct RecognizedTextLine {
@@ -314,13 +356,14 @@ enum ScreenshotImportAnalyzer {
     ) async throws -> Result {
         let settings = ScreenshotAISettings.current
         var warning: String?
+        var debugDetail: String?
         let drafts: [ScreenshotSubscriptionDraft]
         do {
             drafts = try await detect(imageData: imageData, settings: settings, referenceDate: referenceDate)
         } catch {
             // The selected AI path failed — degrade to the local heuristic, but
             // tell the user rather than passing off heuristic output as AI output.
-            warning = fallbackWarning(for: settings.provider, error: error)
+            (warning, debugDetail) = fallbackWarning(for: settings.provider, error: error)
             drafts = parse(lines: try await ocrLines(from: imageData), referenceDate: referenceDate)
         }
         let recognizedLines = try? await recognizedTextLines(from: imageData)
@@ -336,7 +379,7 @@ enum ScreenshotImportAnalyzer {
         let priceRepaired = repairMissingPrices(in: detectedDrafts, recognizedLines: recognizedLines ?? [])
         // Drop noise: a real subscription has at least a date or a price.
         let anchored = deduplicatedRecurring(priceRepaired.filter { $0.renewalDate != nil || $0.cost != nil })
-        return Result(drafts: matchDuplicates(drafts: anchored, existingItems: existingItems), warning: warning)
+        return Result(drafts: matchDuplicates(drafts: anchored, existingItems: existingItems), warning: warning, debugDetail: debugDetail)
     }
 
     /// Runs the provider chosen in Settings. Throws on failure (no internal
@@ -372,14 +415,21 @@ enum ScreenshotImportAnalyzer {
         }
     }
 
-    private static func fallbackWarning(for provider: ScreenshotAIProvider, error: Error) -> String {
+    /// Returns (friendly banner text, technical debug detail). The friendly text is
+    /// short and free of jargon — meant to be read at a glance. The debug detail
+    /// (nil when there's nothing technical to add) is meant to be copied, not read
+    /// in the banner; it's assembled into a fuller log by the caller.
+    private static func fallbackWarning(for provider: ScreenshotAIProvider, error: Error) -> (String, String?) {
         if let analyzerError = error as? AnalyzerError {
-            if case .httpError(let status, _) = analyzerError, status == 402 {
-                return "Expired Pro could not be verified by the AI server yet. Restore purchases, then try again. Showing on-device results — review them carefully."
+            if case .httpError(let status, _, let technicalDetail) = analyzerError, status == 402 {
+                return ("Expired Pro could not be verified yet. Try Restore Purchases in Settings, then import again. Showing basic text matches for now — review carefully.", technicalDetail)
             }
-            return analyzerError.localizedDescription + " Showing on-device results — review them carefully."
+            if case .httpError(_, _, let technicalDetail) = analyzerError, let technicalDetail {
+                return (analyzerError.localizedDescription + " No AI ran — showing basic text-pattern matches only, review carefully.", technicalDetail)
+            }
+            return (analyzerError.localizedDescription + " No AI ran — showing basic text-pattern matches only, review carefully.", nil)
         }
-        return "\(provider.rawValue) couldn't analyse the screenshot (\(error.localizedDescription)). Showing on-device results — review them carefully."
+        return ("\(provider.rawValue) couldn't analyse the screenshot (\(error.localizedDescription)). No AI ran — showing basic text-pattern matches only, review carefully.", nil)
     }
 
     private static func ocrLines(from imageData: Data) async throws -> [String] {

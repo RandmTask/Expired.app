@@ -336,3 +336,62 @@ entry UI + RED security warning (key now lives server-side).
   (`app_config` rows, new `provider_health` table) + Swift `UserDefaults`.
 
 **No schema changes.** SwiftData/CloudKit model untouched.
+
+## 2026-07-02 — RevenueCat identity bug: root-caused and fixed (AI import 402 blocker)
+
+- **Root cause found and confirmed, not just theorized.** `PurchaseManager.configure(appUserID:)`
+  passes the Supabase anonymous UUID to `Purchases.configure(with:)` on every launch
+  (`ExpiredApp.swift`'s `.task`). RevenueCat's SDK only honors that `appUserID` param the very
+  first time a device ever configures — on every later launch, if RevenueCat already has *any*
+  cached identity, `configure()` silently keeps using it and ignores the freshly-passed UUID.
+  This device had several cached identities from earlier debug flows (`logOutForTesting()`,
+  `resyncIdentityToCurrentSession()`), so a real Lifetime purchase attached to whichever
+  identity happened to be cached at purchase time — not the Supabase UUID `ai-proxy` checks.
+- **Confirmed concretely via RevenueCat dashboard + Supabase SQL editor** (both already
+  authenticated in the connected browser — no credentials entered): Supabase `auth.users` has
+  exactly one user ever, `8c0b2c5d-3fe4-421b-9d7f-12a5917de411`. `public.entitlements` (the
+  webhook-mirrored table `ai-proxy` reads first) had zero rows for anyone. RevenueCat's
+  Sandbox customer list showed that exact UUID as a customer with $649.44 of *expired monthly*
+  test-subscription history but zero active entitlements — while the active, unlimited-duration
+  Lifetime Pro entitlement ($99.99) sat on a completely different RevenueCat customer ID
+  (`9135CED8-B974-4173-8811-CDFA9B0A5E52`), created 16 minutes after the Supabase UUID first
+  configured. Never merged/aliased. Exactly the split the theory predicted.
+- **Fix:** `PurchaseManager.configure()` now compares `Purchases.shared.appUserID` against the
+  resolved Supabase UUID immediately after `Purchases.configure(...)`, and if they differ, calls
+  `Purchases.shared.logIn(appUserID)` followed by `restorePurchases()` — the same repair
+  `resyncIdentityToCurrentSession()` already did manually, now run automatically on every
+  launch instead of requiring the hidden debug button. On the next launch on the *same* device
+  that made the Lifetime purchase, this should self-heal: `restorePurchases()` reads the local
+  App Store receipt and reattaches the entitlement to the now-correctly-logged-in Supabase
+  identity. Verify by relaunching and checking `[PurchaseManager]` console output, then retrying
+  an AI screenshot import — the 402 should clear.
+- **Learned:** never assume a "purchase not recognized" bug is data/backend-side without first
+  diffing the RevenueCat customer *identity* the purchase landed on against the identity the
+  server is checking — a same-device, same-session purchase can still land on the wrong
+  RevenueCat customer if the SDK's cached identity has drifted from what the app *thinks* it
+  configured with. Debug flows that call `logIn()` (test resets, resyncs) leave the SDK's local
+  identity cache in a state that silently overrides `configure(appUserID:)` on every future
+  launch until explicitly corrected.
+
+**No schema changes.** SwiftData/CloudKit model untouched (this was Swift client + verification
+only — no new Supabase migration needed since `entitlements`/webhook plumbing already existed).
+
+- **Follow-up: RevenueCat webhook was never actually configured.** The `entitlements` table had
+  zero rows for *any* user, not just the affected one — checking RevenueCat's dashboard
+  (Project Settings → Integrations → Webhooks) showed no webhook had ever been created, despite
+  `REVENUECAT_WEBHOOK_SECRET` already existing as a Supabase function secret since 2026-06-30.
+  Half-finished setup: the secret existed, nothing was ever configured to send events using it.
+  Fixed by generating a fresh secret (`openssl rand -hex 32`), setting it via
+  `supabase secrets set REVENUECAT_WEBHOOK_SECRET=... --project-ref ehibtlaoshmqpbnexehy`, and
+  creating the webhook in RevenueCat (URL `.../functions/v1/revenuecat-webhook`, `Bearer <secret>`
+  auth header, Both Production and Sandbox, all events). Verified end-to-end with RevenueCat's
+  "Send test event" — 200 response, body `{"ok":true,"skipped":"ignored type TEST"}`, confirming
+  the URL, auth header, and function logic all agree. `entitlements` will now self-populate from
+  real purchase/renewal/expiration events going forward instead of relying solely on `ai-proxy`'s
+  live-fallback API call on every request.
+- **Note for next session:** while testing this in the browser, clicking the "show/hide" eye icon
+  on the webhook form's Authorization-header field appeared to trigger a conflict with a
+  password-manager-style browser extension — the tab briefly became unreachable
+  (`Cannot access a chrome-extension:// URL of different extension`) and the form silently reset
+  its fields. Avoid that reveal toggle on secret-like fields in this browser profile; re-filling
+  and submitting without touching it worked fine.

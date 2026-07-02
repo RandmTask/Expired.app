@@ -14,6 +14,12 @@ final class PurchaseManager: NSObject, PurchasesDelegate {
     private(set) var offerings: Offerings?
     private(set) var isConfigured = false
 
+    /// RevenueCat's current local identity. Not sensitive (it's the user's own
+    /// account id) — surfaced in the AI-import debug log so an entitlement 402 can
+    /// be diagnosed (identity mismatch vs. genuinely no purchase) from the copied
+    /// log alone, without dashboard access.
+    var appUserID: String? { isConfigured ? Purchases.shared.appUserID : nil }
+
     private override init() { super.init() }
 
     /// Call once, after the Supabase anonymous session resolves.
@@ -32,6 +38,18 @@ final class PurchaseManager: NSObject, PurchasesDelegate {
         Purchases.shared.delegate = self
 
         Task {
+            // `configure(appUserID:)`'s appUserID param only takes effect the very
+            // first time this device ever configures the SDK. On every later launch,
+            // if RevenueCat already has a cached identity (e.g. left over from
+            // logOutForTesting()/resyncIdentityToCurrentSession() during debugging),
+            // configure() silently keeps that cached identity and ignores the appUserID
+            // passed above — server (ai-proxy, keyed on the Supabase UUID) and client
+            // then disagree on who the user is, and purchases attach to the stale
+            // identity instead. Force the identity to match on every launch.
+            if let appUserID, Purchases.shared.appUserID != appUserID {
+                _ = try? await Purchases.shared.logIn(appUserID)
+                _ = try? await Purchases.shared.restorePurchases()
+            }
             await refreshCustomerInfo()
             await loadOfferings()
         }

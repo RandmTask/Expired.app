@@ -8,6 +8,22 @@ import UIKit
 import AppKit
 #endif
 
+private func calendarWeekStart(for date: Date, calendar: Calendar = .current) -> Date {
+    calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? calendar.startOfDay(for: date)
+}
+
+private func localizedWeekdayInitials(calendar: Calendar = .current) -> [String] {
+    let symbols = calendar.veryShortStandaloneWeekdaySymbols
+    let startIndex = max(0, calendar.firstWeekday - 1)
+    return (0..<7).map { symbols[(startIndex + $0) % symbols.count] }
+}
+
+private func leadingWeekdaySlots(for date: Date, calendar: Calendar = .current) -> Int {
+    let weekdayIndex = calendar.component(.weekday, from: date) - 1
+    let firstWeekdayIndex = calendar.firstWeekday - 1
+    return (weekdayIndex - firstWeekdayIndex + 7) % 7
+}
+
 struct ContentView: View {
     @State private var selectedTab = 0
     @State private var settingsNavID = UUID()
@@ -143,13 +159,7 @@ struct TimelineView: View {
                                     withAnimation(.spring(duration: 0.3)) { viewModeRaw = mode.rawValue }
                                 }
                             } label: {
-                                if viewMode == mode {
-                                    Label(mode.rawValue, systemImage: "checkmark")
-                                } else if locked {
-                                    Label(mode.rawValue, systemImage: "lock.fill")
-                                } else {
-                                    Label(mode.rawValue, systemImage: mode.icon)
-                                }
+                                viewModeMenuRow(mode: mode, isSelected: viewMode == mode, isLocked: locked)
                             }
                         }
                     } label: {
@@ -162,6 +172,17 @@ struct TimelineView: View {
                 }
             }
             .expiredPaywallSheet(isPresented: $showPaywall)
+        }
+    }
+
+    private func viewModeMenuRow(mode: ViewMode, isSelected: Bool, isLocked: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark")
+                .opacity(isSelected ? 1 : 0)
+                .frame(width: 16, alignment: .center)
+            Image(systemName: isLocked ? "lock.fill" : mode.icon)
+                .frame(width: 22, alignment: .center)
+            Text(mode.rawValue)
         }
     }
 
@@ -245,12 +266,11 @@ struct CalendarGridView: View {
         displayedMonth.formatted(.dateTime.month(.wide).year())
     }
 
-    // Days in the displayed month padded to start on Sunday
+    // Days in the displayed month padded to the user's calendar week start.
     private var gridDays: [Date?] {
         guard let range = cal.range(of: .day, in: .month, for: displayedMonth),
               let firstDay = cal.date(from: cal.dateComponents([.year, .month], from: displayedMonth)) else { return [] }
-        let weekday = cal.component(.weekday, from: firstDay) - 1  // 0=Sun
-        var days: [Date?] = Array(repeating: nil, count: weekday)
+        var days: [Date?] = Array(repeating: nil, count: leadingWeekdaySlots(for: firstDay, calendar: cal))
         for d in range {
             days.append(cal.date(byAdding: .day, value: d - 1, to: firstDay))
         }
@@ -274,10 +294,10 @@ struct CalendarGridView: View {
             let labelsHeight: CGFloat = 18
             let availableWidth = geo.size.width - horizontalPadding * 2 - gridSpacing * 6
             let availableHeight = geo.size.height - headerHeight - labelsHeight - 20
-            let cellSize = floor(min(
+            let cellSize = max(1, floor(min(
                 availableWidth / 7,
                 (availableHeight - gridSpacing * CGFloat(rows - 1)) / CGFloat(rows)
-            ))
+            )))
             let columns = Array(repeating: GridItem(.fixed(cellSize), spacing: gridSpacing), count: 7)
 
             VStack(spacing: 8) {
@@ -335,7 +355,7 @@ struct CalendarGridView: View {
 
                 // Day-of-week headers
                 HStack(spacing: 0) {
-                    ForEach(["S","M","T","W","T","F","S"], id: \.self) { d in
+                    ForEach(Array(localizedWeekdayInitials(calendar: cal).enumerated()), id: \.offset) { _, d in
                         Text(d)
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.tertiary)
@@ -474,21 +494,24 @@ struct HeatmapView: View {
     }
 
     private var dayData: [DayData] {
-        let today = cal.startOfDay(for: Date())
+        let start = calendarWeekStart(for: Date(), calendar: cal)
+        let itemsByDay = Dictionary(grouping: items) { item in
+            cal.startOfDay(for: item.nextRelevantDate)
+        }
         return (0..<days).map { offset in
-            let date = cal.date(byAdding: .day, value: offset, to: today) ?? today
-            let dayItems = items.filter { cal.startOfDay(for: $0.nextRelevantDate) == date }
+            let date = cal.date(byAdding: .day, value: offset, to: start) ?? start
+            let dayItems = itemsByDay[date] ?? []
             let spend = dayItems.compactMap(\.cost).reduce(0, +)
             return DayData(id: offset, date: date, spend: spend, items: dayItems)
         }
     }
 
-    private var maxSpend: Double { dayData.map(\.spend).max() ?? 1 }
-
-    @State private var selectedDay: DayData? = nil
+    @State private var selectedDayID: Int? = nil
 
     var body: some View {
         GeometryReader { geo in
+            let data = dayData
+            let maxSpend = data.map(\.spend).max() ?? 1
             let horizontalPadding: CGFloat = 16
             let gridSpacing: CGFloat = 4
             let rows = 13
@@ -496,12 +519,11 @@ struct HeatmapView: View {
             let labelsHeight: CGFloat = 16
             let availableWidth = geo.size.width - horizontalPadding * 2 - gridSpacing * 6
             let availableHeight = geo.size.height - headerHeight - labelsHeight - 60
-            let cellSize = floor(min(
+            let cellSize = max(1, floor(min(
                 availableWidth / 7,
                 (availableHeight - gridSpacing * CGFloat(rows - 1)) / CGFloat(rows)
-            ))
+            )))
             let columns = Array(repeating: GridItem(.fixed(cellSize), spacing: gridSpacing), count: 7)
-            let startWeekday = cal.component(.weekday, from: Date()) - 1 // 0=Sun
 
             VStack(alignment: .leading, spacing: 10) {
                 // Header
@@ -509,10 +531,10 @@ struct HeatmapView: View {
                     Text("Next 13 Weeks")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    let total = dayData.map(\.spend).reduce(0, +)
+                    let total = data.map(\.spend).reduce(0, +)
                     Text(CurrencyInfo.format(total, code: currency))
                         .font(.system(size: 30, weight: .bold, design: .rounded))
-                    Text("total spend in next 90 days")
+                    Text("total spend across 13 calendar weeks")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -521,7 +543,7 @@ struct HeatmapView: View {
 
                 // Day-of-week labels
                 HStack(spacing: 0) {
-                    ForEach(["S","M","T","W","T","F","S"], id: \.self) { d in
+                    ForEach(Array(localizedWeekdayInitials(calendar: cal).enumerated()), id: \.offset) { _, d in
                         Text(d)
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.tertiary)
@@ -533,22 +555,19 @@ struct HeatmapView: View {
 
                 // Grid
                 LazyVGrid(columns: columns, spacing: gridSpacing) {
-                    ForEach(0..<startWeekday, id: \.self) { _ in
-                        Color.clear.frame(width: cellSize, height: cellSize)
-                    }
-                    ForEach(dayData) { day in
+                    ForEach(data) { day in
                         HeatmapCell(
                             day: day.date,
                             spend: day.spend,
                             items: day.items,
                             maxSpend: maxSpend,
                             currency: currency,
-                            isSelected: selectedDay?.id == day.id
+                            isSelected: selectedDayID == day.id
                         )
                         .frame(width: cellSize, height: cellSize)
                         .onTapGesture {
                             withAnimation(.spring(duration: 0.2)) {
-                                selectedDay = selectedDay?.id == day.id ? nil : day
+                                selectedDayID = selectedDayID == day.id ? nil : day.id
                             }
                         }
                     }
@@ -566,7 +585,9 @@ struct HeatmapView: View {
                 .padding(.horizontal, horizontalPadding)
 
                 // Detail card for selected day
-                if let day = selectedDay, !day.items.isEmpty {
+                if let selectedDayID,
+                   let day = data.first(where: { $0.id == selectedDayID }),
+                   !day.items.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(day.date.formatted(date: .complete, time: .omitted))
                             .font(.system(size: 13, weight: .semibold))
@@ -1001,7 +1022,8 @@ struct MonthStripView: View {
             let periods = buildPeriods(length: periodLength, count: 12)
             let spacing: CGFloat = 6
             let horizontalPadding: CGFloat = 8
-            let cardWidth = floor((geo.size.width - horizontalPadding * 2 - spacing * CGFloat(periodLength - 1)) / CGFloat(periodLength))
+            let availableWidth = max(1, geo.size.width - horizontalPadding * 2 - spacing * CGFloat(periodLength - 1))
+            let cardWidth = max(1, floor(availableWidth / CGFloat(periodLength)))
             let currentPeriod = periods.first(where: { $0.id == currentPeriodID }) ?? periods.first
 
             VStack(spacing: 0) {
@@ -1026,6 +1048,7 @@ struct MonthStripView: View {
                         }
                         .padding(.horizontal, horizontalPadding)
                         .padding(.vertical, 10)
+                        .frame(width: geo.size.width, alignment: .center)
                         .tag(period.id)
                     }
                 }
@@ -1033,6 +1056,7 @@ struct MonthStripView: View {
                 .tabViewStyle(.page(indexDisplayMode: .never))
 #endif
                 .frame(width: geo.size.width, height: 130)
+                .clipped()
                 .onChange(of: currentPeriodID) { _, _ in
                     Haptics.fire(.selectionChanged)
                     selectedDay = nil
@@ -1108,12 +1132,15 @@ struct MonthStripView: View {
     }
 
     private func buildPeriods(length: Int, count: Int) -> [Period] {
-        let today = cal.startOfDay(for: Date())
+        let firstStart = calendarWeekStart(for: Date(), calendar: cal)
+        let itemsByDay = Dictionary(grouping: items) { item in
+            cal.startOfDay(for: item.nextRelevantDate)
+        }
         return (0..<count).map { index in
-            let start = cal.date(byAdding: .day, value: index * length, to: today) ?? today
+            let start = cal.date(byAdding: .day, value: index * length, to: firstStart) ?? firstStart
             let days: [DayCard] = (0..<length).map { offset in
                 let date = cal.date(byAdding: .day, value: offset, to: start) ?? start
-                let dayItems = items.filter { cal.startOfDay(for: $0.nextRelevantDate) == date }
+                let dayItems = itemsByDay[date] ?? []
                 return DayCard(id: index * length + offset, date: date, items: dayItems)
             }
             return Period(id: index, startDate: start, days: days)
@@ -1121,6 +1148,16 @@ struct MonthStripView: View {
     }
 
     private func periodLabel(start: Date, length: Int) -> String {
+        let currentWeekStart = calendarWeekStart(for: Date(), calendar: cal)
+        let weekOffset = cal.dateComponents([.weekOfYear], from: currentWeekStart, to: start).weekOfYear ?? 0
+        if length == 7 {
+            if weekOffset == 0 { return "This Week" }
+            if weekOffset == 1 { return "Next Week" }
+        } else if length == 14 {
+            if weekOffset == 0 { return "This Week + Next Week" }
+            if weekOffset == 2 { return "In 2 Weeks" }
+        }
+
         let end = cal.date(byAdding: .day, value: length - 1, to: start) ?? start
         let df = DateFormatter()
         df.dateFormat = "MMM d"

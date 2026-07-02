@@ -19,9 +19,17 @@ final class SupabaseService {
         )
     }
 
-    /// Current user id (UUID string) once a session exists, else nil.
+    /// Current user id (canonical lowercase UUID string) once a session exists, else nil.
+    ///
+    /// Swift's `UUID.uuidString` is always UPPERCASE, but the JWT `sub` claim that the
+    /// `ai-proxy` Edge Function decodes — and the `auth.users.id` Postgres stores — are
+    /// canonical LOWERCASE. RevenueCat treats `app_user_id` as case-sensitive, so handing
+    /// it the uppercase form made the client attach purchases to an UPPERCASE RevenueCat
+    /// customer while the server looked up a different, empty LOWERCASE one — every
+    /// entitlement check came back `no_matching_entitlement`. Lowercasing here keeps the
+    /// client's RevenueCat identity identical to what the server derives from the JWT.
     var currentUserID: String? {
-        client.auth.currentUser?.id.uuidString
+        client.auth.currentUser?.id.uuidString.lowercased()
     }
 
     /// Ensures an authenticated session, creating an anonymous one if needed.

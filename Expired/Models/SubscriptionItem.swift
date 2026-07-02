@@ -111,6 +111,7 @@ enum IconSource: String, Codable {
 
 enum NotificationOffsetType: String, Codable, CaseIterable {
     case daysBefore = "Days Before"
+    case onDay = "On Day"
     case daysAfter = "Days After"
     case weeksBefore = "Weeks Before"
     case weeksAfter = "Weeks After"
@@ -122,6 +123,8 @@ enum NotificationOffsetType: String, Codable, CaseIterable {
         switch self {
         case .daysBefore:
             return value == 1 ? "Day Before" : "Days Before"
+        case .onDay:
+            return "On Day"
         case .daysAfter:
             return value == 1 ? "Day After" : "Days After"
         case .weeksBefore:
@@ -204,6 +207,8 @@ final class NotificationRule {
         switch offsetType {
         case .daysBefore:
             return value == 1 ? "1 day before" : "\(value) days before"
+        case .onDay:
+            return "On day"
         case .daysAfter:
             return value == 1 ? "1 day after" : "\(value) days after"
         case .weeksBefore:

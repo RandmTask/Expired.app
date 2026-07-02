@@ -90,8 +90,10 @@ Deno.serve(async (req) => {
     return json({
       error: {
         message: "Expired Pro verification required. Restore purchases and try again.",
+        checkedUserId: userId,
         checkedEntitlementIDs: ids,
         revenueCatCheck: check.detail,
+        availableEntitlements: check.availableEntitlements,
       },
     }, 402);
   }
@@ -206,6 +208,10 @@ interface EntitlementCheck {
    * (wrong/missing secret key, RevenueCat 401/404, vs. a genuinely inactive
    * customer) is visible from the client's console log without server access. */
   detail: string;
+  /** Entitlement identifiers RevenueCat actually returned for this customer (names
+   * only, not sensitive) — lets a "no match" be diagnosed as "customer has zero
+   * entitlements" vs. "customer has different/misnamed ones" without dashboard access. */
+  availableEntitlements?: string[];
 }
 
 async function hasPremiumEntitlement(
@@ -241,10 +247,17 @@ async function refreshRevenueCatEntitlement(
   const apiKey = Deno.env.get("REVENUECAT_SECRET_API_KEY") ?? Deno.env.get("REVENUECAT_API_KEY");
   if (!apiKey) return { active: false, detail: "no_secret_key_configured" };
 
+  // RevenueCat's GET /subscribers endpoint defaults to production-only entitlements;
+  // StoreKit-testing/Test Store purchases are invisible without this header (confirmed
+  // via RevenueCat's own dashboard: toggling its "Sandbox data" switch off showed this
+  // exact customer as "No current entitlements" despite an active Test Store purchase).
+  // TODO: once a real App Store Connect app is added and production purchases exist
+  // alongside sandbox ones, this will need to become conditional (or the check run
+  // twice) rather than unconditionally sandbox — revisit before shipping to the App Store.
   let response: Response;
   try {
     response = await fetch(`${REVENUECAT_API_URL}/${encodeURIComponent(userId)}`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: { Authorization: `Bearer ${apiKey}`, "X-Is-Sandbox": "true" },
       signal: AbortSignal.timeout(8_000),
     });
   } catch (e) {
@@ -265,7 +278,7 @@ async function refreshRevenueCatEntitlement(
   const expiresAt = typeof matched?.expires_date === "string" ? matched.expires_date : null;
   const active = matched != null && (!expiresAt || new Date(expiresAt).getTime() > Date.now());
 
-  await db
+  const { error: upsertError } = await db
     .from("entitlements")
     .upsert(
       {
@@ -277,5 +290,13 @@ async function refreshRevenueCatEntitlement(
       { onConflict: "user_id" },
     );
 
-  return { active, detail: active ? "active" : (matched ? "expired" : "no_matching_entitlement_on_revenuecat_customer") };
+  return {
+    active,
+    detail: active
+      ? "active"
+      : upsertError
+      ? `no_matching_entitlement_on_revenuecat_customer (mirror upsert failed: ${upsertError.message})`
+      : "no_matching_entitlement_on_revenuecat_customer",
+    availableEntitlements: Object.keys(entitlements),
+  };
 }

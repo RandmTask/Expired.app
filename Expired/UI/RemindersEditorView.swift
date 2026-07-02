@@ -87,10 +87,8 @@ struct RemindersEditorView: View {
             HStack(spacing: 8) {
                 GlassPresetChip(label: "3 months", icon: "bell")   { addRule(.monthsBefore, 3) }
                 GlassPresetChip(label: "6 months", icon: "bell")   { addRule(.monthsBefore, 6) }
-                GlassPresetChip(label: "Select date", icon: "calendar") { addExactDateRule() }
-                // Invisible placeholder keeps the last row the same width as the first
-                GlassPresetChip(label: "1 day", icon: "bell") {}
-                    .hidden()
+                GlassPresetChip(label: "On day", icon: "bell.badge") { addRule(.onDay, 0) }
+                GlassPresetChip(label: "Custom", icon: "calendar") { addExactDateRule() }
             }
         }
         .padding(.horizontal, 16)
@@ -171,6 +169,9 @@ struct ReminderRuleRow: View {
             if offsetType == .exactDate {
                 datePicker
                     .fixedSize()
+            } else if offsetType == .onDay {
+                typePicker
+                    .fixedSize()
             } else {
                 valueStepper
                     .fixedSize()
@@ -224,7 +225,9 @@ struct ReminderRuleRow: View {
         .pickerStyle(.menu)
         .onChange(of: offsetType) { _, newValue in
             Haptics.fire(.selectionChanged)
-            if newValue != .exactDate, value < 1 {
+            if newValue == .onDay {
+                value = 0
+            } else if newValue != .exactDate, value < 1 {
                 value = 1
             }
             propagate()
@@ -233,8 +236,8 @@ struct ReminderRuleRow: View {
 
     private var availableTypes: [NotificationOffsetType] {
         switch offsetType {
-        case .daysBefore, .daysAfter:
-            return [.daysBefore, .daysAfter]
+        case .daysBefore, .onDay, .daysAfter:
+            return [.daysBefore, .onDay, .daysAfter]
         case .weeksBefore, .weeksAfter:
             return [.weeksBefore, .weeksAfter]
         case .monthsBefore, .monthsAfter:

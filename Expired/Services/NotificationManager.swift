@@ -88,8 +88,7 @@ final class NotificationManager {
             guard fireDate > Date() else { continue }
 
             let content = UNMutableNotificationContent()
-            content.title = notificationTitle(for: item)
-            content.subtitle = rule.label.capitalized
+            content.title = notificationTitle(for: item, baseDate: baseDate)
             content.body = notificationBody(for: item, baseDate: baseDate)
             content.categoryIdentifier = "EXPIRY_REMINDER"
             content.userInfo = ["itemID": item.id.uuidString]
@@ -117,6 +116,8 @@ final class NotificationManager {
         switch rule.offsetType {
         case .daysBefore:
             return Calendar.current.date(byAdding: .day, value: -rule.value, to: baseDate)
+        case .onDay:
+            return baseDate
         case .daysAfter:
             return Calendar.current.date(byAdding: .day, value: rule.value, to: baseDate)
         case .weeksBefore:
@@ -134,45 +135,55 @@ final class NotificationManager {
 
     // MARK: - Notification copy
 
-    private func notificationTitle(for item: SubscriptionItem) -> String {
+    private func notificationTitle(for item: SubscriptionItem, baseDate: Date) -> String {
+        let relativeDate = relativeDayPhrase(to: baseDate)
         switch item.itemType {
         case .document:
-            return "\(item.name) Expiring"
+            return "\(item.name) expires \(relativeDate)"
         case .subscription:
-            switch item.status {
-            case .trial:   return "\(item.name) — Trial Ending"
-            case .autoRenew: return "\(item.name) — Auto-Renews Soon"
-            default:       return "\(item.name) — Renewal Due"
-            }
+            return "\(item.name) renewal \(relativeDate)"
         }
     }
 
     private func notificationBody(for item: SubscriptionItem, baseDate: Date) -> String {
-        let dateStr = baseDate.formatted(date: .abbreviated, time: .omitted)
-        let days = Calendar.current.dateComponents([.day], from: Date(), to: baseDate).day ?? 0
-        let daysStr = days == 0 ? "today" : days == 1 ? "tomorrow" : "in \(days) days"
-
-        let costStr: String
-        if let monthly = item.monthlyCost {
-            costStr = " · \(monthly.formatted(.currency(code: item.currency)))/mo"
-        } else { costStr = "" }
+        let dateStr = baseDate.formatted(.dateTime.month(.abbreviated).day())
 
         switch item.itemType {
         case .document:
-            return "Expires \(dateStr) (\(daysStr)) — renew before it lapses"
+            return "Expires: \(dateStr)"
         case .subscription:
             switch item.status {
             case .trial:
-                return "Free trial ends \(dateStr)\(costStr) — cancel to avoid charges"
-            case .cancelledButActive(let until):
-                return "Access ends \(until.formatted(date: .abbreviated, time: .omitted))"
+                return "Trial ends: \(dateStr)"
+            case .cancelledButActive:
+                return "Access ends: \(dateStr)"
             case .autoRenew:
-                return "Auto-renews \(dateStr)\(costStr)"
+                return "Auto-renews: \(dateStr)"
             case .manualRenew:
-                return "Renewal due \(dateStr)\(costStr)"
+                return "Renewal: \(dateStr)"
             case .expired:
-                return "Expired \(dateStr)"
+                return "Expired: \(dateStr)"
             }
+        }
+    }
+
+    private func relativeDayPhrase(to date: Date) -> String {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let targetDay = calendar.startOfDay(for: date)
+        let days = calendar.dateComponents([.day], from: today, to: targetDay).day ?? 0
+
+        switch days {
+        case 0:
+            return "today"
+        case 1:
+            return "in 1 day"
+        case 2...:
+            return "in \(days) days"
+        case -1:
+            return "1 day ago"
+        default:
+            return "\(-days) days ago"
         }
     }
 
