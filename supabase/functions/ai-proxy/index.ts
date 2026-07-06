@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
   const db = serviceClient();
 
   // 2. Kill-switch + cascade config, in one round trip.
-  const { data: cfg } = await db
+  const { data: cfg, error: cfgError } = await db
     .from("app_config")
     .select("key,value")
     .in("key", [
@@ -73,16 +73,30 @@ Deno.serve(async (req) => {
       "ai_model_gemini",
       "ai_model_deepseek",
       "revenuecat_entitlement_ids",
+      "allow_sandbox_entitlements",
     ]);
+  // Fail closed on a config-read error. Swallowing it (the old `const { data }` form)
+  // turned a hard failure — e.g. the missing service_role grant fixed in 0005 — into a
+  // silent fall-through to hardcoded defaults, skipping the kill-switch and every cap
+  // below: the exact controls that bound spend. Never default past an infra failure.
+  if (cfgError) {
+    return json({
+      error: { message: "AI is temporarily unavailable.", detail: `config_read_failed: ${cfgError.message}` },
+    }, 503);
+  }
   const config = Object.fromEntries((cfg ?? []).map((r) => [r.key, r.value]));
   if (config.ai_enabled === false) {
     return json({ error: { message: "AI is temporarily disabled." } }, 503);
   }
   const dailyCap = Number(config.daily_request_cap ?? 50);
+  // Sandbox entitlements (StoreKit-testing / Test Store purchases) are only consulted
+  // when explicitly enabled — false/absent means production-only. Flip this to false at
+  // App Store launch so real customers are always checked against production.
+  const allowSandbox = config.allow_sandbox_entitlements === true;
 
   // 3. Premium entitlement (AI import is a Premium feature)
   const ids = entitlementIDs(config);
-  const check = await hasPremiumEntitlement(db, userId, ids);
+  const check = await hasPremiumEntitlement(db, userId, ids, allowSandbox);
   if (!check.active) {
     // checkedEntitlementIDs + revenueCatCheck are diagnostic only (not sensitive) —
     // lets the client's console log show exactly which identifier(s) were checked
@@ -218,6 +232,7 @@ async function hasPremiumEntitlement(
   db: ReturnType<typeof serviceClient>,
   userId: string,
   ids: string[],
+  allowSandbox: boolean,
 ): Promise<EntitlementCheck> {
   const { data: ent } = await db
     .from("entitlements")
@@ -231,7 +246,7 @@ async function hasPremiumEntitlement(
 
   // Webhooks can be delayed, disabled in sandbox, or missed during setup. When the
   // local mirror says "no", ask RevenueCat directly and repair the mirror.
-  return await refreshRevenueCatEntitlement(db, userId, ids);
+  return await refreshRevenueCatEntitlement(db, userId, ids, allowSandbox);
 }
 
 function entitlementActive(active: unknown, expiresAt: unknown): boolean {
@@ -239,64 +254,104 @@ function entitlementActive(active: unknown, expiresAt: unknown): boolean {
     (typeof expiresAt !== "string" || !expiresAt || new Date(expiresAt).getTime() > Date.now());
 }
 
-async function refreshRevenueCatEntitlement(
-  db: ReturnType<typeof serviceClient>,
-  userId: string,
-  ids: string[],
-): Promise<EntitlementCheck> {
-  const apiKey = Deno.env.get("REVENUECAT_SECRET_API_KEY") ?? Deno.env.get("REVENUECAT_API_KEY");
-  if (!apiKey) return { active: false, detail: "no_secret_key_configured" };
+interface EntitlementEval {
+  active: boolean;
+  detail: string;
+  availableEntitlements: string[];
+  expiresAt: string | null;
+}
 
-  // RevenueCat's GET /subscribers endpoint defaults to production-only entitlements;
-  // StoreKit-testing/Test Store purchases are invisible without this header (confirmed
-  // via RevenueCat's own dashboard: toggling its "Sandbox data" switch off showed this
-  // exact customer as "No current entitlements" despite an active Test Store purchase).
-  // TODO: once a real App Store Connect app is added and production purchases exist
-  // alongside sandbox ones, this will need to become conditional (or the check run
-  // twice) rather than unconditionally sandbox — revisit before shipping to the App Store.
+/// One RevenueCat GET /subscribers call. `sandbox` toggles the `X-Is-Sandbox` header:
+/// with it absent the endpoint returns production entitlements only; with it set,
+/// sandbox (StoreKit-testing / Test Store) entitlements.
+async function fetchRevenueCatEntitlements(
+  userId: string,
+  apiKey: string,
+  sandbox: boolean,
+): Promise<{ ok: boolean; entitlements: Record<string, { expires_date?: unknown }>; detail: string }> {
+  const env = sandbox ? "sandbox" : "prod";
+  const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+  if (sandbox) headers["X-Is-Sandbox"] = "true";
+
   let response: Response;
   try {
     response = await fetch(`${REVENUECAT_API_URL}/${encodeURIComponent(userId)}`, {
-      headers: { Authorization: `Bearer ${apiKey}`, "X-Is-Sandbox": "true" },
+      headers,
       signal: AbortSignal.timeout(8_000),
     });
   } catch (e) {
-    return { active: false, detail: `revenuecat_fetch_failed: ${e}` };
+    return { ok: false, entitlements: {}, detail: `${env}_fetch_failed: ${e}` };
   }
   if (!response.ok) {
     // 401/403 -> wrong or expired secret key. 404 -> this userId has never been
     // seen by RevenueCat at all (classic anon-session / appUserID mismatch).
-    return { active: false, detail: `revenuecat_http_${response.status}` };
+    return { ok: false, entitlements: {}, detail: `${env}_http_${response.status}` };
   }
-
   const body = await response.json();
-  const entitlements = body?.subscriber?.entitlements ?? {};
-  const matched = ids
-    .map((id) => entitlements[id])
-    .find((entitlement) => entitlement != null);
+  return { ok: true, entitlements: body?.subscriber?.entitlements ?? {}, detail: `${env}_ok` };
+}
 
+function evaluateEntitlements(
+  fetched: { ok: boolean; entitlements: Record<string, { expires_date?: unknown }>; detail: string },
+  ids: string[],
+): EntitlementEval {
+  if (!fetched.ok) {
+    return { active: false, detail: fetched.detail, availableEntitlements: [], expiresAt: null };
+  }
+  const matched = ids.map((id) => fetched.entitlements[id]).find((e) => e != null);
   const expiresAt = typeof matched?.expires_date === "string" ? matched.expires_date : null;
   const active = matched != null && (!expiresAt || new Date(expiresAt).getTime() > Date.now());
+  return {
+    active,
+    detail: active ? "active" : "no_matching_entitlement",
+    availableEntitlements: Object.keys(fetched.entitlements),
+    expiresAt,
+  };
+}
 
+async function refreshRevenueCatEntitlement(
+  db: ReturnType<typeof serviceClient>,
+  userId: string,
+  ids: string[],
+  allowSandbox: boolean,
+): Promise<EntitlementCheck> {
+  const apiKey = Deno.env.get("REVENUECAT_SECRET_API_KEY") ?? Deno.env.get("REVENUECAT_API_KEY");
+  if (!apiKey) return { active: false, detail: "no_secret_key_configured" };
+
+  // Always check production first; only fall back to sandbox when explicitly enabled
+  // (pre-launch StoreKit testing). This is the fix for the old unconditional
+  // X-Is-Sandbox header, which would have 402'd every real App Store customer once the
+  // app shipped, since production purchases are invisible under the sandbox header.
+  const environments = allowSandbox ? [false, true] : [false];
+  let result: EntitlementEval = { active: false, detail: "not_checked", availableEntitlements: [], expiresAt: null };
+  const availableAcrossEnvs: string[] = [];
+
+  for (const sandbox of environments) {
+    result = evaluateEntitlements(await fetchRevenueCatEntitlements(userId, apiKey, sandbox), ids);
+    availableAcrossEnvs.push(...result.availableEntitlements);
+    if (result.active) break;
+  }
+
+  // Repair the local mirror with whatever we resolved (active or not).
   const { error: upsertError } = await db
     .from("entitlements")
     .upsert(
       {
         user_id: userId,
-        premium_active: active,
-        expires_at: expiresAt,
+        premium_active: result.active,
+        expires_at: result.expiresAt,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id" },
     );
 
   return {
-    active,
-    detail: active
+    active: result.active,
+    detail: result.active
       ? "active"
       : upsertError
-      ? `no_matching_entitlement_on_revenuecat_customer (mirror upsert failed: ${upsertError.message})`
-      : "no_matching_entitlement_on_revenuecat_customer",
-    availableEntitlements: Object.keys(entitlements),
+      ? `${result.detail} (mirror upsert failed: ${upsertError.message})`
+      : result.detail,
+    availableEntitlements: [...new Set(availableAcrossEnvs)],
   };
 }

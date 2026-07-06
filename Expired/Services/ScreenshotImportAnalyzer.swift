@@ -28,6 +28,10 @@ enum ScreenshotAIProvider: String, CaseIterable, Identifiable {
         self == .appleIntelligence ? "On-Device" : rawValue
     }
 
+    static func fromProxyID(_ id: String) -> ScreenshotAIProvider? {
+        allCases.first { $0.proxyID == id }
+    }
+
     /// Legacy UserDefaults key — retained only for the one-time Keychain migration.
     var apiKeyDefaultsKey: String {
         "screenshotAI.apiKey.\(rawValue)"
@@ -342,6 +346,26 @@ enum ScreenshotImportAnalyzer {
         var drafts: [ScreenshotSubscriptionDraft]
         var warning: String?
         var debugDetail: String?
+        var analyzerName: String?
+    }
+
+    private struct DetectionRun {
+        var drafts: [ScreenshotSubscriptionDraft]
+        var analyzerName: String
+    }
+
+    private struct ProxyRun {
+        var drafts: [ScreenshotSubscriptionDraft]
+        var providerID: String
+        var modelID: String?
+
+        var analyzerName: String {
+            let provider = ScreenshotAIProvider.fromProxyID(providerID)?.displayName ?? providerID
+            if let modelID, !modelID.isEmpty {
+                return "\(provider) (\(modelID))"
+            }
+            return provider
+        }
     }
 
     private struct RecognizedTextLine {
@@ -357,14 +381,18 @@ enum ScreenshotImportAnalyzer {
         let settings = ScreenshotAISettings.current
         var warning: String?
         var debugDetail: String?
+        var analyzerName: String?
         let drafts: [ScreenshotSubscriptionDraft]
         do {
-            drafts = try await detect(imageData: imageData, settings: settings, referenceDate: referenceDate)
+            let run = try await detect(imageData: imageData, settings: settings, referenceDate: referenceDate)
+            drafts = run.drafts
+            analyzerName = run.analyzerName
         } catch {
             // The selected AI path failed — degrade to the local heuristic, but
             // tell the user rather than passing off heuristic output as AI output.
             (warning, debugDetail) = fallbackWarning(for: settings.provider, error: error)
             drafts = parse(lines: try await ocrLines(from: imageData), referenceDate: referenceDate)
+            analyzerName = "OCR"
         }
         let recognizedLines = try? await recognizedTextLines(from: imageData)
         let localPurchaseDrafts: [ScreenshotSubscriptionDraft] = recognizedLines.map { lines in
@@ -379,7 +407,12 @@ enum ScreenshotImportAnalyzer {
         let priceRepaired = repairMissingPrices(in: detectedDrafts, recognizedLines: recognizedLines ?? [])
         // Drop noise: a real subscription has at least a date or a price.
         let anchored = deduplicatedRecurring(priceRepaired.filter { $0.renewalDate != nil || $0.cost != nil })
-        return Result(drafts: matchDuplicates(drafts: anchored, existingItems: existingItems), warning: warning, debugDetail: debugDetail)
+        return Result(
+            drafts: matchDuplicates(drafts: anchored, existingItems: existingItems),
+            warning: warning,
+            debugDetail: debugDetail,
+            analyzerName: analyzerName
+        )
     }
 
     /// Runs the provider chosen in Settings. Throws on failure (no internal
@@ -388,11 +421,14 @@ enum ScreenshotImportAnalyzer {
         imageData: Data,
         settings: ScreenshotAISettings,
         referenceDate: Date
-    ) async throws -> [ScreenshotSubscriptionDraft] {
+    ) async throws -> DetectionRun {
         switch settings.provider {
         case .appleIntelligence:
             let lines = try await ocrLines(from: imageData)
-            return try await parseWithAppleIntelligence(lines: lines, referenceDate: referenceDate)
+            return DetectionRun(
+                drafts: try await parseWithAppleIntelligence(lines: lines, referenceDate: referenceDate),
+                analyzerName: "On-Device"
+            )
 
         case .automatic:
             // Try on-device first (free, private); only reach the proxy's cascade
@@ -402,16 +438,21 @@ enum ScreenshotImportAnalyzer {
                     throw AnalyzerError.appleIntelligenceUnavailable
                 }
                 let lines = try await ocrLines(from: imageData)
-                return try await parseWithAppleIntelligence(lines: lines, referenceDate: referenceDate)
+                return DetectionRun(
+                    drafts: try await parseWithAppleIntelligence(lines: lines, referenceDate: referenceDate),
+                    analyzerName: "On-Device"
+                )
             } catch {
-                return try await parseWithProxy(mode: .auto, provider: nil, model: nil, imageData: imageData, referenceDate: referenceDate)
+                let run = try await parseWithProxy(mode: .auto, provider: nil, model: nil, imageData: imageData, referenceDate: referenceDate)
+                return DetectionRun(drafts: run.drafts, analyzerName: run.analyzerName)
             }
 
         default:
             // Manual/debug override — forces one named provider through the proxy,
             // bypassing the cascade. The provider key lives server-side; no on-device
             // key to check.
-            return try await parseWithProxy(mode: .forced, provider: settings.provider, model: settings.modelID, imageData: imageData, referenceDate: referenceDate)
+            let run = try await parseWithProxy(mode: .forced, provider: settings.provider, model: settings.modelID, imageData: imageData, referenceDate: referenceDate)
+            return DetectionRun(drafts: run.drafts, analyzerName: run.analyzerName)
         }
     }
 
@@ -572,7 +613,7 @@ enum ScreenshotImportAnalyzer {
         model: String?,
         imageData: Data,
         referenceDate: Date
-    ) async throws -> [ScreenshotSubscriptionDraft] {
+    ) async throws -> ProxyRun {
         let lines = try await ocrLines(from: imageData)
         let visionPrompt = remoteVisionPrompt(referenceDate: referenceDate)
         let textPrompt = remoteTextPrompt(lines: lines, referenceDate: referenceDate)
@@ -601,14 +642,15 @@ enum ScreenshotImportAnalyzer {
 
     /// The proxy replies `{"provider": "<id>", "raw": <upstream JSON>}` — `raw` keeps
     /// each provider's native shape, so the extractor below still matches its own.
-    private static func parseProxyResponse(_ data: Data) -> [ScreenshotSubscriptionDraft] {
+    private static func parseProxyResponse(_ data: Data) -> ProxyRun {
         guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let providerID = object["provider"] as? String,
               let raw = object["raw"],
               let rawData = try? JSONSerialization.data(withJSONObject: raw)
-        else { return [] }
+        else { return ProxyRun(drafts: [], providerID: "cloud", modelID: nil) }
 
         let content: String
+        let modelID = object["model"] as? String
         switch providerID {
         case "openai", "deepseek":
             content = openAIContent(from: rawData)
@@ -619,7 +661,7 @@ enum ScreenshotImportAnalyzer {
         default:
             content = "[]"
         }
-        return parseAIJSON(content)
+        return ProxyRun(drafts: parseAIJSON(content), providerID: providerID, modelID: modelID)
     }
 
     private static func openAIContent(from data: Data) -> String {

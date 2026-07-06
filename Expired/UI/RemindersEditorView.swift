@@ -10,36 +10,49 @@ struct NotificationRuleDraft: Identifiable, Equatable {
     var value: Int
     var isCritical: Bool
     var customDate: Date?
+    /// Per-rule fire time override. nil = inherit from the item's default / global.
+    var fireHour: Int?
+    var fireMinute: Int?
 
     init(id: UUID = UUID(),
          offsetType: NotificationOffsetType = .daysBefore,
          value: Int = 1,
          isCritical: Bool = false,
-         customDate: Date? = nil) {
+         customDate: Date? = nil,
+         fireHour: Int? = nil,
+         fireMinute: Int? = nil) {
         self.id = id
         self.offsetType = offsetType
         self.value = value
         self.isCritical = isCritical
         self.customDate = customDate
+        self.fireHour = fireHour
+        self.fireMinute = fireMinute
     }
 
     init(rule: NotificationRule) {
         self.id = rule.id
         self.offsetType = rule.offsetType
         self.value = rule.value
-        self.isCritical = false
+        self.isCritical = rule.isCritical
         self.customDate = rule.customDate
+        self.fireHour = rule.fireHour
+        self.fireMinute = rule.fireMinute
     }
 
     /// Builds a fresh managed rule from this draft (used when creating a new item).
     func makeRule() -> NotificationRule {
-        NotificationRule(id: id, offsetType: offsetType, value: value, isCritical: false, customDate: customDate)
+        NotificationRule(id: id, offsetType: offsetType, value: value, isCritical: isCritical,
+                         customDate: customDate, fireHour: fireHour, fireMinute: fireMinute)
     }
 }
 
 struct RemindersEditorView: View {
     @Binding var notifications: [NotificationRuleDraft]
     let baseDate: Date
+    /// The item's default reminder time (nil = inherit global) — used for the resolved-fire caption.
+    var itemHour: Int? = nil
+    var itemMinute: Int? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -58,12 +71,19 @@ struct RemindersEditorView: View {
                 if index > 0 {
                     Divider().padding(.leading, 16)
                 }
-                ReminderRuleRow(rule: notifications[index], baseDate: baseDate) {
-                    let i = index
-                    withAnimation { _ = notifications.remove(at: i) }
-                } onUpdate: { updated in
-                    applyUpdate(updated, at: index)
-                }
+                ReminderRuleRow(
+                    rule: notifications[index],
+                    baseDate: baseDate,
+                    itemHour: itemHour,
+                    itemMinute: itemMinute,
+                    onDelete: {
+                        let i = index
+                        withAnimation { _ = notifications.remove(at: i) }
+                    },
+                    onUpdate: { updated in
+                        applyUpdate(updated, at: index)
+                    }
+                )
             }
         }
     }
@@ -144,46 +164,134 @@ struct RemindersEditorView: View {
 struct ReminderRuleRow: View {
     let rule: NotificationRuleDraft
     let baseDate: Date
+    let itemHour: Int?
+    let itemMinute: Int?
     let onDelete: () -> Void
     let onUpdate: (NotificationRuleDraft) -> Void
 
     @State private var offsetType: NotificationOffsetType
     @State private var value: Int
     @State private var customDate: Date
+    @State private var isCritical: Bool
+    @State private var timeOverrideOn: Bool
+    @State private var overrideTime: Date
 
     init(rule: NotificationRuleDraft,
          baseDate: Date,
+         itemHour: Int?,
+         itemMinute: Int?,
          onDelete: @escaping () -> Void,
          onUpdate: @escaping (NotificationRuleDraft) -> Void) {
         self.rule = rule
         self.baseDate = baseDate
+        self.itemHour = itemHour
+        self.itemMinute = itemMinute
         self.onDelete = onDelete
         self.onUpdate = onUpdate
         _offsetType = State(initialValue: rule.offsetType)
         _value = State(initialValue: rule.value)
         _customDate = State(initialValue: rule.customDate ?? baseDate)
+        _isCritical = State(initialValue: rule.isCritical)
+        _timeOverrideOn = State(initialValue: rule.fireHour != nil && rule.fireMinute != nil)
+        let h = rule.fireHour ?? 9
+        let m = rule.fireMinute ?? 0
+        _overrideTime = State(initialValue:
+            Calendar.current.date(bySettingHour: h, minute: m, second: 0, of: Date()) ?? Date())
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            if offsetType == .exactDate {
-                datePicker
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                if offsetType == .exactDate {
+                    datePicker
+                        .fixedSize()
+                } else if offsetType == .onDay {
+                    typePicker
+                        .fixedSize()
+                } else {
+                    valueStepper
+                        .fixedSize()
+                    typePicker
+                        .fixedSize()
+                }
+                Spacer(minLength: 0)
+                criticalButton
                     .fixedSize()
-            } else if offsetType == .onDay {
-                typePicker
+                timeOverrideButton
                     .fixedSize()
-            } else {
-                valueStepper
-                    .fixedSize()
-                typePicker
+                deleteButton
                     .fixedSize()
             }
-            Spacer(minLength: 0)
-            deleteButton
-                .fixedSize()
+            if timeOverrideOn {
+                HStack(spacing: 8) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Text("At")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                    QuarterHourTimePicker(date: $overrideTime)
+                        .onChange(of: overrideTime) { _, _ in propagate() }
+                    Spacer(minLength: 0)
+                }
+            }
+            resolvedCaption
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    private var criticalButton: some View {
+        Button {
+            Haptics.fire(.selectionChanged)
+            isCritical.toggle()
+            propagate()
+        } label: {
+            Image(systemName: isCritical ? "bell.badge.fill" : "bell")
+                .font(.system(size: 14))
+                .foregroundStyle(isCritical ? Color.orange : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(isCritical ? "Critical (bypasses quiet hours)" : "Standard")
+    }
+
+    private var timeOverrideButton: some View {
+        Button {
+            Haptics.fire(.selectionChanged)
+            timeOverrideOn.toggle()
+            propagate()
+        } label: {
+            Image(systemName: timeOverrideOn ? "clock.fill" : "clock")
+                .font(.system(size: 14))
+                .foregroundStyle(timeOverrideOn ? Color.blue : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .help("Set a specific time for this reminder")
+    }
+
+    /// Live "→ Mon 3 Aug, 9:00 am" caption using the same resolution logic the scheduler uses.
+    @ViewBuilder
+    private var resolvedCaption: some View {
+        if let fire = NotificationManager.resolvedFireMoment(
+            occurrenceDate: baseDate,
+            offsetType: offsetType,
+            value: value,
+            customDate: offsetType == .exactDate ? customDate : nil,
+            isCritical: isCritical,
+            ruleHour: timeOverrideOn ? overrideMinutes.hour : nil,
+            ruleMinute: timeOverrideOn ? overrideMinutes.minute : nil,
+            itemHour: itemHour,
+            itemMinute: itemMinute
+        ) {
+            Text("→ \(fire.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute()))")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var overrideMinutes: (hour: Int, minute: Int) {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: overrideTime)
+        return (c.hour ?? 9, c.minute ?? 0)
     }
 
     private var valueStepper: some View {
@@ -274,7 +382,11 @@ struct ReminderRuleRow: View {
 
     private func propagate() {
         let date = offsetType == .exactDate ? customDate : nil
-        onUpdate(NotificationRuleDraft(id: rule.id, offsetType: offsetType, value: value, isCritical: false, customDate: date))
+        let fh = timeOverrideOn ? overrideMinutes.hour : nil
+        let fm = timeOverrideOn ? overrideMinutes.minute : nil
+        onUpdate(NotificationRuleDraft(id: rule.id, offsetType: offsetType, value: value,
+                                       isCritical: isCritical, customDate: date,
+                                       fireHour: fh, fireMinute: fm))
     }
 }
 

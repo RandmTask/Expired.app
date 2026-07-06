@@ -84,6 +84,9 @@ struct AddEditSubscriptionView: View {
 
     // Reminders & notes
     @State private var notifications: [NotificationRuleDraft] = []
+    // Per-item default reminder time (nil = inherit global setting).
+    @State private var reminderTimeOverrideOn = false
+    @State private var reminderTime: Date = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
     @State private var notes = ""
 
     // Account field sheets
@@ -1180,14 +1183,49 @@ struct AddEditSubscriptionView: View {
 
     // MARK: - Reminders section
 
+    private var reminderTimeComponents: (hour: Int, minute: Int)? {
+        guard reminderTimeOverrideOn else { return nil }
+        let c = Calendar.current.dateComponents([.hour, .minute], from: reminderTime)
+        return (c.hour ?? 9, c.minute ?? 0)
+    }
+
     private var remindersSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Reminders")
             FormCard {
-                RemindersEditorView(
-                    notifications: $notifications,
-                    baseDate: itemType == .document ? expiryDate : statusDate
-                )
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("Default time")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Toggle("", isOn: $reminderTimeOverrideOn)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .tint(.blue)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    if reminderTimeOverrideOn {
+                        FormDivider()
+                        HStack {
+                            Text("Time")
+                                .font(.system(size: 16))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            QuarterHourTimePicker(date: $reminderTime)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                    }
+                    FormDivider()
+                    RemindersEditorView(
+                        notifications: $notifications,
+                        baseDate: itemType == .document ? expiryDate : statusDate,
+                        itemHour: reminderTimeComponents?.hour,
+                        itemMinute: reminderTimeComponents?.minute
+                    )
+                }
             }
         }
     }
@@ -1577,6 +1615,10 @@ struct AddEditSubscriptionView: View {
         iconData = item.iconData
         iconSource = item.iconSource
         notifications = item.notificationsList.map { NotificationRuleDraft(rule: $0) }
+        if let rh = item.reminderHour, let rm = item.reminderMinute {
+            reminderTimeOverrideOn = true
+            reminderTime = Calendar.current.date(bySettingHour: rh, minute: rm, second: 0, of: Date()) ?? reminderTime
+        }
         selectedCategoryRaw = item.categoryRaw
         if let sd = item.startDate {
             startDate = sd
@@ -1606,8 +1648,10 @@ struct AddEditSubscriptionView: View {
             if let rule = existingByID[draft.id] {
                 rule.offsetType = draft.offsetType
                 rule.value = draft.value
-                rule.isCritical = false
+                rule.isCritical = draft.isCritical
                 rule.customDate = draft.customDate
+                rule.fireHour = draft.fireHour
+                rule.fireMinute = draft.fireMinute
                 result.append(rule)
             } else {
                 result.append(draft.makeRule())
@@ -1638,7 +1682,6 @@ struct AddEditSubscriptionView: View {
         let resolvedIconSource: IconSource = (iconData != nil) ? iconSource : .system
         let isDoc = itemType == .document
 
-        let savedItem: SubscriptionItem
         if let existing = item {
             existing.itemType = itemType
             existing.name = trimmedName
@@ -1664,8 +1707,9 @@ struct AddEditSubscriptionView: View {
             reconcileNotifications(into: existing)
             existing.categoryRaw = isDoc ? nil : selectedCategoryRaw
             existing.startDate = isDoc ? nil : startDate
+            existing.reminderHour = reminderTimeComponents?.hour
+            existing.reminderMinute = reminderTimeComponents?.minute
             existing.updatedAt = Date()
-            savedItem = existing
         } else {
             let newItem = SubscriptionItem(
                 itemType: itemType,
@@ -1689,16 +1733,18 @@ struct AddEditSubscriptionView: View {
                 documentNumber: isDoc ? trimmedDocNum.isEmpty ? nil : trimmedDocNum : nil,
                 validFromDate: isDoc ? validFromDate : nil,
                 startDate: isDoc ? nil : startDate,
+                reminderHour: reminderTimeComponents?.hour,
+                reminderMinute: reminderTimeComponents?.minute,
                 notifications: notifications.map { $0.makeRule() }
             )
             newItem.categoryRaw = isDoc ? nil : selectedCategoryRaw
             newItem.iconData = iconData
             modelContext.insert(newItem)
-            savedItem = newItem
         }
         // Persist before scheduling so CloudKit export and notifications act on saved data.
         try? modelContext.save()
-        Task { await NotificationManager.shared.reschedule(for: savedItem) }
+        let ctx = modelContext
+        Task { await NotificationManager.shared.refreshAll(context: ctx) }
         Haptics.fire(.success)
         dismiss()
     }
@@ -1706,9 +1752,10 @@ struct AddEditSubscriptionView: View {
     private func deleteAndDismiss() {
         Haptics.fire(.error)
         if let item {
-            NotificationManager.shared.removeAll(for: item)
             modelContext.delete(item)
             try? modelContext.save()
+            let ctx = modelContext
+            Task { await NotificationManager.shared.refreshAll(context: ctx) }
         }
         dismiss()
     }
@@ -1719,6 +1766,10 @@ struct AddEditSubscriptionView: View {
             item.isArchived = !item.isArchived
             item.updatedAt = Date()
             try? modelContext.save()
+            // Archiving must reschedule — archived items are dropped from the computed set,
+            // which clears their stale pending notifications for free.
+            let ctx = modelContext
+            Task { await NotificationManager.shared.refreshAll(context: ctx) }
         }
         dismiss()
     }
@@ -2516,13 +2567,19 @@ enum CurrencyInfo {
         noSubunits.contains(code) ? "0" : "0.00"
     }
 
+    /// Live rates if fetched, otherwise the hardcoded snapshot.
+    static var effectiveRates: [String: Double] {
+        let live = CurrencyRateService.shared.rates
+        return live.isEmpty ? ratesFromUSD : live
+    }
+
     /// Converts `amount` in `fromCode` to `toCode` using the USD-pivot rates.
+    /// Prefers live rates from Supabase; falls back to the hardcoded snapshot.
     /// Returns the original amount unchanged if either rate is unknown.
     static func convert(_ amount: Double, from fromCode: String, to toCode: String) -> Double {
         guard fromCode != toCode else { return amount }
-        guard let fromRate = ratesFromUSD[fromCode],
-              let toRate   = ratesFromUSD[toCode],
-              fromRate > 0 else { return amount }
+        let r = effectiveRates
+        guard let fromRate = r[fromCode], let toRate = r[toCode], fromRate > 0 else { return amount }
         // amount / fromRate = USD amount; * toRate = target currency
         return (amount / fromRate) * toRate
     }

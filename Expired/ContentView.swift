@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
+import UserNotifications
 import RevenueCat
 #if os(iOS)
 import UIKit
@@ -64,6 +65,7 @@ struct ContentView: View {
         }
 #if os(iOS)
         .tabBarMinimizeBehavior(.onScrollDown)
+        .expiredOnboardingGate()
 #endif
     }
 }
@@ -1370,8 +1372,7 @@ struct InsightsView: View {
                         }
                     }
 
-                    costCard
-                    countsRow
+                    compactStatsGrid
                     if !costBreakdownItems.isEmpty { costBreakdown }
                     Spacer(minLength: 40)
                 }
@@ -1386,23 +1387,14 @@ struct InsightsView: View {
         }
     }
 
-    private var costCard: some View {
-        GlassInsightCard(
-            title: costPeriod.rawValue + " Cost",
-            value: CurrencyInfo.format(displayTotal, code: displayCurrency),
-            icon: costPeriodIcon,
-            color: .blue
-        )
-        .padding(.horizontal)
-    }
-
-    private var countsRow: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            GlassInsightCard(title: "Active", value: "\(activeCount)", icon: "checkmark.seal.fill", color: .blue)
-            GlassInsightCard(title: "Auto-Renewing", value: "\(autoRenewCount)", icon: "arrow.clockwise", color: .green)
-            GlassInsightCard(title: "Free Trials", value: "\(trialCount)", icon: "gift.fill", color: .purple)
-            GlassInsightCard(title: "Manual", value: "\(manualCount)", icon: "hand.tap.fill", color: .indigo)
-            GlassInsightCard(title: "Cancelled", value: "\(cancelledCount)", icon: "xmark.circle", color: .red)
+    private var compactStatsGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            CompactInsightTile(title: costPeriod.rawValue + " Cost", value: CurrencyInfo.format(displayTotal, code: displayCurrency), icon: costPeriodIcon, color: .blue)
+            CompactInsightTile(title: "Active", value: "\(activeCount)", icon: "checkmark.seal.fill", color: .blue)
+            CompactInsightTile(title: "Auto-Renewing", value: "\(autoRenewCount)", icon: "arrow.clockwise", color: .green)
+            CompactInsightTile(title: "Free Trials", value: "\(trialCount)", icon: "gift.fill", color: .purple)
+            CompactInsightTile(title: "Manual", value: "\(manualCount)", icon: "hand.tap.fill", color: .indigo)
+            CompactInsightTile(title: "Cancelled", value: "\(cancelledCount)", icon: "xmark.circle", color: .red)
         }
         .padding(.horizontal)
     }
@@ -1489,30 +1481,43 @@ struct InsightsView: View {
     }
 }
 
-struct GlassInsightCard: View {
+/// Compact AutoSleep-style stat tile: tinted icon chip, big value, small label,
+/// subtle color-tinted background. Sized for a dense 3-column grid.
+struct CompactInsightTile: View {
     let title: String
     let value: String
     let icon: String
     let color: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(color)
-                .frame(height: 22, alignment: .center)
+        VStack(spacing: 7) {
+            ZStack {
+                Circle()
+                    .fill(color.opacity(0.16))
+                    .frame(width: 38, height: 38)
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(color)
+            }
             Text(value)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .font(.system(size: 19, weight: .bold, design: .rounded))
                 .foregroundStyle(.primary)
-                .minimumScaleFactor(0.6)
+                .minimumScaleFactor(0.5)
                 .lineLimit(1)
             Text(title)
-                .font(.system(size: 12))
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(in: .rect(cornerRadius: 20))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 6)
+        .background(color.opacity(0.07), in: RoundedRectangle(cornerRadius: 18))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(color.opacity(0.10), lineWidth: 1)
+        )
     }
 }
 
@@ -1607,9 +1612,10 @@ struct ArchiveView: View {
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
                                 Haptics.fire(.error)
-                                NotificationManager.shared.removeAll(for: item)
                                 modelContext.delete(item)
                                 try? modelContext.save()
+                                let ctx = modelContext
+                                Task { await NotificationManager.shared.refreshAll(context: ctx) }
                             } label: {
                                 Label("Delete", systemImage: "trash")
                             }
@@ -1622,6 +1628,8 @@ struct ArchiveView: View {
                                     item.updatedAt = Date()
                                     try? modelContext.save()
                                 }
+                                let ctx = modelContext
+                                Task { await NotificationManager.shared.refreshAll(context: ctx) }
                             } label: {
                                 Label("Restore", systemImage: "arrow.uturn.left")
                             }
@@ -1643,6 +1651,123 @@ struct ArchiveView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(groupedBackground.ignoresSafeArea())
+    }
+}
+
+// MARK: - Scheduled Notifications View
+
+/// Reliability preview + debugger: shows the computed upcoming notifications grouped by day,
+/// and a validation row comparing the computed count against what iOS actually has pending.
+struct ScheduledNotificationsView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query private var allItems: [SubscriptionItem]
+
+    @State private var moments: [FireMoment] = []
+    @State private var pendingCount: Int = 0
+
+    private var capped: [FireMoment] {
+        Array(moments.sorted { $0.fireDate < $1.fireDate }.prefix(NotificationManager.scheduleCap))
+    }
+
+    private var grouped: [(day: Date, moments: [FireMoment])] {
+        let cal = Calendar.current
+        let byDay = Dictionary(grouping: capped) { cal.startOfDay(for: $0.fireDate) }
+        return byDay.keys.sorted().map { ($0, byDay[$0]!.sorted { $0.fireDate < $1.fireDate }) }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                validationRow
+            }
+
+            ForEach(grouped, id: \.day) { group in
+                Section {
+                    ForEach(group.moments) { moment in
+                        HStack(spacing: 10) {
+                            Image(systemName: moment.itemType.icon)
+                                .font(.system(size: 15))
+                                .frame(width: 22, alignment: .center)
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(moment.itemName)
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(.primary)
+                                Text(moment.fireDate.formatted(.dateTime.hour().minute()))
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if moment.isCritical {
+                                Image(systemName: "bell.badge.fill")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    }
+                } header: {
+                    Text(group.day.formatted(.dateTime.weekday(.wide).day().month(.wide)))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .tracking(0.4)
+                        .textCase(nil)
+                }
+            }
+
+            if capped.isEmpty {
+                Section {
+                    Text("No upcoming reminders scheduled.")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+#if os(iOS)
+        .listStyle(.insetGrouped)
+#endif
+        .scrollContentBackground(.hidden)
+        .background(groupedBackground.ignoresSafeArea())
+        .navigationTitle("Scheduled")
+        .largeNavigationTitle()
+        .task { await reload() }
+    }
+
+    @ViewBuilder
+    private var validationRow: some View {
+        let computed = capped.count
+        let matches = computed == pendingCount
+        HStack(spacing: 10) {
+            Image(systemName: matches ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 16))
+                .foregroundStyle(matches ? Color.green : Color.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(matches ? "Schedule in sync" : "Schedule mismatch")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("\(computed) computed · \(pendingCount) pending with iOS")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                Haptics.fire(.light)
+                Task {
+                    await NotificationManager.shared.refreshAll(context: modelContext)
+                    await reload()
+                }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.blue)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func reload() async {
+        moments = NotificationManager.shared.computeAllFireMoments(items: allItems)
+        let pending = await UNUserNotificationCenter.current().pendingNotificationRequests()
+        pendingCount = pending.filter { $0.identifier.hasPrefix(NotificationManager.identifierPrefix) }.count
     }
 }
 
@@ -2357,7 +2482,6 @@ extension View {
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PurchaseManager.self) private var purchaseManager
-    @EnvironmentObject private var cloudKitDebug: CloudKitDebugStore
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
     @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
@@ -2372,6 +2496,9 @@ struct SettingsView: View {
     @AppStorage("appearanceMode") private var appearanceMode = 0
     @AppStorage("notificationHour")   private var notificationHour: Int = 9
     @AppStorage("notificationMinute") private var notificationMinute: Int = 0
+    @AppStorage("quietHoursEnabled") private var quietHoursEnabled = false
+    @AppStorage("quietHoursStartMinutes") private var quietStartMinutes: Int = 22 * 60
+    @AppStorage("quietHoursEndMinutes")   private var quietEndMinutes: Int = 8 * 60
     @State private var showRestartAlert = false
     @State private var showCurrencyPicker = false
     @State private var isSyncing = false
@@ -2401,21 +2528,60 @@ struct SettingsView: View {
         ) ?? Date()
     }
 
-    /// Writes notification time to both @AppStorage (local) and iCloud KV store (cross-device).
+    private func date(fromMinutes minutes: Int) -> Date {
+        Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date()
+    }
+
+    private func minutes(from date: Date) -> Int {
+        let snapped = QuarterHourTimePicker.snap(date)
+        let c = Calendar.current.dateComponents([.hour, .minute], from: snapped)
+        return (c.hour ?? 0) * 60 + (c.minute ?? 0)
+    }
+
+    /// Binding for the quiet-hours start time. Writes through both stores + refreshes.
+    private var quietStartBinding: Binding<Date> {
+        Binding(
+            get: { date(fromMinutes: quietStartMinutes) },
+            set: { newDate in
+                quietStartMinutes = minutes(from: newDate)
+                NotificationTimeSettings.writeInt(quietStartMinutes, forKey: NotificationTimeSettings.quietStartKey)
+                Task { await NotificationManager.shared.refreshAll(context: modelContext) }
+            }
+        )
+    }
+
+    private var quietEndBinding: Binding<Date> {
+        Binding(
+            get: { date(fromMinutes: quietEndMinutes) },
+            set: { newDate in
+                quietEndMinutes = minutes(from: newDate)
+                NotificationTimeSettings.writeInt(quietEndMinutes, forKey: NotificationTimeSettings.quietEndKey)
+                Task { await NotificationManager.shared.refreshAll(context: modelContext) }
+            }
+        )
+    }
+
+    private func setQuietHoursEnabled(_ on: Bool) {
+        quietHoursEnabled = on
+        NotificationTimeSettings.writeBool(on, forKey: NotificationTimeSettings.quietEnabledKey)
+        Task { await NotificationManager.shared.refreshAll(context: modelContext) }
+    }
+
+    /// Writes notification time to both @AppStorage (local) and iCloud KV store (cross-device),
+    /// via the shared settings accessor so every read path (including background refreshes) agrees.
     private func saveNotificationTime(_ date: Date) {
-        let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+        // Snap to 15-minute intervals for parity with the per-rule/per-item pickers.
+        let snapped = QuarterHourTimePicker.snap(date)
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: snapped)
         let hour   = comps.hour   ?? 9
         let minute = comps.minute ?? 0
         let changed = notificationHour != hour || notificationMinute != minute
         notificationHour   = hour
         notificationMinute = minute
-        let kv = NSUbiquitousKeyValueStore.default
-        kv.set(Int64(hour),   forKey: Self.kvHourKey)
-        kv.set(Int64(minute), forKey: Self.kvMinuteKey)
-        kv.synchronize()
+        NotificationTimeSettings.writeInt(hour, forKey: NotificationTimeSettings.hourKey)
+        NotificationTimeSettings.writeInt(minute, forKey: NotificationTimeSettings.minuteKey)
         if changed {
-            let items = allItems.filter { !$0.isArchived }
-            Task { await NotificationManager.shared.rescheduleAll(items) }
+            Task { await NotificationManager.shared.refreshAll(context: modelContext) }
         }
     }
 
@@ -2429,8 +2595,7 @@ struct SettingsView: View {
         notificationHour = hour
         notificationMinute = minute
         if changed {
-            let items = allItems.filter { !$0.isArchived }
-            Task { await NotificationManager.shared.rescheduleAll(items) }
+            Task { await NotificationManager.shared.refreshAll(context: modelContext) }
         }
     }
 
@@ -2480,6 +2645,10 @@ struct SettingsView: View {
     private var screenshotAIProvider: ScreenshotAIProvider {
         get { ScreenshotAIProvider(rawValue: screenshotAIProviderRaw) ?? .automatic }
         nonmutating set { screenshotAIProviderRaw = newValue.rawValue }
+    }
+
+    private var displayedScreenshotAIProviderName: String {
+        purchaseManager.isPremium ? screenshotAIProvider.displayName : ScreenshotAIProvider.automatic.displayName
     }
 
     // MARK: - Live model picker
@@ -2631,6 +2800,26 @@ struct SettingsView: View {
         showExportWarning = true
     }
 
+    private func beginImportBackup() {
+        guard purchaseManager.isPremium else {
+            Haptics.fire(.warning)
+            showPaywall = true
+            return
+        }
+        Haptics.fire(.light)
+        showingImporter = true
+    }
+
+    private func setScreenshotAIProvider(_ provider: ScreenshotAIProvider) {
+        guard purchaseManager.isPremium else {
+            Haptics.fire(.warning)
+            showPaywall = true
+            return
+        }
+        Haptics.fire(.selectionChanged)
+        screenshotAIProviderRaw = provider.rawValue
+    }
+
     // MARK: - Backup (export / import)
 
     private var lastAutoBackupText: String {
@@ -2665,8 +2854,7 @@ struct SettingsView: View {
             let counts = BackupService.merge(file, into: modelContext, existing: allItems)
             importResultMessage = "Imported \(counts.added) new, updated \(counts.updated)."
             Haptics.fire(.success)
-            let items = allItems
-            Task { await NotificationManager.shared.rescheduleAll(items) }
+            Task { await NotificationManager.shared.refreshAll(context: modelContext) }
         } catch {
             Haptics.fire(.error)
             backupErrorMessage = "Could not read backup: \(error.localizedDescription)"
@@ -2823,25 +3011,26 @@ struct SettingsView: View {
                     settingsRow {
                         macSettingsLabel("Analyzer", icon: "sparkles")
                             .onLongPressGesture { showDebugAIFailureSimulator = true }
+                        if !purchaseManager.isPremium { ProChip() }
                         Spacer()
                         Menu {
                             ForEach(ScreenshotAIProvider.allCases) { provider in
                                 Button {
-                                    Haptics.fire(.selectionChanged)
-                                    screenshotAIProviderRaw = provider.rawValue
+                                    setScreenshotAIProvider(provider)
                                 } label: {
                                     macMenuOptionTitle(provider.displayName, isSelected: screenshotAIProvider == provider)
                                 }
                             }
                         } label: {
-                            macMenuValueLabel(screenshotAIProvider.displayName)
+                            macMenuValueLabel(displayedScreenshotAIProviderName)
                         }
                         .menuStyle(.borderlessButton)
                         .menuIndicator(.hidden)
                         .fixedSize()
+                        .disabled(!purchaseManager.isPremium)
                     }
 
-                    if screenshotAIProvider.requiresAPIKey {
+                    if purchaseManager.isPremium && screenshotAIProvider.requiresAPIKey {
                         FormDivider()
 
                         settingsRow {
@@ -2888,14 +3077,49 @@ struct SettingsView: View {
                     settingsRow {
                         macSettingsLabel("Reminder", icon: "clock")
                         Spacer()
-                        DatePicker(
-                            "",
-                            selection: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }),
-                            displayedComponents: .hourAndMinute
-                        )
-                        .labelsHidden()
-                        .datePickerStyle(.field)
+                        QuarterHourTimePicker(date: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }))
                     }
+
+                    FormDivider()
+
+                    settingsRow {
+                        macSettingsLabel("Quiet Hours", icon: "moon.fill")
+                        Spacer()
+                        Toggle("", isOn: Binding(get: { quietHoursEnabled }, set: { setQuietHoursEnabled($0) }))
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .tint(.blue)
+                    }
+
+                    if quietHoursEnabled {
+                        FormDivider()
+                        settingsRow {
+                            macSettingsLabel("From", icon: "bed.double.fill")
+                            Spacer()
+                            QuarterHourTimePicker(date: quietStartBinding)
+                        }
+                        FormDivider()
+                        settingsRow {
+                            macSettingsLabel("To", icon: "sun.max.fill")
+                            Spacer()
+                            QuarterHourTimePicker(date: quietEndBinding)
+                        }
+                    }
+
+                    FormDivider()
+
+                    NavigationLink {
+                        ScheduledNotificationsView()
+                    } label: {
+                        settingsRow {
+                            macSettingsLabel("Scheduled Notifications", icon: "list.bullet.rectangle")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 // DATA
@@ -3017,113 +3241,23 @@ struct SettingsView: View {
 
                     Button { beginExport() } label: {
                         settingsRow {
-                            macSettingsLabel("Export Backup", icon: purchaseManager.isPremium ? "square.and.arrow.up" : "lock.fill")
+                            macSettingsLabel("Export Backup", icon: "square.and.arrow.up")
                                 .foregroundStyle(.blue)
+                            ProChip()
                         }
                     }
                     .buttonStyle(.plain)
 
                     FormDivider()
 
-                    Button {
-                        Haptics.fire(.light)
-                        showingImporter = true
-                    } label: {
+                    Button { beginImportBackup() } label: {
                         settingsRow {
                             macSettingsLabel("Import Backup", icon: "square.and.arrow.down")
                                 .foregroundStyle(.blue)
+                            ProChip()
                         }
                     }
                     .buttonStyle(.plain)
-                }
-
-                // CLOUDKIT DEBUG
-                settingsSection(title: "CloudKit Debug", icon: "wave.3.right") {
-                    settingsRow {
-                        macSettingsLabel("Account", icon: "person.crop.circle")
-                        Spacer()
-                        Text(cloudKitDebug.accountStatusText)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    }
-
-                    FormDivider()
-
-                    settingsRow {
-                        macSettingsLabel("User Record", icon: "record.circle")
-                        Spacer()
-                        Text(cloudKitDebug.userRecordIDText)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-
-                    FormDivider()
-
-                    settingsRow {
-                        macSettingsLabel("Latest", icon: "chart.line.uptrend.xyaxis")
-                        Spacer()
-                        Text(cloudKitDebug.storeSummaryText)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    }
-
-                    FormDivider()
-
-                    HStack(spacing: 10) {
-                        Button {
-                            Haptics.fire(.light)
-                            refreshCloudKitDiagnostics()
-                        } label: {
-                            Label("Refresh", systemImage: "arrow.clockwise")
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                        Button {
-                            Haptics.fire(.success)
-                            copyCloudKitDiagnostics()
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        .buttonStyle(.bordered)
-                        .help("Copy CloudKit debug log")
-
-                        Button(role: .destructive) {
-                            Haptics.fire(.error)
-                            cloudKitDebug.clear()
-                        } label: {
-                            Label("Clear", systemImage: "trash")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    if !cloudKitDebug.entries.isEmpty {
-                        FormDivider()
-
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(cloudKitDebug.entries.prefix(8)) { entry in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack {
-                                        Text(entry.category)
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                        Text(entry.date.formatted(date: .omitted, time: .shortened))
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                    Text(entry.message)
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(.primary)
-                                        .textSelection(.enabled)
-                                }
-                                if entry.id != cloudKitDebug.entries.prefix(8).last?.id {
-                                    Divider().opacity(0.5)
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
                 }
 
                 Spacer(minLength: 40)
@@ -3394,23 +3528,24 @@ struct SettingsView: View {
                     rowIcon("sparkles")
                     Text("Analyzer").foregroundStyle(.primary)
                         .onLongPressGesture { showDebugAIFailureSimulator = true }
+                    if !purchaseManager.isPremium { ProChip() }
                     Spacer()
                     Menu {
                         ForEach(ScreenshotAIProvider.allCases) { provider in
                             Button {
-                                Haptics.fire(.selectionChanged)
-                                screenshotAIProviderRaw = provider.rawValue
+                                setScreenshotAIProvider(provider)
                             } label: {
                                 macMenuOptionTitle(provider.displayName, isSelected: screenshotAIProvider == provider)
                             }
                         }
                     } label: {
-                        macMenuValueLabel(screenshotAIProvider.displayName)
+                        macMenuValueLabel(displayedScreenshotAIProviderName)
                     }
                     .buttonStyle(.plain)
+                    .disabled(!purchaseManager.isPremium)
                 }
 
-                if screenshotAIProvider.requiresAPIKey {
+                if purchaseManager.isPremium && screenshotAIProvider.requiresAPIKey {
                     HStack {
                         rowIcon("cpu")
                         Text("Model").foregroundStyle(.primary)
@@ -3452,20 +3587,52 @@ struct SettingsView: View {
                     rowIcon("clock")
                     Text("Reminder").foregroundStyle(.primary)
                     Spacer()
-                    DatePicker(
-                        "",
-                        selection: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }),
-                        displayedComponents: .hourAndMinute
-                    )
-                    .labelsHidden()
-                    .datePickerStyle(.compact)
-                    .fixedSize()
+                    QuarterHourTimePicker(date: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }))
                 }
                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+
+                HStack {
+                    rowIcon("moon.fill")
+                    Text("Quiet Hours").foregroundStyle(.primary)
+                    Spacer()
+                    Toggle("", isOn: Binding(get: { quietHoursEnabled }, set: { setQuietHoursEnabled($0) }))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(.blue)
+                }
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+
+                if quietHoursEnabled {
+                    HStack {
+                        rowIcon("bed.double.fill")
+                        Text("From").foregroundStyle(.primary)
+                        Spacer()
+                        QuarterHourTimePicker(date: quietStartBinding)
+                    }
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                    HStack {
+                        rowIcon("sun.max.fill")
+                        Text("To").foregroundStyle(.primary)
+                        Spacer()
+                        QuarterHourTimePicker(date: quietEndBinding)
+                    }
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                }
+
+                NavigationLink {
+                    ScheduledNotificationsView()
+                } label: {
+                    HStack {
+                        rowIcon("list.bullet.rectangle")
+                        Text("Scheduled Notifications").foregroundStyle(.primary)
+                    }
+                }
             } header: {
                 sectionHeader("NOTIFICATIONS")
             } footer: {
-                Text("Reminders will be delivered at this time on the scheduled day.")
+                Text(quietHoursEnabled
+                     ? "Non-critical reminders inside quiet hours are delivered at the window's end. Critical reminders always fire on time."
+                     : "Reminders will be delivered at this time on the scheduled day.")
             }
 
             // MARK: Data
@@ -3545,19 +3712,18 @@ struct SettingsView: View {
 
                 Button { beginExport() } label: {
                     HStack {
-                        rowIcon(purchaseManager.isPremium ? "square.and.arrow.up" : "lock.fill", color: .blue)
+                        rowIcon("square.and.arrow.up", color: .blue)
                         Text("Export Backup").foregroundStyle(.blue)
+                        ProChip()
                     }
                 }
                 .buttonStyle(.plain)
 
-                Button {
-                    Haptics.fire(.light)
-                    showingImporter = true
-                } label: {
+                Button { beginImportBackup() } label: {
                     HStack {
                         rowIcon("square.and.arrow.down", color: .blue)
                         Text("Import Backup").foregroundStyle(.blue)
+                        ProChip()
                     }
                 }
                 .buttonStyle(.plain)
@@ -3565,92 +3731,6 @@ struct SettingsView: View {
                 sectionHeader("BACKUP & SYNC")
             } footer: {
                 Text("iCloud Sync keeps data across all your devices — restart the app after changing. Daily snapshots save automatically to iCloud Drive (skipped if nothing changed). Export writes an unencrypted JSON file (icons excluded); import merges by item, never deleting. Keep the file private.")
-            }
-
-            // MARK: CloudKit Debug (development panel — kept at bottom)
-            Section {
-                HStack {
-                    rowIcon("person.crop.circle")
-                    Text("Account").foregroundStyle(.primary)
-                    Spacer()
-                    Text(cloudKitDebug.accountStatusText)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.trailing)
-                }
-
-                HStack {
-                    rowIcon("record.circle")
-                    Text("User Record").foregroundStyle(.primary)
-                    Spacer()
-                    Text(cloudKitDebug.userRecordIDText)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-
-                HStack {
-                    rowIcon("chart.line.uptrend.xyaxis")
-                    Text("Latest").foregroundStyle(.primary)
-                    Spacer()
-                    Text(cloudKitDebug.storeSummaryText)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.trailing)
-                }
-
-                HStack(spacing: 10) {
-                    Button {
-                        Haptics.fire(.light)
-                        refreshCloudKitDiagnostics()
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    Button {
-                        Haptics.fire(.success)
-                        copyCloudKitDiagnostics()
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                    }
-                    .buttonStyle(.bordered)
-                    Button(role: .destructive) {
-                        Haptics.fire(.error)
-                        cloudKitDebug.clear()
-                    } label: {
-                        Label("Clear", systemImage: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .padding(.vertical, 2)
-
-                if !cloudKitDebug.entries.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(cloudKitDebug.entries.prefix(8)) { entry in
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text(entry.category)
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Text(entry.date.formatted(date: .omitted, time: .shortened))
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.tertiary)
-                                }
-                                Text(entry.message)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(.primary)
-                                    .textSelection(.enabled)
-                            }
-                            if entry.id != cloudKitDebug.entries.prefix(8).last?.id {
-                                Divider().opacity(0.4)
-                            }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-            } header: {
-                sectionHeader("CLOUDKIT DEBUG")
-            } footer: {
-                Text("Use this panel to confirm whether CloudKit is authenticating, importing, and exporting while TestFlight is open.")
             }
         }
         .navigationTitle("Settings")
@@ -3696,19 +3776,6 @@ struct SettingsView: View {
             }
             await MainActor.run { isRefreshingFavicons = false }
         }
-    }
-
-    private func refreshCloudKitDiagnostics() {
-        NotificationCenter.default.post(name: .expiredManualSync, object: nil)
-    }
-
-    private func copyCloudKitDiagnostics() {
-#if os(iOS)
-        UIPasteboard.general.string = cloudKitDebug.transcript()
-#elseif os(macOS)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(cloudKitDebug.transcript(), forType: .string)
-#endif
     }
 
 }

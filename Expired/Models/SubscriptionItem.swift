@@ -180,6 +180,9 @@ final class NotificationRule {
     var value: Int = 1
     var isCritical: Bool = false
     var customDate: Date? = nil
+    /// Per-rule fire time override. nil = inherit from the item's default time.
+    var fireHour: Int? = nil
+    var fireMinute: Int? = nil
 
     /// Back-reference required by CloudKit (inverse relationship).
     var item: SubscriptionItem?
@@ -189,13 +192,17 @@ final class NotificationRule {
         offsetType: NotificationOffsetType = .daysBefore,
         value: Int = 1,
         isCritical: Bool = false,
-        customDate: Date? = nil
+        customDate: Date? = nil,
+        fireHour: Int? = nil,
+        fireMinute: Int? = nil
     ) {
         self.id = id
         self.offsetTypeRaw = offsetType.rawValue
         self.value = value
         self.isCritical = isCritical
         self.customDate = customDate
+        self.fireHour = fireHour
+        self.fireMinute = fireMinute
     }
 
     var offsetType: NotificationOffsetType {
@@ -264,6 +271,9 @@ final class SubscriptionItem {
     /// User-specified subscription start date. Nil means unknown; use createdAt as fallback for cost calculations.
     var startDate: Date? = nil
     var isArchived: Bool = false
+    /// Per-item default reminder time. nil = inherit from the global setting.
+    var reminderHour: Int? = nil
+    var reminderMinute: Int? = nil
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -322,6 +332,8 @@ final class SubscriptionItem {
         validFromDate: Date? = nil,
         category: SubscriptionCategory? = nil,
         startDate: Date? = nil,
+        reminderHour: Int? = nil,
+        reminderMinute: Int? = nil,
         notifications: [NotificationRule] = []
     ) {
         self.id = id
@@ -349,6 +361,8 @@ final class SubscriptionItem {
         self.validFromDate = validFromDate
         self.categoryRaw = category?.rawValue
         self.startDate = startDate
+        self.reminderHour = reminderHour
+        self.reminderMinute = reminderMinute
         self.createdAt = Date()
         self.updatedAt = Date()
         self.notifications = notifications
@@ -459,6 +473,48 @@ final class SubscriptionItem {
         }
 
         return candidate
+    }
+
+    /// All renewal/expiry occurrences this item will hit between now and `monthsAhead`
+    /// months out. Recurring auto-renewing subscriptions expand into multiple dated
+    /// occurrences (so reminders keep firing even if the app isn't opened for months);
+    /// everything else (documents, trials, cancelled-but-active, one-off/custom billing,
+    /// manual renew) has a single relevant date and returns `[nextRelevantDate]`.
+    func upcomingRenewalOccurrences(
+        monthsAhead: Int = 12,
+        referenceDate: Date = Date(),
+        calendar: Calendar = .current
+    ) -> [Date] {
+        // Only true auto-renewing recurring subs expand; all others are single-occurrence.
+        guard itemType == .subscription,
+              isAutoRenew, !isCancelled,
+              trialEndDate == nil || (trialEndDate ?? .distantPast) <= referenceDate,
+              billingCycle != .oneOff, billingCycle != .custom,
+              !isPromotionalEndDate,
+              renewalStep != 0
+        else {
+            return [nextRelevantDate]
+        }
+
+        guard let horizon = calendar.date(byAdding: .month, value: monthsAhead, to: referenceDate) else {
+            return [nextRelevantDate]
+        }
+
+        var occurrences: [Date] = []
+        var candidate = nextLiveRenewalDate(referenceDate: referenceDate, calendar: calendar)
+        var safety = 0
+        while candidate <= horizon && safety < 600 {
+            occurrences.append(candidate)
+            guard let advanced = calendar.date(
+                byAdding: renewalComponent,
+                value: renewalStep,
+                to: candidate
+            ) else { break }
+            candidate = advanced
+            safety += 1
+        }
+
+        return occurrences.isEmpty ? [nextRelevantDate] : occurrences
     }
 
     private var renewalComponent: Calendar.Component {

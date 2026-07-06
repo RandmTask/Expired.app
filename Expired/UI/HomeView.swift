@@ -28,6 +28,7 @@ struct HomeView: View {
     @State private var importDrafts: [ScreenshotSubscriptionDraft] = []
     @State private var importWarning: String?
     @State private var importDebugLog: String?
+    @State private var importAnalyzerMessage: String?
     @State private var importError: String?
     @State private var isAnalyzingScreenshot = false
     @State private var analyzingMessageIndex = 0
@@ -165,6 +166,14 @@ struct HomeView: View {
         }
     }
 
+    /// True when the user has items, but nothing needs attention in the next 14 days —
+    /// only meaningful with no active filter/search, since a filtered "empty" state is
+    /// already covered by the "No {filter} subscriptions" message.
+    private var isAllCaughtUp: Bool {
+        !allItems.isEmpty && !isSearching && filterOption == .all &&
+        dueSoon.isEmpty && trialsEnding.isEmpty && urgentDocuments.isEmpty
+    }
+
     // Documents split by urgency
     private var urgentDocuments: [SubscriptionItem] {
         visibleDocuments.filter { $0.urgency == .critical || $0.urgency == .warning || $0.urgency == .expired }
@@ -242,10 +251,9 @@ struct HomeView: View {
                     }
                 }
             }
-            .navigationTitle("Subscriptions")
+            .navigationTitle("Expired")
             .largeNavigationTitle()
 #if os(iOS)
-            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search subscriptions")
             .photosPicker(isPresented: $showingPhotoImporter, selection: $importPhotoItems, maxSelectionCount: 0, matching: .images)
 #endif
             .toolbar {
@@ -267,6 +275,7 @@ struct HomeView: View {
                     drafts: $importDrafts,
                     warning: importWarning,
                     debugLog: importDebugLog,
+                    analyzerMessage: importAnalyzerMessage,
                     onApply: applyImportDrafts
                 )
             }
@@ -311,13 +320,11 @@ struct HomeView: View {
                 }
             }
 #endif
-            .alert("Screenshot Import", isPresented: Binding(
+            .sheet(isPresented: Binding(
                 get: { importError != nil },
                 set: { if !$0 { importError = nil } }
             )) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(importError ?? "")
+                ImportFailureSheet(message: importError ?? "")
             }
         }
     }
@@ -468,6 +475,13 @@ struct HomeView: View {
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
             }
 
+            if isAllCaughtUp {
+                AllCaughtUpCard()
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
+            }
+
             if filterOption != .all {
                 activeFilterChips
                     .listRowBackground(Color.clear)
@@ -500,6 +514,8 @@ struct HomeView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search subscriptions")
+        .searchToolbarBehavior(.minimize)
         .animation(.spring(duration: 0.3), value: isSearching)
         .scrollEdgeEffectStyle(.soft, for: .top)
 #else
@@ -515,6 +531,11 @@ struct HomeView: View {
                     .padding(.horizontal)
                     .padding(.top, 8)
                     .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                if isAllCaughtUp {
+                    AllCaughtUpCard()
+                        .padding(.horizontal)
                 }
 
                 if filterOption != .all || hideExpired {
@@ -727,6 +748,7 @@ struct HomeView: View {
             var allDrafts: [ScreenshotSubscriptionDraft] = []
             var warnings: [String] = []
             var debugDetails: [String] = []
+            var analyzerNames: [String] = []
 
             for data in images {
                 let result = try await ScreenshotImportAnalyzer.analyze(
@@ -734,6 +756,9 @@ struct HomeView: View {
                     existingItems: allItems
                 )
                 allDrafts.append(contentsOf: result.drafts)
+                if let analyzerName = result.analyzerName, !analyzerName.isEmpty {
+                    analyzerNames.append(analyzerName)
+                }
                 if let warning = result.warning, !warning.isEmpty {
                     warnings.append(warning)
                 }
@@ -755,6 +780,7 @@ struct HomeView: View {
             }
 
             importDrafts = uniqueDrafts
+            importAnalyzerMessage = analyzerToastMessage(from: analyzerNames)
             var warningText = warnings.isEmpty ? nil : Array(Set(warnings)).joined(separator: "\n")
             if consecutiveFallbacks >= ScreenshotAIHealthLog.alertThreshold {
                 let streakNote = "AI import failed again — that's \(consecutiveFallbacks) in a row. Check your connection, or look for an app update."
@@ -1018,7 +1044,7 @@ struct HomeView: View {
                 triggerScreenshotImport()
             } label: {
                 let locked = !purchaseManager.isPremium
-                Label(isAnalyzingScreenshot ? "Analyzing…" : "Import from Screenshot",
+                Label(isAnalyzingScreenshot ? "Analyzing…" : "Screenshot Import",
                       systemImage: isAnalyzingScreenshot ? "hourglass" : (locked ? "lock.fill" : "doc.viewfinder"))
             }
             .disabled(isAnalyzingScreenshot)
@@ -1318,6 +1344,10 @@ struct HomeView: View {
                 } label: {
                     Label("Delete", systemImage: "trash")
                 }
+            } preview: {
+                SubscriptionRowView(item: item)
+                    .frame(width: UIScreen.main.bounds.width - 32)
+                    .background(groupedBackground)
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 Button(role: .destructive) { deleteItem(item) } label: {
@@ -1341,6 +1371,12 @@ struct HomeView: View {
 
     // MARK: - Actions
 
+    /// Full notification rebuild after any change that affects what should be scheduled.
+    private func refreshNotifications() {
+        let ctx = modelContext
+        Task { await NotificationManager.shared.refreshAll(context: ctx) }
+    }
+
     private func openAddSheet() {
         // Free tier is capped at `freeItemLimit` active items; adding beyond that is Pro.
         if allItems.count >= Self.freeItemLimit && !purchaseManager.isPremium {
@@ -1357,10 +1393,10 @@ struct HomeView: View {
         Haptics.fire(.error)
         let snapshot = SubscriptionSnapshot(item: item)
         withAnimation {
-            NotificationManager.shared.removeAll(for: item)
             modelContext.delete(item)
             try? modelContext.save()
         }
+        refreshNotifications()
         showUndoToast(message: "Deleted \(snapshot.name)", undoTitle: "Undo Delete") {
             restore(snapshot)
         }
@@ -1384,6 +1420,7 @@ struct HomeView: View {
             item.updatedAt = Date()
             try? modelContext.save()
         }
+        refreshNotifications()
         showUndoToast(message: "\(didCancel ? "Cancelled" : "Reinstated") \(item.name)",
                       undoTitle: didCancel ? "Undo Cancel" : "Undo Reinstate") {
             restoreCancellation(
@@ -1403,6 +1440,7 @@ struct HomeView: View {
             item.updatedAt = Date()
             try? modelContext.save()
         }
+        refreshNotifications()
         showUndoToast(message: "Archived \(name)", undoTitle: "Undo Archive") {
             restoreArchive(item)
         }
@@ -1415,6 +1453,7 @@ struct HomeView: View {
             modelContext.insert(duplicate)
             try? modelContext.save()
         }
+        refreshNotifications()
         showUndoToast(message: "Duplicated \(item.name)", undoTitle: "Undo Duplicate") {
             deleteDuplicate(duplicate)
         }
@@ -1423,10 +1462,10 @@ struct HomeView: View {
     private func deleteDuplicate(_ item: SubscriptionItem) {
         Haptics.fire(.light)
         withAnimation {
-            NotificationManager.shared.removeAll(for: item)
             modelContext.delete(item)
             try? modelContext.save()
         }
+        refreshNotifications()
     }
 
     private func showUndoToast(message: String, undoTitle: String, action: @escaping () -> Void) {
@@ -1447,12 +1486,22 @@ struct HomeView: View {
         }
     }
 
+    private func analyzerToastMessage(from names: [String]) -> String {
+        let unique = Array(Set(names)).sorted()
+        guard !unique.isEmpty else { return "Analyzed screenshot" }
+        if unique.count == 1 {
+            return "Analyzed with \(unique[0])"
+        }
+        return "Analyzed with \(unique.joined(separator: ", "))"
+    }
+
     private func restore(_ snapshot: SubscriptionSnapshot) {
         Haptics.fire(.success)
         withAnimation {
             modelContext.insert(snapshot.restoredItem())
             try? modelContext.save()
         }
+        refreshNotifications()
     }
 
     private func restoreCancellation(
@@ -1470,6 +1519,7 @@ struct HomeView: View {
             item.updatedAt = Date()
             try? modelContext.save()
         }
+        refreshNotifications()
     }
 
     private func restoreArchive(_ item: SubscriptionItem) {
@@ -1479,6 +1529,7 @@ struct HomeView: View {
             item.updatedAt = Date()
             try? modelContext.save()
         }
+        refreshNotifications()
     }
 }
 
@@ -1662,6 +1713,23 @@ private struct UndoToastView: View {
     }
 }
 
+private struct StatusToastView: View {
+    let message: String
+
+    var body: some View {
+        Text(message)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(.white)
+            .lineLimit(2)
+            .multilineTextAlignment(.center)
+            .minimumScaleFactor(0.85)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 13)
+            .background(.black.opacity(0.86), in: Capsule())
+            .shadow(color: .black.opacity(0.28), radius: 16, x: 0, y: 8)
+    }
+}
+
 private struct AnalyzingScanIcon: View {
     @State private var isScanning = false
     @State private var isPulsing = false
@@ -1690,7 +1758,7 @@ private struct AnalyzingScanIcon: View {
             withAnimation(.easeInOut(duration: 2.1).repeatForever(autoreverses: true)) {
                 isPulsing = true
             }
-            withAnimation(.smooth(duration: 2.6).repeatForever(autoreverses: true)) {
+            withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: true)) {
                 isScanning = true
             }
         }
@@ -1720,10 +1788,32 @@ private struct AnalyzingScanIcon: View {
                             endPoint: .trailing
                         )
                     )
-                    .frame(width: 42, height: 3)
-                    .offset(y: isScanning ? 20 : -20)
+                    .frame(width: 46, height: 4)
+                    .shadow(color: .blue.opacity(0.55), radius: 4, y: 0)
+                    .offset(y: isScanning ? 22 : -22)
             }
             .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+    }
+}
+
+// MARK: - All Caught Up Card
+
+struct AllCaughtUpCard: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            ExpiredBear(expression: .celebrating, size: 44)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("All caught up")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("Nothing due in the next 14 days.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .glassEffect(in: .rect(cornerRadius: 16))
     }
 }
 
@@ -1815,6 +1905,56 @@ struct GlassSectionView<Content: View>: View {
     }
 }
 
+// MARK: - Import Failure Sheet
+
+/// Replaces a plain alert for screenshot-import failures (no subscriptions detected,
+/// analyzer error, Photos permission denial) with a calmer custom sheet — the mascot's
+/// "expired" X-eyes read as a comic acknowledgement of the failure, not an error glyph.
+struct ImportFailureSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Capsule()
+                .fill(Color.secondary.opacity(0.3))
+                .frame(width: 36, height: 5)
+                .padding(.top, 8)
+
+            Spacer()
+
+            ExpiredBear(expression: .expired, size: 110)
+
+            VStack(spacing: 8) {
+                Text("Import Didn't Work")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                Text(message)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 24)
+            }
+
+            Spacer()
+
+            Button {
+                dismiss()
+            } label: {
+                Text("OK")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+            }
+            .buttonStyle(.glassProminent)
+            .padding(.horizontal, 32)
+            .padding(.bottom, 24)
+        }
+        .presentationDetents([.fraction(0.45)])
+        .presentationDragIndicator(.hidden)
+    }
+}
+
 // MARK: - Screenshot Import Review
 
 struct ScreenshotImportReviewSheet: View {
@@ -1822,6 +1962,7 @@ struct ScreenshotImportReviewSheet: View {
     @Binding var drafts: [ScreenshotSubscriptionDraft]
     var warning: String?
     var debugLog: String?
+    var analyzerMessage: String?
     let onApply: () -> Void
 
     @State private var currentIndex = 0
@@ -1830,6 +1971,7 @@ struct ScreenshotImportReviewSheet: View {
     @State private var isAdvancing = false
     @State private var dragThresholdDirection = 0
     @State private var stackPromotionProgress: CGFloat = 0
+    @State private var showAnalyzerToast = false
 
     private var handledCount: Int { drafts.prefix(currentIndex).count }
     private var addedDrafts: [ScreenshotSubscriptionDraft] { drafts.filter { $0.action == .addNew } }
@@ -1951,6 +2093,17 @@ struct ScreenshotImportReviewSheet: View {
                     .padding(.top, 8)
                 }
                 .padding(.top, 18)
+
+                if showAnalyzerToast, let analyzerMessage {
+                    VStack {
+                        Spacer()
+                        StatusToastView(message: analyzerMessage)
+                            .padding(.horizontal, 18)
+                            .padding(.bottom, 18)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    .animation(.spring(duration: 0.28), value: showAnalyzerToast)
+                }
             }
             .navigationTitle("")
             .inlineNavigationTitle()
@@ -1967,6 +2120,18 @@ struct ScreenshotImportReviewSheet: View {
                 if drafts.indices.contains(currentIndex) {
                     ScreenshotImportPriceEditor(draft: $drafts[currentIndex])
                         .presentationDetents([.medium])
+                }
+            }
+            .onAppear {
+                guard analyzerMessage != nil else { return }
+                showAnalyzerToast = true
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    await MainActor.run {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            showAnalyzerToast = false
+                        }
+                    }
                 }
             }
         }
@@ -2424,15 +2589,7 @@ struct EmptyStateView: View {
 
     var body: some View {
         VStack(spacing: 24) {
-            ZStack {
-                Circle()
-                    .fill(.blue.opacity(0.08))
-                    .frame(width: 88, height: 88)
-                    .glassEffect(in: Circle())
-                Image(systemName: "creditcard.fill")
-                    .font(.system(size: 36))
-                    .foregroundStyle(.blue.opacity(0.8))
-            }
+            ExpiredBear(expression: .happy, size: 96)
 
             VStack(spacing: 8) {
                 Text("Nothing Here Yet")

@@ -442,6 +442,7 @@ struct ExpiredApp: App {
                 .preferredColorScheme(preferredColorScheme)
                 .task {
                     await NotificationManager.shared.requestAuthorization()
+                    await NotificationManager.shared.refreshAll(context: container.mainContext)
                 }
                 .task {
                     // Resolve the anonymous Supabase identity, then hand that same UUID to
@@ -455,6 +456,11 @@ struct ExpiredApp: App {
                     }
                     PurchaseManager.shared.configure(appUserID: SupabaseService.shared.currentUserID)
                 }
+                .task {
+                    // Refresh exchange rates from Supabase in the background (< 12h cache).
+                    // Falls back to hardcoded rates if the table is empty or unreachable.
+                    await CurrencyRateService.shared.refreshIfNeeded()
+                }
                 .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
                     scheduleSwiftDataRefreshPasses(reason: "remote store change")
                 }
@@ -465,6 +471,8 @@ struct ExpiredApp: App {
                           event.succeeded
                     else { return }
                     scheduleSwiftDataRefreshPasses(reason: "CloudKit import succeeded")
+                    // A remote change may add/edit rules on another device — rebuild the schedule.
+                    Task { await NotificationManager.shared.refreshAll(context: container.mainContext) }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .expiredManualSync)) { _ in
                     CloudKitDebugStore.shared.record("[CloudKit] ── Manual sync triggered ────────────────────")
@@ -478,6 +486,7 @@ struct ExpiredApp: App {
                     switch newPhase {
                     case .active:
                         scheduleSwiftDataRefreshPasses(reason: "scene became active")
+                        Task { await NotificationManager.shared.refreshAll(context: container.mainContext) }
                     case .inactive, .background:
                         Task { @MainActor in
                             if container.mainContext.hasChanges {

@@ -17,6 +17,17 @@ struct ProLockBadge: View {
     }
 }
 
+struct ProChip: View {
+    var body: some View {
+        Text("PRO")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(.blue)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color.blue.opacity(0.12), in: Capsule())
+    }
+}
+
 extension View {
     /// Presents RevenueCat's hosted paywall as a sheet. The SDK dismisses it
     /// automatically on a successful purchase.

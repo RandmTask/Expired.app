@@ -10,6 +10,161 @@ This file is the source of truth for what has been built in Expired. It should s
 **Platforms:** iOS and macOS in a single multiplatform target.
 **Primary focus:** clean subscription cards, accurate expiry/status handling, reliable sync, and calm settings UX.
 
+## 2026-07-05 — R1: Bulletproof reminder orchestration
+
+Rebuilt the notification core from a per-item/single-time scheduler into an idempotent,
+occurrence-aware orchestrator. Roadmap item R1; all product decisions were locked 2026-07-05.
+
+- **Schema (additive, CloudKit-safe).** `NotificationRule` gains `fireHour: Int?`/`fireMinute:
+  Int?` (per-rule time override, nil = inherit). `SubscriptionItem` gains `reminderHour:
+  Int?`/`reminderMinute: Int?` (per-item default, nil = inherit global). All optional with nil
+  defaults per the no-`@Attribute(.unique)`, defaults-on-every-field CloudKit rules. **⚠️ Dev→Prod
+  schema redeploy required before the next TestFlight build.**
+- **`isCritical` was dead** — stored on the model but hardcoded `false` in four places
+  (`NotificationRuleDraft.init(rule:)`, `makeRule()`, `ReminderRuleRow.propagate()`,
+  `AddEditSubscriptionView.reconcileNotifications`). Now wired end-to-end. Decision: critical =
+  `.timeSensitive` interruption level, non-critical = `.active`; **not** pursuing Apple's Critical
+  Alerts entitlement, so `.timeSensitive` is the strongest tier we ship.
+- **Occurrence expansion.** New `SubscriptionItem.upcomingRenewalOccurrences(monthsAhead:)` reuses
+  the existing private `renewalComponent`/`renewalStep` stepping (didn't duplicate it). Only true
+  auto-renewing recurring subs expand across 12 months; documents, trials, cancelled-but-active,
+  one-off/custom billing, and manual-renew return `[nextRelevantDate]` (single occurrence). This
+  is *why* AC1 (renewal rollover) holds without waiting months: the whole schedule is recomputed
+  from `Date()` on every trigger, so reopening the app after a renewal date simply recomputes the
+  next cycle's occurrences.
+- **Identifier scheme changed** from one-per-(item,rule) to
+  `expired.<itemID>.<ruleID>.<occurrenceIndex>` so multiple future occurrences of the same rule can
+  coexist. `exactDate` rules stay single (absolute, not multiplied across occurrences). All cleanup
+  matches on the `"expired."` prefix and removes whatever's actually pending — never reconstructs
+  the old identifier set (they may differ from what's about to be scheduled).
+- **`refreshAll(context:)` is now the single entry point** — idempotent full rebuild: fetch every
+  item fresh from the passed `ModelContext` (not a caller array — every old call site had a
+  different `@Query` filter, exactly the inconsistent-source-of-truth bug class this codebase has
+  been burned by), compute all fire moments, sort ascending, cap to the soonest 62 (headroom under
+  iOS's 64 limit), clear all app-prefixed pending, reschedule. Pure `computeAllFireMoments` split
+  out so the preview UI computes without scheduling. Removed the now-dead
+  `reschedule(for:)`/`rescheduleAll(_:)`/`removeAll(for:)`.
+- **Every call site converted to `refreshAll`.** This *fixed a latent bug for free*: archiving
+  (in `HomeView.archiveItem`, `AddEditSubscriptionView.archiveAndDismiss`) and the HomeView undo
+  closures (`restore`/`restoreCancellation`/`restoreArchive`) previously touched notifications not
+  at all, so archived items kept firing. Now archived/expired/cancelled-past items simply don't
+  appear in the recomputed set, so their pending requests clear on the next refresh. Triggered from
+  `ExpiredApp` at launch, `scenePhase == .active`, and the existing CloudKit import-succeeded
+  `.onReceive`.
+- **Settings-time staleness audit fixed.** Global reminder time was read straight from
+  `UserDefaults` while the KV↔UserDefaults sync only ran while `SettingsView` was on screen — a
+  launch/import-triggered refresh before Settings ever appeared saw stale data. New
+  `NotificationTimeSettings` accessor reads `NSUbiquitousKeyValueStore` first (with
+  `synchronize()`), falls back to `UserDefaults`, then a hardcoded default; writes go to both
+  stores. Same accessor holds the three new quiet-hours keys.
+- **Quiet hours** (Settings → Notifications, default off; minutes-from-midnight ints in iCloud KV).
+  Pure `applyQuietHours(to:startMinutes:endMinutes:calendar:)` handles the midnight-wrapping window:
+  a non-critical time inside [start,end) shifts forward to the window end (23:00 → 08:00 next
+  morning; 02:00 → 08:00 same day). Unit-checked against AC3 offline before wiring. Critical rules
+  bypass entirely.
+- **Time cascade** rule → item → global, applied in both the scheduler and the editor's live
+  caption via one shared `NotificationManager.resolvedFireMoment(...)` helper so the preview and the
+  real schedule can't silently drift.
+- **15-minute snap picker.** New `QuarterHourTimePicker` — `UIViewRepresentable` wrapping
+  `UIDatePicker(.time, minuteInterval: 15)` on iOS; on macOS keeps the native `.field` SwiftUI
+  picker and snaps the value to the nearest quarter-hour in the setter (deliberate platform
+  limitation — `UIViewRepresentable` doesn't apply, documented inline). Used for the per-item
+  default time, per-rule override, quiet-hours start/end, and retrofitted onto the global Settings
+  reminder-time picker.
+- **UI.** `RemindersEditorView` rows gain a critical toggle (bell / bell.badge), a per-rule time
+  override (clock affordance + inline picker), and a live "→ Mon 3 Aug, 9:00 am" resolved-fire
+  caption. `AddEditSubscriptionView` gains a per-item default-time row. New free
+  `ScheduledNotificationsView` (Settings → Notifications) lists computed upcoming notifications
+  grouped by day with a validation row comparing the computed count to the actual
+  `UNUserNotificationCenter` pending count (mismatch = visible warning) — doubles as the reliability
+  debugger.
+- **Verification.** Builds clean on iOS Simulator + macOS. Quiet-hours math unit-verified offline.
+  App launches and runs (23-item dataset, no crash) so `refreshAll` at launch exercises the >64-cap
+  path against real data. **Not** verified: interactive Simulator walkthrough (computer-use access
+  to the Simulator was declined this session), on-device run (Deon's iPhone was offline), and AC5
+  two-device sync (needs two devices).
+
+## 2026-07-03 (cont.) — Debug Menu expansion, Home title/search, compact Insights
+
+- **Debug Menu** (`DebugAIFailureSimulatorView` → retitled "Debug Menu"): the hidden
+  long-press on the Settings "Analyzer" row now opens a multi-section developer sheet, not
+  just the AI-failure toggles. Added: **Replay Onboarding** (iOS-only `fullScreenCover`
+  presenting `OnboardingView` — presents the pager without touching
+  `hasCompletedOnboarding`, so it's a preview, not a state reset), **Mascot Gallery**
+  (`NavigationLink` → private `MascotGalleryView` showing all four `BearExpression`s at hero
+  120pt + glyph 44pt), **Reset Subscriptions** (destructive, alert-confirmed), and a
+  **CloudKit Debug** mirror (account/user-record/store text + Copy Log, reading
+  `CloudKitDebugStore.shared`). Existing Force-Failure + Identity-Repair sections retained.
+- **Reset Subscriptions data-safety:** deletes *all* `SubscriptionItem` rows (subscriptions
+  + documents + archived) via `modelContext.fetch` → `NotificationManager.removeAll(for:)` +
+  `modelContext.delete` (relying on the model's existing `.cascade` rule to drop child
+  `NotificationRule`s — mirrors `HomeView.deleteItem`), then one `save()`. The confirmation
+  alert explicitly warns it syncs to iCloud and removes items from **all** signed-in devices
+  and cannot be undone. This is an *explicit* delete-all command, not derived from any UI
+  array (respects the "never delete from array absence" rule).
+- **Home title → "Expired"** (`HomeView` nav title; was "Subscriptions"). Personalization
+  kept minimal this pass per Deon's call — static title only.
+- **Search hidden until pull-down (iOS):** moved `.searchable(.navigationBarDrawer(.automatic))`
+  off the outer `ZStack` (which wraps the `List` + floating undo/analyzing overlays) and onto
+  the `List` itself, so iOS can bind `hidesSearchBarWhenScrolling` to that scroll view. The bar
+  was staying pinned because the search field couldn't unambiguously associate with a scroll
+  view through the ZStack. **Needs on-device/simulator visual verification** — hide-on-scroll
+  can't be confirmed by a compile build.
+- **Insights compacted (AutoSleep-style):** replaced `GlassInsightCard` (tall left-aligned
+  glass card) with `CompactInsightTile` (tinted icon chip in a circle, big rounded value,
+  small label, subtle color-tinted rounded background). The separate full-width cost hero +
+  2-column counts grid collapsed into a single dense **3-column** grid holding all six metrics
+  (Cost, Active, Auto-Renewing, Free Trials, Manual, Cancelled) — Deon chose "compact hero too".
+  `costCard`/`countsRow` computed props replaced by one `compactStatsGrid`.
+- **Verified:** `xcodebuild` Debug **macOS** and **iOS Simulator** — both BUILD SUCCEEDED.
+- **No `@Model`/CloudKit schema change** — no Dev→Prod redeploy needed.
+
+## 2026-07-03 — Mascot, onboarding pager, first-launch splash (iOS)
+
+- **`ExpiredBear` mascot** (`UI/Mascot/ExpiredBear.swift`, new): pure-SwiftUI vector bear,
+  no image assets — every dimension proportional to a `size` parameter so it scales from a
+  44pt all-caught-up glyph to a 160pt onboarding hero. Four expressions: `.happy`, `.sleepy`,
+  `.expired` (comic X-eyes + slight head tilt — a wink at the app's theme, not a scary face),
+  `.celebrating`. Animations (breathe, randomized blink, spring bounce-in) are gated on
+  `animated && !accessibilityReduceMotion`; blink runs via `.task(id:)` (auto-cancels on
+  expression change/disappear, no manual `Timer`) and is skipped entirely for `.expired`
+  (X eyes don't blink). Anonymous — no user-facing name, per Deon's call.
+- **Onboarding pager** (`UI/Onboarding/OnboardingView.swift`, new, iOS-only): 5 pages
+  (welcome, subscriptions+documents, Screenshot Import tease with `ProChip`, reminders +
+  notification pre-prompt, soft Pro pitch). Notification permission is requested from page 4
+  via the existing `NotificationManager.requestAuthorization()` — Continue is never blocked
+  by permission state (denied/undetermined both render a non-blocking status line). Pro page
+  reads `purchaseManager.offerings?.current?.annual?.storeProduct.introductoryDiscount` and
+  only renders a trial line when `paymentMode == .freeTrial` is actually configured in
+  RevenueCat — never claims a trial that isn't there; hides the line entirely if offerings
+  haven't loaded (offline-safe). "Continue with Free" is always present and equal-weight to
+  "Start Free Trial".
+- **Gating** (`OnboardingGate` view modifier, applied to `ContentView` iOS-only): flag is
+  `@AppStorage("hasCompletedOnboarding")` — **local UserDefaults, deliberately not synced via
+  iCloud KV** (syncing it would race a CloudKit import setting the flag differently per
+  device). Before showing anything, does a cheap `fetchCount` on `SubscriptionItem`; a
+  nonzero count (reinstall, or CloudKit import already landed) sets the flag silently and
+  skips onboarding entirely — self-heals the classic CloudKit-import-race edge case.
+  Onboarding itself performs zero writes to the SwiftData store (no demo seeding, no other
+  migration-style flags) and never consults CloudKit account status, so a mid-onboarding
+  import on a fresh install is harmless — the user just finishes the pager normally.
+- **First-launch splash**: folded into the same gate (no second flag) — `OnboardingSplashOverlay`
+  shows a ~1.2s bear-blink + wordmark moment (0.4s under Reduce Motion) immediately before the
+  pager on the very first launch only; every later launch skips straight past it.
+- **Mascot wired into**: `EmptyStateView` (`.happy`, replacing the old circle+icon glyph),
+  a new `AllCaughtUpCard` (`.celebrating`, shown under the hero card when items exist but
+  nothing is due/trialing/urgent in the next 14 days, only with no active filter/search),
+  and a new `ImportFailureSheet` (`.expired`) replacing the plain `.alert` for screenshot-import
+  failures (no subscriptions detected, analyzer error, Photos permission denial).
+- **Verified**: full `xcodebuild` (Debug, iOS Simulator, both arm64+x86_64 slices) —
+  BUILD SUCCEEDED, zero errors.
+- **Not done yet (Phase D, next up)**: `ai-proxy`'s RevenueCat entitlement check still
+  unconditionally sends `X-Is-Sandbox: true` (its own code comment already flags this as a
+  pre-launch blocker — production purchasers would 402); the `app_config` select also
+  silently swallows its DB error instead of failing closed. Provider $ spend caps
+  (OpenAI/Google/DeepSeek dashboards) and the RevenueCat/ASC 7-day yearly trial config are
+  unverified from code — dashboard checks, offered separately.
+
 ## 2026-06-30 — Add/Edit polish + Critical Alerts entitlement request
 
 - **Add/Edit sheet polish** (`AddEditSubscriptionView`): `.padding(.top, 10)` on the name+icon
@@ -336,6 +491,50 @@ entry UI + RED security warning (key now lives server-side).
   (`app_config` rows, new `provider_health` table) + Swift `UserDefaults`.
 
 **No schema changes.** SwiftData/CloudKit model untouched.
+
+## 2026-07-02 (cont.) — AI import 402 FULLY resolved: it was FIVE stacked bugs, not one
+
+The identity-caching fix below was necessary but not sufficient — the 402 persisted through ~21
+attempts because four more independent bugs sat behind it, each masking the next. Full list, in the
+order they were peeled back (all now fixed; all generalized into `_shared/supabase-revenuecat.md`
+gotchas #20, #25, #26, #27 + its debugging decision tree):
+
+1. **RC identity caching** (#20) — `configure(appUserID:)` ignored on relaunch; fixed with explicit
+   `logIn` when cached ≠ resolved. (Detailed entry below.)
+2. **Webhook never configured** — `REVENUECAT_WEBHOOK_SECRET` existed in Supabase since 2026-06-30 but
+   no webhook was ever created in the RC dashboard, so the `entitlements` mirror was never written by
+   events. Created it (URL + Bearer secret, all events, both environments), verified with Send Test
+   Event → 200 `{"ok":true,"skipped":"ignored type TEST"}`.
+3. **`service_role` missing DML grants** (#26) — the *biggest* hidden one. `service_role` had only
+   REFERENCES/TRIGGER/TRUNCATE on every `public` table since migration 0001, no SELECT/INSERT/UPDATE/
+   DELETE. So every `ai-proxy` `app_config` read silently fell through to hardcoded defaults, and every
+   `entitlements` mirror upsert failed — invisibly, because the code discarded the error. Surfaced only
+   after enriching the 402 payload to report `mirror upsert failed: permission denied for table
+   entitlements`. Fixed in migration `0005_grant_service_role.sql` (+ default privileges for future
+   tables). Root misconception: "service_role bypasses RLS" ≠ "service_role has a table grant."
+4. **REST lookup was production-only** (#27) — `GET /subscribers` returns only production purchases
+   unless `X-Is-Sandbox: true` is sent; all purchases here are RC Test Store (no real App Store app
+   exists yet), so the server saw `availableEntitlements=none`. Added the header (with a TODO to gate
+   it before release). Confirmed via dashboard: toggling "Sandbox data" off showed the customer as
+   "No current entitlements / USD 0".
+5. **UUID case mismatch** (#25) — the final wall. `SupabaseService.currentUserID` returned
+   `UUID.uuidString` (UPPERCASE), handed to RevenueCat; but the JWT `sub` the server checks is
+   lowercase, and RC `app_user_id` is case-sensitive. Client attached purchases to the UPPERCASE
+   customer; server checked the empty LOWERCASE one. The copy-log's `appUserID=8C0B…` vs
+   `serverUserId=8c0b…` (differing only in case) was the smoking gun. Fixed with `.lowercased()` at
+   the single source — client identity now == JWT sub == Postgres id.
+
+**Debug tooling that made this tractable (kept in the app):** the import-failure banner now shows a
+short friendly message, with a copy button that copies a *separate* rich debug log (server entitlement
+check, local RC `appUserID` + `isPremium`, app version, timestamp, failure streak) — Deon's idea, and
+the turning point. The server 402 was also enriched to report `checkedUserId`, `availableEntitlements`,
+and any mirror-write error. Combined, these turned "paste your Xcode console" into a one-tap paste that
+exposed bugs #3 and #5 directly.
+
+**Process lesson (also added to `My Apps/CLAUDE.md` Process Playbook):** several of these were already
+documented in `_shared/supabase-revenuecat.md` before this session started; reading that playbook's
+gotcha list first would have short-circuited at least #20 and the Test Store confusion. Instrument the
+failure and read the existing playbook before theorizing.
 
 ## 2026-07-02 — RevenueCat identity bug: root-caused and fixed (AI import 402 blocker)
 
