@@ -2454,7 +2454,7 @@ var groupedBackground: Color {
 extension View {
     func largeNavigationTitle() -> some View {
 #if os(iOS)
-        self.navigationBarTitleDisplayMode(.large)
+        self.toolbarTitleDisplayMode(.inlineLarge)
 #else
         self
 #endif
