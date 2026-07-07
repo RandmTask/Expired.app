@@ -263,47 +263,6 @@ final class NotificationManager {
         return results
     }
 
-    /// Resolves a single rule's delivery moment against one occurrence date — the same
-    /// cascade + quiet-hours logic `computeAllFireMoments` uses, exposed for the editor's
-    /// inline "→ Mon 3 Aug, 9:00 am" caption so the two never drift out of sync.
-    static func resolvedFireMoment(
-        occurrenceDate: Date,
-        offsetType: NotificationOffsetType,
-        value: Int,
-        customDate: Date?,
-        isCritical: Bool,
-        ruleHour: Int?, ruleMinute: Int?,
-        itemHour: Int?, itemMinute: Int?,
-        calendar: Calendar = .current
-    ) -> Date? {
-        let base = offsetType == .exactDate ? (customDate ?? occurrenceDate) : occurrenceDate
-        guard let rawFire = staticFireDate(baseDate: base, offsetType: offsetType, value: value, customDate: customDate) else {
-            return nil
-        }
-        let hour: Int
-        let minute: Int
-        if let rh = ruleHour, let rm = ruleMinute {
-            hour = rh; minute = rm
-        } else if let ih = itemHour, let im = itemMinute {
-            hour = ih; minute = im
-        } else {
-            hour = NotificationTimeSettings.globalHour
-            minute = NotificationTimeSettings.globalMinute
-        }
-        guard var fire = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: rawFire) else {
-            return nil
-        }
-        if NotificationTimeSettings.quietHoursEnabled && !isCritical {
-            fire = applyQuietHours(
-                to: fire,
-                startMinutes: NotificationTimeSettings.quietStartMinutes,
-                endMinutes: NotificationTimeSettings.quietEndMinutes,
-                calendar: calendar
-            )
-        }
-        return fire
-    }
-
     // MARK: - Quiet hours
 
     /// Shifts a non-critical fire date out of the quiet window to the window's end.

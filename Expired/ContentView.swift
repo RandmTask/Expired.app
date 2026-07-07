@@ -2992,18 +2992,6 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    FormDivider()
-                    Button {
-                        Haptics.fire(.warning)
-                        Task { await PurchaseManager.shared.logOutForTesting() }
-                    } label: {
-                        settingsRow {
-                            macSettingsLabel("Reset for Testing", icon: "arrow.counterclockwise")
-                                .foregroundStyle(.secondary)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
                 }
 
                 // SCREENSHOT IMPORT
@@ -3507,17 +3495,6 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Button {
-                    Haptics.fire(.warning)
-                    Task { await PurchaseManager.shared.logOutForTesting() }
-                } label: {
-                    HStack {
-                        rowIcon("arrow.counterclockwise", color: .secondary)
-                        Text("Reset for Testing").foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
             } header: {
                 sectionHeader("EXPIRED PRO")
             }

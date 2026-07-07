@@ -100,10 +100,21 @@ struct DebugAIFailureSimulatorView: View {
             if let resetResult {
                 Text(resetResult).font(.footnote).foregroundStyle(.secondary)
             }
+            Button {
+                Task { await PurchaseManager.shared.logOutForTesting() }
+            } label: {
+                HStack {
+                    Image(systemName: "arrow.counterclockwise")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, alignment: .center)
+                    Text("Reset for Testing")
+                        .foregroundStyle(.primary)
+                }
+            }
         } header: {
             Text("Reset Data")
         } footer: {
-            Text("Wipes all subscription/document data for a clean test run. Deletes on every synced device.")
+            Text("Wipes all subscription/document data for a clean test run. Deletes on every synced device. Reset for Testing logs out the RevenueCat sandbox identity.")
         }
     }
 

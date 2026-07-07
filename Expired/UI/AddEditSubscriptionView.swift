@@ -85,8 +85,6 @@ struct AddEditSubscriptionView: View {
     // Reminders & notes
     @State private var notifications: [NotificationRuleDraft] = []
     // Per-item default reminder time (nil = inherit global setting).
-    @State private var reminderTimeOverrideOn = false
-    @State private var reminderTime: Date = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
     @State private var notes = ""
 
     // Account field sheets
@@ -1183,49 +1181,16 @@ struct AddEditSubscriptionView: View {
 
     // MARK: - Reminders section
 
-    private var reminderTimeComponents: (hour: Int, minute: Int)? {
-        guard reminderTimeOverrideOn else { return nil }
-        let c = Calendar.current.dateComponents([.hour, .minute], from: reminderTime)
-        return (c.hour ?? 9, c.minute ?? 0)
-    }
-
     private var remindersSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Reminders")
             FormCard {
-                VStack(spacing: 0) {
-                    HStack {
-                        Text("Default time")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Toggle("", isOn: $reminderTimeOverrideOn)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                            .tint(.blue)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
-                    if reminderTimeOverrideOn {
-                        FormDivider()
-                        HStack {
-                            Text("Time")
-                                .font(.system(size: 16))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            QuarterHourTimePicker(date: $reminderTime)
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                    }
-                    FormDivider()
-                    RemindersEditorView(
-                        notifications: $notifications,
-                        baseDate: itemType == .document ? expiryDate : statusDate,
-                        itemHour: reminderTimeComponents?.hour,
-                        itemMinute: reminderTimeComponents?.minute
-                    )
-                }
+                RemindersEditorView(
+                    notifications: $notifications,
+                    baseDate: itemType == .document ? expiryDate : statusDate,
+                    itemHour: nil,
+                    itemMinute: nil
+                )
             }
         }
     }
@@ -1615,10 +1580,6 @@ struct AddEditSubscriptionView: View {
         iconData = item.iconData
         iconSource = item.iconSource
         notifications = item.notificationsList.map { NotificationRuleDraft(rule: $0) }
-        if let rh = item.reminderHour, let rm = item.reminderMinute {
-            reminderTimeOverrideOn = true
-            reminderTime = Calendar.current.date(bySettingHour: rh, minute: rm, second: 0, of: Date()) ?? reminderTime
-        }
         selectedCategoryRaw = item.categoryRaw
         if let sd = item.startDate {
             startDate = sd
@@ -1707,8 +1668,8 @@ struct AddEditSubscriptionView: View {
             reconcileNotifications(into: existing)
             existing.categoryRaw = isDoc ? nil : selectedCategoryRaw
             existing.startDate = isDoc ? nil : startDate
-            existing.reminderHour = reminderTimeComponents?.hour
-            existing.reminderMinute = reminderTimeComponents?.minute
+            existing.reminderHour = nil
+            existing.reminderMinute = nil
             existing.updatedAt = Date()
         } else {
             let newItem = SubscriptionItem(
@@ -1733,8 +1694,8 @@ struct AddEditSubscriptionView: View {
                 documentNumber: isDoc ? trimmedDocNum.isEmpty ? nil : trimmedDocNum : nil,
                 validFromDate: isDoc ? validFromDate : nil,
                 startDate: isDoc ? nil : startDate,
-                reminderHour: reminderTimeComponents?.hour,
-                reminderMinute: reminderTimeComponents?.minute,
+                reminderHour: nil,
+                reminderMinute: nil,
                 notifications: notifications.map { $0.makeRule() }
             )
             newItem.categoryRaw = isDoc ? nil : selectedCategoryRaw

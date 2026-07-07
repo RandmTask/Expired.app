@@ -99,15 +99,15 @@ struct RemindersEditorView: View {
     private var presetsRow: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
+                GlassPresetChip(label: "On day", icon: "bell.badge") { addRule(.onDay, 0) }
                 GlassPresetChip(label: "1 day",    icon: "bell")   { addRule(.daysBefore,   1) }
                 GlassPresetChip(label: "3 days",   icon: "bell")   { addRule(.daysBefore,   3) }
                 GlassPresetChip(label: "1 week",   icon: "bell")   { addRule(.weeksBefore,  1) }
-                GlassPresetChip(label: "1 month",  icon: "bell")   { addRule(.monthsBefore, 1) }
             }
             HStack(spacing: 8) {
+                GlassPresetChip(label: "1 month",  icon: "bell")   { addRule(.monthsBefore, 1) }
                 GlassPresetChip(label: "3 months", icon: "bell")   { addRule(.monthsBefore, 3) }
                 GlassPresetChip(label: "6 months", icon: "bell")   { addRule(.monthsBefore, 6) }
-                GlassPresetChip(label: "On day", icon: "bell.badge") { addRule(.onDay, 0) }
                 GlassPresetChip(label: "Custom", icon: "calendar") { addExactDateRule() }
             }
         }
@@ -175,6 +175,7 @@ struct ReminderRuleRow: View {
     @State private var isCritical: Bool
     @State private var timeOverrideOn: Bool
     @State private var overrideTime: Date
+    @State private var showTimePopover = false
 
     init(rule: NotificationRuleDraft,
          baseDate: Date,
@@ -200,93 +201,73 @@ struct ReminderRuleRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                if offsetType == .exactDate {
-                    datePicker
-                        .fixedSize()
-                } else if offsetType == .onDay {
-                    typePicker
-                        .fixedSize()
-                } else {
-                    valueStepper
-                        .fixedSize()
-                    typePicker
-                        .fixedSize()
+        SwipeActionsContainer {
+            [
+                SwipeAction(icon: isCritical ? "bell.badge.fill" : "bell", tint: isCritical ? .orange : .secondary) {
+                    Haptics.fire(.selectionChanged)
+                    isCritical.toggle()
+                    propagate()
+                },
+                SwipeAction(icon: timeOverrideOn ? "clock.fill" : "clock", tint: timeOverrideOn ? .blue : .secondary) {
+                    Haptics.fire(.selectionChanged)
+                    showTimePopover = true
+                },
+                SwipeAction(icon: "trash", tint: .red) {
+                    Haptics.fire(.error)
+                    onDelete()
                 }
-                Spacer(minLength: 0)
-                criticalButton
+            ]
+        } content: {
+            rowContent
+        }
+        .popover(isPresented: $showTimePopover) {
+            timePopoverContent
+        }
+    }
+
+    private var rowContent: some View {
+        HStack(spacing: 8) {
+            if offsetType == .exactDate {
+                datePicker
                     .fixedSize()
-                timeOverrideButton
+            } else if offsetType == .onDay {
+                typePicker
                     .fixedSize()
-                deleteButton
+            } else {
+                valueStepper
+                    .fixedSize()
+                typePicker
                     .fixedSize()
             }
+            Spacer(minLength: 0)
             if timeOverrideOn {
-                HStack(spacing: 8) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Text("At")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                    QuarterHourTimePicker(date: $overrideTime)
-                        .onChange(of: overrideTime) { _, _ in propagate() }
-                    Spacer(minLength: 0)
-                }
+                Text(overrideTime.formatted(.dateTime.hour().minute()))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
-            resolvedCaption
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 
-    private var criticalButton: some View {
-        Button {
-            Haptics.fire(.selectionChanged)
-            isCritical.toggle()
-            propagate()
-        } label: {
-            Image(systemName: isCritical ? "bell.badge.fill" : "bell")
-                .font(.system(size: 14))
-                .foregroundStyle(isCritical ? Color.orange : Color.secondary)
+    private var timePopoverContent: some View {
+        VStack(spacing: 12) {
+            QuarterHourTimePicker(date: $overrideTime)
+                .onChange(of: overrideTime) { _, _ in
+                    timeOverrideOn = true
+                    propagate()
+                }
+            if timeOverrideOn {
+                Button("Use default time", role: .destructive) {
+                    timeOverrideOn = false
+                    propagate()
+                    showTimePopover = false
+                }
+                .font(.system(size: 13))
+            }
         }
-        .buttonStyle(.plain)
-        .help(isCritical ? "Critical (bypasses quiet hours)" : "Standard")
-    }
-
-    private var timeOverrideButton: some View {
-        Button {
-            Haptics.fire(.selectionChanged)
-            timeOverrideOn.toggle()
-            propagate()
-        } label: {
-            Image(systemName: timeOverrideOn ? "clock.fill" : "clock")
-                .font(.system(size: 14))
-                .foregroundStyle(timeOverrideOn ? Color.blue : Color.secondary)
-        }
-        .buttonStyle(.plain)
-        .help("Set a specific time for this reminder")
-    }
-
-    /// Live "→ Mon 3 Aug, 9:00 am" caption using the same resolution logic the scheduler uses.
-    @ViewBuilder
-    private var resolvedCaption: some View {
-        if let fire = NotificationManager.resolvedFireMoment(
-            occurrenceDate: baseDate,
-            offsetType: offsetType,
-            value: value,
-            customDate: offsetType == .exactDate ? customDate : nil,
-            isCritical: isCritical,
-            ruleHour: timeOverrideOn ? overrideMinutes.hour : nil,
-            ruleMinute: timeOverrideOn ? overrideMinutes.minute : nil,
-            itemHour: itemHour,
-            itemMinute: itemMinute
-        ) {
-            Text("→ \(fire.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute()))")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-        }
+        .padding(16)
+        .presentationCompactAdaptation(.popover)
     }
 
     private var overrideMinutes: (hour: Int, minute: Int) {
@@ -368,18 +349,6 @@ struct ReminderRuleRow: View {
         }
     }
 
-    private var deleteButton: some View {
-        Button(role: .destructive) {
-            Haptics.fire(.error)
-            onDelete()
-        } label: {
-            Image(systemName: "trash")
-                .font(.system(size: 14))
-                .foregroundStyle(Color.red.opacity(0.8))
-        }
-        .buttonStyle(.plain)
-    }
-
     private func propagate() {
         let date = offsetType == .exactDate ? customDate : nil
         let fh = timeOverrideOn ? overrideMinutes.hour : nil
@@ -411,5 +380,86 @@ struct GlassPresetChip: View {
             .glassEffect(.regular.interactive(), in: Capsule())
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Swipe Actions
+
+/// Hand-rolled swipe-to-reveal container. `ReminderRuleRow` lives in a `ScrollView`
+/// (the edit form's outer container), not a `List`, so SwiftUI's native
+/// `.swipeActions(edge:)` isn't available — see `_shared/gestures.md`'s documented
+/// fallback for custom card lists. Reveals the same action panel from either edge so
+/// all actions are reachable regardless of which way the user swipes.
+struct SwipeAction: Identifiable {
+    let id = UUID()
+    let icon: String
+    let tint: Color
+    let handler: () -> Void
+}
+
+struct SwipeActionsContainer<Content: View>: View {
+    let actions: () -> [SwipeAction]
+    @ViewBuilder let content: () -> Content
+
+    @State private var offset: CGFloat = 0
+    private let actionWidth: CGFloat = 52
+
+    var body: some View {
+        let list = actions()
+        let panelWidth = CGFloat(list.count) * actionWidth
+
+        ZStack {
+            HStack(spacing: 0) {
+                panel(list)
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                panel(list)
+            }
+            content()
+                .contentShape(Rectangle())
+                .offset(x: offset)
+                .gesture(
+                    DragGesture(minimumDistance: 12)
+                        .onChanged { value in
+                            offset = max(min(value.translation.width, panelWidth), -panelWidth)
+                        }
+                        .onEnded { value in
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                if value.translation.width > panelWidth / 3 {
+                                    offset = panelWidth
+                                } else if value.translation.width < -panelWidth / 3 {
+                                    offset = -panelWidth
+                                } else {
+                                    offset = 0
+                                }
+                            }
+                        }
+                )
+                .onTapGesture {
+                    guard offset != 0 else { return }
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { offset = 0 }
+                }
+        }
+        .clipped()
+    }
+
+    private func panel(_ list: [SwipeAction]) -> some View {
+        HStack(spacing: 0) {
+            ForEach(list) { action in
+                Button {
+                    action.handler()
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { offset = 0 }
+                } label: {
+                    Image(systemName: action.icon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: actionWidth, height: 44)
+                }
+                .buttonStyle(.plain)
+                .background(action.tint)
+            }
+        }
     }
 }
