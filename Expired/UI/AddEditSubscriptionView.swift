@@ -9,12 +9,23 @@ import UIKit
 import AppKit
 #endif
 
+/// Prefill produced by the Add Item hub's Search route (catalog match, App Store
+/// result, or typed URL) and applied to a fresh (non-editing) form on appear.
+struct AddEditPrefill {
+    var name: String = ""
+    var url: String = ""
+    var iconData: Data? = nil
+    var iconSource: IconSource = .system
+    var categoryRaw: String? = nil
+}
+
 struct AddEditSubscriptionView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Query private var allItems: [SubscriptionItem]
 
     let item: SubscriptionItem?
+    var prefill: AddEditPrefill? = nil
 
     // Core
     @State private var itemType: ItemType = .subscription
@@ -259,7 +270,8 @@ struct AddEditSubscriptionView: View {
             if currency.isEmpty { currency = preferredCurrency }
             userCategories = UserCategoryStore.load()
             populateFromItem()
-            if !isEditing {
+            applyPrefill()
+            if !isEditing && (prefill?.name.isEmpty ?? true) {
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(250))
                     nameFieldFocused = true
@@ -1584,6 +1596,22 @@ struct AddEditSubscriptionView: View {
         if let sd = item.startDate {
             startDate = sd
             startDateValue = sd
+        }
+    }
+
+    /// Applies a hub-supplied prefill to a fresh (non-editing) form. No-op when editing
+    /// an existing item — `item` always wins.
+    private func applyPrefill() {
+        guard item == nil, let prefill else { return }
+        suppressNextFaviconFetch = true
+        if !prefill.name.isEmpty { name = prefill.name }
+        if !prefill.url.isEmpty { url = prefill.url }
+        if let data = prefill.iconData {
+            iconData = data
+            iconSource = prefill.iconSource
+        }
+        if let categoryRaw = prefill.categoryRaw {
+            selectedCategoryRaw = categoryRaw
         }
     }
 

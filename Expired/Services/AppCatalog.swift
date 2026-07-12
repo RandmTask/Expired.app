@@ -28,6 +28,39 @@ struct AppCatalog {
         return decoded
     }()
 
+    struct SearchMatch: Identifiable, Hashable {
+        var id: String { appStoreId }
+        var name: String
+        var appStoreId: String
+        var category: String
+        var iconData: Data?
+    }
+
+    /// Fuzzy multi-result lookup for the unified Add Item search (unlike
+    /// `localIconMatch`, doesn't require a bundled icon to match).
+    static func search(_ query: String, limit: Int = 6) -> [SearchMatch] {
+        let queryKey = canonicalName(query)
+        guard queryKey.count >= 2 else { return [] }
+
+        let scored: [(SearchMatch, Bool)] = entries.compactMap { entry in
+            let keys = entry.lookupNames.map { canonicalName($0) }
+            guard keys.contains(where: { $0.contains(queryKey) }) else { return nil }
+            let startsWith = keys.contains { $0.hasPrefix(queryKey) }
+            let match = SearchMatch(
+                name: entry.name,
+                appStoreId: entry.appStoreId,
+                category: entry.category,
+                iconData: entry.iconFilename.flatMap { localIconData(filename: $0) }
+            )
+            return (match, startsWith)
+        }
+
+        return scored
+            .sorted { $0.1 && !$1.1 }
+            .prefix(limit)
+            .map(\.0)
+    }
+
     static func localIconMatch(for query: String) -> LocalIconMatch? {
         let queryKey = canonicalName(query)
         guard !queryKey.isEmpty,

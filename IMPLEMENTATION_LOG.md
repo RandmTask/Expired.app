@@ -1,5 +1,70 @@
 # Expired — Implementation Log
 
+## 2026-07-12 — R2: Best-in-class import flow, Phase 1 (Add Item hub)
+
+Roadmap item R2 (composition of existing pieces into one guided "Add Item" hub with
+Search / Screenshot / Manual routes, all converging on `AddEditSubscriptionView`'s
+review step). Built after R3 this session — see R3's entry below for why the order
+flipped from the locked R1→R2→R3 build order.
+
+- **`UI/AddItemHubView.swift`** (new): the hub sheet. A `List` with a unified search
+  field at top and Screenshot/Manual rows below. Chose **not** to nest
+  `AddEditSubscriptionView` inside the hub's own sheet — instead the hub takes three
+  closures (`onSelectManual`, `onSelectScreenshot`, `onSelectPrefill`) and reports the
+  user's choice back to `HomeView`, which dismisses the hub and then presents the real
+  next sheet. Sidesteps sheet-over-sheet dismissal bugs entirely (the easy failure mode
+  there: save succeeds but the user is stranded on the hub because only the inner sheet
+  tore down).
+- **Rejected approach:** extracting a shared `AppStoreSearchService` so the hub and
+  `AddEditSubscriptionView`'s existing "Search App Store" sheet could share one iTunes
+  client. Looked like the "don't duplicate" move, but it meant rewiring
+  `AddEditSubscriptionView`'s already-working App Store search (which AC1 depends on)
+  for zero functional gain. The hub owns its own ~15-line iTunes `search?term=` call
+  instead — small, working duplication beats touching a proven flow.
+- **`Services/AppCatalog.swift`**: added `search(_:limit:)` — a fuzzy multi-result
+  lookup returning `SearchMatch` (name, appStoreId, category, optional bundled icon).
+  Unlike the existing `localIconMatch(for:)` (exact match, requires a bundled icon —
+  in practice only fires for the one catalog entry that has one, iCloud), `search`
+  matches on substring containment across `lookupNames` and doesn't require an icon;
+  results without a bundled icon get their artwork fetched lazily via iTunes lookup
+  only when the user taps the row, keeping the live-typing list fast.
+- **`UI/AddEditSubscriptionView.swift`**: added `AddEditPrefill` (name, url, iconData,
+  iconSource, categoryRaw — deliberately **no** "AI-guessed" flag field; every Phase-1
+  route landing on this form is catalog/iTunes/URL-detection, not AI, and the
+  screenshot route has its own separate batch review sheet that never reaches this
+  form) and an optional `prefill:` init param, defaulted `nil` so both existing call
+  sites (`AddEditSubscriptionView(item: nil)`, `AddEditSubscriptionView(item: $0)`)
+  needed no changes. `applyPrefill()` runs in `onAppear` after `populateFromItem()`,
+  is a no-op when editing an existing item, sets `suppressNextFaviconFetch` before
+  writing `url` (the existing `.onChange(of: url)` debounced-fetch guard, reused as-is)
+  so the prefilled icon isn't immediately overwritten, and mirrors the existing
+  `applyAppStoreResult`/`applyLocalCatalogIconIfAvailable` pattern of not bothering to
+  suppress `isApplyingCatalogMatch` — if the prefilled name happens to also match a
+  catalog entry, `handleNameChange` may re-apply that catalog's own icon on top, which
+  is pre-existing behavior for the App Store search path too, not a new risk. The
+  250ms auto-focus-name-field-on-appear (existing, for `!isEditing`) now also checks
+  the prefill has no name, so a prefilled form doesn't pop the "Search App Store"
+  prompt over an already-filled name field.
+- **`UI/HomeView.swift`**: `openAddSheet()` (unchanged free-item-limit Pro gate) now
+  sets `showingAddHub = true` instead of opening `AddEditSubscriptionView` directly.
+  Added `showingAddHub` / `addHubPrefill` state and three sheets: the hub itself, the
+  existing Manual `AddEditSubscriptionView(item: nil)` sheet (now reached via the hub's
+  Manual row), and a new prefill-driven sheet gated on `addHubPrefill != nil`.
+  `triggerScreenshotImport()` (existing, Pro-gated) is unchanged — the hub's Screenshot
+  route just calls it after dismissing itself.
+
+**How to test:** Build succeeded on iOS Simulator + macOS this session
+(`xcodebuild ... -destination 'generic/platform=iOS Simulator'` and
+`-destination 'platform=macOS'`, both `DEVELOPER_DIR=Xcode-beta`). No interactive
+Simulator walkthrough yet — Deon declined booting the Simulator this session. Manual
+test plan for next session against the roadmap's 4 ACs: (1) tap `+` → Search → type
+"Netflix" → tap the iTunes result → confirm icon/name/category prefilled, ≤3
+interactions to Add. (2) tap `+` → Screenshot → multi-subscription screenshot → existing
+batch review still works unchanged. (3) tap `+` → Search → type a bare domain
+("hulu.com") → tap the "Use…" row → confirm name/icon/category-guess prefilled and no
+`ai-proxy` call fires (console/Charles). (4) tap `+` → Manual → confirm it reaches the
+current Add form in one tap.
+
 ## 2026-07-12 — R3: Renewal forecast engine + UI (built out of locked R1→R2→R3 order)
 
 Roadmap item R3 (forward cost forecast). Built before R2 this session: R2's remaining

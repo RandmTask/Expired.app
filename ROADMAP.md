@@ -113,7 +113,25 @@ change (via `CloudKitSyncMonitor`), and item save/archive/delete.
 
 ---
 
-### R2. Best-in-class import flow (Phase 1) 🔴 — no schema change
+### R2. Best-in-class import flow (Phase 1) 🟢 — no schema change
+
+> **Status (2026-07-12):** Built and compiling clean on iOS + macOS. `AddItemHubView`
+> (new) replaces the bare `+` action; `openAddSheet()` now opens the hub instead of
+> going straight to `AddEditSubscriptionView`, preserving the existing free-item-limit
+> gate. Screenshot route calls back into `HomeView`'s existing `triggerScreenshotImport()`
+> (Pro gate untouched); Manual and Search routes report their choice back to `HomeView`
+> via callbacks rather than nesting a sheet inside the hub's sheet — avoids sheet-over-
+> sheet entirely. `AddEditSubscriptionView` gained an `AddEditPrefill` struct + optional
+> `prefill:` init param (defaulted `nil`, so both existing call sites are untouched);
+> applying a prefill sets `suppressNextFaviconFetch` so the debounced favicon fetch
+> doesn't clobber a prefilled icon, and skips the 250ms name auto-focus when the prefill
+> already has a name (avoids popping the redundant "Search App Store" prompt on an
+> already-filled form). `AppCatalog` gained `search(_:limit:)` — a fuzzy multi-result
+> lookup (unlike `localIconMatch`, doesn't require a bundled icon to match). The unified
+> search list merges local catalog matches + a debounced iTunes text search + URL/domain
+> detection, all inline in the hub (no separate search sheet). **Outstanding:** no
+> interactive Simulator walkthrough this session (declined — same iOS + macOS build-clean
+> bar as R1/R3; ask before booting the Simulator next session to walk the 4 ACs).
 
 One guided "Add Item" capture hub replacing the bare + action, with three routes that
 all converge on a single review step. Composition of existing pieces — the new build is

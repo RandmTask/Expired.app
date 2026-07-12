@@ -21,6 +21,8 @@ struct HomeView: View {
     }
 
     @State private var showingAdd = false
+    @State private var showingAddHub = false
+    @State private var addHubPrefill: AddEditPrefill?
     @State private var showingImportReview = false
     @State private var editingItem: SubscriptionItem?
     @State private var searchText = ""
@@ -267,7 +269,29 @@ struct HomeView: View {
                     overflowMenu
                 }
             }
+            .sheet(isPresented: $showingAddHub) {
+                AddItemHubView(
+                    onSelectManual: {
+                        showingAddHub = false
+                        showingAdd = true
+                    },
+                    onSelectScreenshot: {
+                        showingAddHub = false
+                        triggerScreenshotImport()
+                    },
+                    onSelectPrefill: { prefill in
+                        showingAddHub = false
+                        addHubPrefill = prefill
+                    }
+                )
+            }
             .sheet(isPresented: $showingAdd) { AddEditSubscriptionView(item: nil) }
+            .sheet(isPresented: Binding(
+                get: { addHubPrefill != nil },
+                set: { if !$0 { addHubPrefill = nil } }
+            )) {
+                AddEditSubscriptionView(item: nil, prefill: addHubPrefill)
+            }
             .sheet(item: $editingItem) { AddEditSubscriptionView(item: $0) }
             .expiredPaywallSheet(isPresented: $showPaywall)
             .sheet(isPresented: $showingImportReview) {
@@ -1388,7 +1412,7 @@ struct HomeView: View {
         }
         Haptics.fire(.light)
         editingItem = nil
-        showingAdd = true
+        showingAddHub = true
     }
 
     private func deleteItem(_ item: SubscriptionItem) {
