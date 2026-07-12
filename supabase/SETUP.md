@@ -46,10 +46,11 @@ supabase secrets set REVENUECAT_WEBHOOK_SECRET=$(openssl rand -hex 24)
 ```
 You only need keys for the providers you actually want to offer. A provider with
 no key returns 502 "Provider not configured".
-`REVENUECAT_SECRET_API_KEY` lets `ai-proxy` verify and repair Premium entitlement
-state directly when the webhook mirror is stale. If your RevenueCat entitlement
-identifier differs from `Expired Pro` or `premium`, also set
-`REVENUECAT_ENTITLEMENT_IDS` to a comma-separated list.
+`REVENUECAT_SECRET_API_KEY` lets `ai-proxy` verify and repair entitlement state
+directly when the webhook mirror is stale. If your RevenueCat entitlement
+identifier differs from the client-facing canonical identifier, set
+`REVENUECAT_ENTITLEMENT_IDS` to a comma-separated list deliberately; do not add
+aliases just to work around a spelling mismatch.
 
 ### 3. Deploy the functions
 ```bash
@@ -59,7 +60,10 @@ supabase functions deploy revenuecat-webhook   # verify_jwt=false comes from con
 ```
 
 ### 4. RevenueCat dashboard
-1. Create a project + app; create an entitlement with identifier **`premium`**.
+1. Create a project + app; create the canonical entitlement used by the client
+   (for Expired, identifier **`Expired Pro`**). Do not create a second spelling
+   such as `premium` unless the client and server are intentionally changed
+   together.
 2. Create your subscription product(s) in App Store Connect and attach them to an
    Offering.
 3. **Integrations → Webhooks:** URL `https://<ref>.functions.supabase.co/revenuecat-webhook`,

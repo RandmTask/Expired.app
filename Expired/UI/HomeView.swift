@@ -1346,7 +1346,9 @@ struct HomeView: View {
                 }
             } preview: {
                 SubscriptionRowView(item: item)
+#if os(iOS)
                     .frame(width: UIScreen.main.bounds.width - 32)
+#endif
                     .background(groupedBackground)
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {

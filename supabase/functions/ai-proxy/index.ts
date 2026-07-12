@@ -207,7 +207,7 @@ function entitlementIDs(config: Record<string, unknown>): string[] {
     ? configured.join(",")
     : typeof configured === "string"
       ? configured
-      : envValue ?? "Expired Pro,premium";
+      : envValue ?? "Expired Pro";
 
   return [...new Set(
     raw.split(",")
