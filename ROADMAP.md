@@ -142,7 +142,16 @@ Supabase `ai-proxy` cascade), App Store search sheet inside `AddEditSubscription
 
 ---
 
-### R3. Renewal timeline + forward cost forecast 🔴 — no schema change
+### R3. Renewal timeline + forward cost forecast 🟠 — no schema change
+
+> **Status (2026-07-12):** `ForecastEngine` built and algorithm-verified (all 4 ACs pass
+> against the real expansion/filter/bucket logic via a standalone script — see log).
+> Forecast UI (segmented 30/90/365 control, headline total, 12-month Swift Charts bar
+> chart, biggest-upcoming-hits list) added to `InsightsView`, builds clean on iOS +
+> macOS. **Outstanding:** no visual/interactive verification (Simulator access wasn't
+> used this session — ask before booting it), no XCTest target exists in the project to
+> house AC5's tests in-tree (`ForecastEngine`'s protocol-based design makes adding one
+> trivial whenever Deon creates the target via Xcode GUI).
 
 Turn Insights into a forward-looking spend forecast: what will I pay in the next
 30/90/365 days, and how does that land month by month.

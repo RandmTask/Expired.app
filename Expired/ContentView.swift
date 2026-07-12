@@ -3,6 +3,7 @@ import SwiftData
 import UniformTypeIdentifiers
 import UserNotifications
 import RevenueCat
+import Charts
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
@@ -1260,6 +1261,24 @@ struct InsightsView: View {
     @Environment(PurchaseManager.self) private var purchaseManager
     @State private var showPaywall = false
 
+    enum ForecastHorizon: Int, CaseIterable {
+        case thirtyDays = 30
+        case ninetyDays = 90
+        case yearDays = 365
+
+        var label: String {
+            switch self {
+            case .thirtyDays: return "30d"
+            case .ninetyDays: return "90d"
+            case .yearDays: return "365d"
+            }
+        }
+
+        /// 30-day forecast is free; longer horizons (and the monthly chart) are Pro.
+        var isPro: Bool { self != .thirtyDays }
+    }
+    @State private var forecastHorizon: ForecastHorizon = .thirtyDays
+
     private var activeItems: [SubscriptionItem] {
         allItems.filter(\.isActiveSubscription)
     }
@@ -1372,6 +1391,7 @@ struct InsightsView: View {
                         }
                     }
 
+                    forecastSection
                     compactStatsGrid
                     if !costBreakdownItems.isEmpty { costBreakdown }
                     Spacer(minLength: 40)
@@ -1385,6 +1405,115 @@ struct InsightsView: View {
             .largeNavigationTitle()
             .expiredPaywallSheet(isPresented: $showPaywall)
         }
+    }
+
+    // MARK: - Forecast (R3)
+
+    private var forecastTotal: Double {
+        ForecastEngine.total(
+            for: allItems, horizonDays: forecastHorizon.rawValue,
+            targetCurrency: preferredCurrency, convert: CurrencyInfo.convert
+        )
+    }
+
+    private var forecastBiggestHits: [ForecastEngine.Contribution] {
+        ForecastEngine.biggestUpcoming(
+            for: allItems, horizonDays: forecastHorizon.rawValue,
+            targetCurrency: preferredCurrency, convert: CurrencyInfo.convert, limit: 5
+        )
+    }
+
+    private var forecastMonthlyBuckets: [ForecastEngine.MonthBucket] {
+        ForecastEngine.monthlyBuckets(
+            for: allItems, monthsAhead: 12,
+            targetCurrency: preferredCurrency, convert: CurrencyInfo.convert
+        )
+    }
+
+    private var forecastSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 5) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 11, weight: .bold))
+                Text("FORECAST")
+                    .font(.system(size: 11, weight: .bold))
+                    .tracking(0.6)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
+
+            VStack(spacing: 14) {
+                Picker("", selection: $forecastHorizon) {
+                    ForEach(ForecastHorizon.allCases, id: \.self) { horizon in
+                        if horizon.isPro && !purchaseManager.isPremium {
+                            Text("\(Image(systemName: "lock.fill")) \(horizon.label)").tag(horizon)
+                        } else {
+                            Text(horizon.label).tag(horizon)
+                        }
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: forecastHorizon) { _, newValue in
+                    if newValue.isPro && !purchaseManager.isPremium {
+                        forecastHorizon = .thirtyDays
+                        showPaywall = true
+                    }
+                }
+
+                VStack(spacing: 2) {
+                    Text(CurrencyInfo.format(forecastTotal, code: preferredCurrency))
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                    Text("projected over next \(forecastHorizon.rawValue) days")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+
+                if purchaseManager.isPremium {
+                    ForecastMonthlyChart(buckets: forecastMonthlyBuckets, currencyCode: preferredCurrency)
+                } else {
+                    Button {
+                        showPaywall = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "lock.fill")
+                            Text("Unlock the 12-month forecast chart")
+                            Spacer()
+                        }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 12)
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if !forecastBiggestHits.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Biggest upcoming hits")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(forecastBiggestHits) { hit in
+                            HStack {
+                                Text(hit.itemName)
+                                    .font(.system(size: 14))
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(hit.date.formatted(date: .abbreviated, time: .omitted))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                Text(CurrencyInfo.format(hit.amount, code: preferredCurrency))
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .glassEffect(in: .rect(cornerRadius: 20))
+        }
+        .padding(.horizontal)
     }
 
     private var compactStatsGrid: some View {
@@ -1557,6 +1686,33 @@ struct CostBarRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .glassEffect(in: .rect(cornerRadius: 16))
+    }
+}
+
+struct ForecastMonthlyChart: View {
+    let buckets: [ForecastEngine.MonthBucket]
+    let currencyCode: String
+
+    var body: some View {
+        Chart(buckets) { bucket in
+            BarMark(
+                x: .value("Month", bucket.monthStart, unit: .month),
+                y: .value("Cost", bucket.total)
+            )
+            .foregroundStyle(.blue.gradient)
+            .cornerRadius(4)
+        }
+        .chartXAxis {
+            AxisMarks(values: .stride(by: .month, count: 2)) { value in
+                if let date = value.as(Date.self) {
+                    AxisValueLabel(date.formatted(.dateTime.month(.abbreviated)))
+                }
+            }
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading)
+        }
+        .frame(height: 140)
     }
 }
 

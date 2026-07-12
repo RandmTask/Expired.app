@@ -1,5 +1,65 @@
 # Expired — Implementation Log
 
+## 2026-07-12 — R3: Renewal forecast engine + UI (built out of locked R1→R2→R3 order)
+
+Roadmap item R3 (forward cost forecast). Built before R2 this session: R2's remaining
+scope (hub sheet, fuzzy `AppCatalog` search, URL-route detection, an
+`AddEditSubscriptionView` prefill init, rewiring `HomeView`'s `+`) turned out to need
+surgery across two ~2000–3800-line files and deserved its own session; R3 was small,
+self-contained, and had a fully verifiable pure-function core, so it went first. No
+schema change either way.
+
+- **`Services/ForecastEngine.swift`** (new): pure `enum`, Foundation-only, generic over
+  a new `ForecastContributing` protocol (`id`, `name`, `itemType`, `isCancelled`,
+  `billingCycle`, `cost`, `currency`, `upcomingRenewalOccurrences(monthsAhead:reference
+  Date:calendar:)`). `SubscriptionItem` conforms via a one-line `extension` — zero
+  behavior change to the model, and the Xcode build compiling that conformance is the
+  proof the protocol surface actually matches. Currency conversion is injected as a
+  closure (`convert: (Double, String, String) -> Double`, real caller passes
+  `CurrencyInfo.convert`) rather than calling `CurrencyInfo` directly, keeping the engine
+  decoupled from every other file so it can be exercised standalone.
+- **Contribution rules (locked 2026-07-05):** only `itemType == .subscription`,
+  `!isCancelled`, `billingCycle != .oneOff` items with a non-nil `cost` contribute.
+  Active trials fall out of the *existing* `upcomingRenewalOccurrences` for free (an
+  active trial's guard clause already returns `[trialEndDate]` as a single occurrence at
+  full cost) — no new trial-handling code needed in the engine itself. Documents
+  (`itemType == .document`) are excluded by the same `itemType` guard, not a separate
+  check.
+- **`contributions(for:horizonDays:...)`** expands each item's occurrences up to
+  `horizonDays` (padded one month past the exact horizon so month-granular expansion
+  never truncates the last occurrence early), filters to `[referenceDate, horizonEnd]`,
+  converts each occurrence's raw per-cycle `cost` (not a monthly-normalized figure — a
+  yearly $120 sub contributes $120 once at its renewal date, not $10×12) to the target
+  currency. `total`, `monthlyBuckets` (12 always-present calendar-month buckets, zero-
+  filled where nothing lands, for a continuous bar chart), and `biggestUpcoming` (top-N
+  by amount) all compose on top of `contributions`.
+- **Verification — no XCTest target exists in this project** (adding one needs the
+  Xcode GUI per the standing "new-target creation is GUI-only" rule; not done this
+  session). Instead: a standalone script
+  (`/private/tmp/.../scratchpad/ForecastEngineVerify.swift`, not checked in) mirrors
+  `ForecastEngine`'s actual algorithm byte-for-byte (only `ItemType`/`BillingCycle` and
+  the `SubscriptionItem` extension are swapped for local mirrors) against a `MockItem`
+  and ran via `swift <script>` — all 4 roadmap ACs plus currency-conversion and
+  bucketing checks passed. **Caveat:** `MockItem` reimplements a simplified
+  `upcomingRenewalOccurrences` for the mock, so the *real* `SubscriptionItem` occurrence
+  expansion is only compile-verified (via the protocol conformance), not exercised by
+  this script. A real XCTest target would let the same test bodies run directly against
+  `SubscriptionItem`.
+- **UI** — new `forecastSection` in `InsightsView` (`ContentView.swift`), placed above
+  the existing stats grid per the locked "Forecast at top of Insights" decision:
+  30/90/365 segmented control (`ForecastHorizon` enum, same Pro-gate-and-revert pattern
+  as the existing `CostPeriod` picker — reverts to 30-day + shows the paywall if a free
+  user picks 90/365), headline total, new `ForecastMonthlyChart` (Swift Charts
+  `BarMark`, first use of `import Charts` in this project) gated behind
+  `purchaseManager.isPremium` with an inline unlock button when not, and a "Biggest
+  upcoming hits" list (top 5 by amount). `import Charts` added to `ContentView.swift`.
+- **Verified:** `xcodebuild` Debug **macOS** and **iOS Simulator** — both BUILD
+  SUCCEEDED. **Not verified:** interactive Simulator/device walkthrough (chart
+  rendering, Pro-revert animation, layout at real widths) — Simulator wasn't launched
+  this session per the "ask first" rule. Status kept at 🟠, not flipped to 🟢, until a
+  visual pass happens.
+- **No `@Model`/CloudKit schema change** — no Dev→Prod redeploy needed.
+
 This file is the source of truth for what has been built in Expired. It should stay specific to this app and should be updated whenever a meaningful user-facing or architectural change lands.
 
 ## Current State Summary
