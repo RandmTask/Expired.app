@@ -17,6 +17,11 @@ struct AddEditPrefill {
     var iconData: Data? = nil
     var iconSource: IconSource = .system
     var categoryRaw: String? = nil
+    /// Populated only by the hub's "Read Page with AI" route (R2 Phase 2) — the
+    /// Search/URL routes never set these.
+    var cost: Double? = nil
+    var currency: String? = nil
+    var billingCycle: BillingCycle? = nil
 }
 
 struct AddEditSubscriptionView: View {
@@ -1612,6 +1617,16 @@ struct AddEditSubscriptionView: View {
         }
         if let categoryRaw = prefill.categoryRaw {
             selectedCategoryRaw = categoryRaw
+        }
+        if let prefillCurrency = prefill.currency, !prefillCurrency.isEmpty {
+            currency = prefillCurrency
+        }
+        if let prefillCost = prefill.cost {
+            cost = prefillCost
+            costText = CurrencyInfo.formatForEntry(prefillCost, code: currency)
+        }
+        if let prefillCycle = prefill.billingCycle {
+            billingCycle = prefillCycle
         }
     }
 

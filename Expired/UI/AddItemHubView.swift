@@ -6,11 +6,13 @@ import SwiftUI
 /// hub sheet and the review sheet never nest.
 struct AddItemHubView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(PurchaseManager.self) private var purchaseManager
     @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
 
     let onSelectManual: () -> Void
     let onSelectScreenshot: () -> Void
     let onSelectPrefill: (AddEditPrefill) -> Void
+    let onRequirePaywall: () -> Void
 
     @State private var searchText = ""
     @State private var catalogMatches: [AppCatalog.SearchMatch] = []
@@ -75,6 +77,7 @@ struct AddItemHubView: View {
 
                     if looksLikeURL {
                         urlRow
+                        aiURLRow
                     }
 
                     ForEach(catalogMatches) { match in
@@ -151,6 +154,45 @@ struct AddItemHubView: View {
                     Text("Use “\(trimmedSearch)”")
                         .font(.system(size: 15, weight: .semibold))
                     Text("Fetch icon and name from this URL")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(resolvingID != nil)
+    }
+
+    /// Pro-gated companion to `urlRow` — same URL, but reads the page server-side
+    /// via `ai-proxy` for name + price + currency + billing cycle instead of just
+    /// favicon + host-guessed name. Falls back to `resolveURLPrefill()` (the free,
+    /// no-AI route) silently on any failure.
+    private var aiURLRow: some View {
+        Button {
+            guard purchaseManager.isPremium else {
+                Haptics.fire(.warning)
+                onRequirePaywall()
+                return
+            }
+            Haptics.fire(.light)
+            resolveURLPrefillWithAI()
+        } label: {
+            HStack(spacing: 12) {
+                if resolvingID == "url-ai" {
+                    ProgressView().scaleEffect(0.8)
+                        .frame(width: 22)
+                } else {
+                    Image(systemName: purchaseManager.isPremium ? "sparkles" : "lock.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 22, alignment: .center)
+                        .foregroundStyle(.purple)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Read Page with AI")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Also extracts price and billing cycle")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -339,6 +381,37 @@ struct AddItemHubView: View {
                     iconSource: icon != nil ? .favicon : .system,
                     categoryRaw: categoryRaw
                 ))
+            }
+        }
+    }
+
+    private func resolveURLPrefillWithAI() {
+        resolvingID = "url-ai"
+        let trimmed = trimmedSearch
+        Task {
+            do {
+                let result = try await URLLookupAnalyzer.lookup(url: trimmed)
+                let name = (result.name?.isEmpty == false ? result.name : nil) ?? Self.guessName(
+                    fromHost: URLComponents(string: trimmed.lowercased().hasPrefix("http") ? trimmed : "https://\(trimmed)")?.host ?? trimmed
+                )
+                let icon = await FaviconFetcher.fetch(from: trimmed)
+                let categoryRaw = AppCatalog.search(name, limit: 1).first?.category
+                await MainActor.run {
+                    resolvingID = nil
+                    onSelectPrefill(AddEditPrefill(
+                        name: name,
+                        url: trimmed,
+                        iconData: icon,
+                        iconSource: icon != nil ? .favicon : .system,
+                        categoryRaw: categoryRaw,
+                        cost: result.cost,
+                        currency: result.currency,
+                        billingCycle: result.billingCycle
+                    ))
+                }
+            } catch {
+                // Silent fallback to the free no-AI URL route (locked decision).
+                resolveURLPrefill()
             }
         }
     }

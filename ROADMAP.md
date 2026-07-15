@@ -207,12 +207,69 @@ with currency conversion; `TimelineView` with 6 view modes; `CurrencyRateService
 
 ## Post-v1.0
 
-### R2. Import flow — Phase 2: AI website lookup 🔴
+### R2. Import flow — Phase 2: AI website lookup 🟠 — no schema change
 
-Extend the unified search's URL route with AI-assisted page reading via the `ai-proxy`
-(name, price, billing cycle extracted from the subscription's website). Needs a new
-proxy route + prompt design; same review-step UX as Phase 1. Don't design in detail
-until Phase 1 ships.
+> **Status (2026-07-15):** Built and compiling clean on iOS + macOS. **Not yet
+> deployed** — `supabase functions deploy ai-proxy` hasn't been run; the new `url`
+> mode is dead code in production until that happens (state-changing infra action,
+> needs Deon's go-ahead, see `TEST.md`). No live test against a real site yet either
+> (needs the deploy first).
+
+Extends the unified search's URL route with AI-assisted page reading via the
+`ai-proxy` (name, price, currency, billing cycle extracted from the subscription's
+website), as a second, explicit, Pro-gated option alongside Phase 1's instant no-AI
+"Use…" row — not a replacement for it.
+
+**Decisions locked (2026-07-13):**
+- Extends the existing `ai-proxy` function (`mode: "auto"|"forced"` unchanged, new
+  optional `url` field) rather than a separate edge function — reuses its
+  auth/entitlement/rate-limit/kill-switch plumbing as-is.
+- Server-side fetch: the proxy fetches the target URL itself, not the client
+  (client-side fetch of arbitrary sites fails on CORS/bot-blocking for most real
+  sites anyway).
+- SSRF guardrail: reject IP-literal hosts and known-internal hostnames
+  (`localhost`, `*.local`, `*.internal`), https-only, manual redirect handling
+  (re-validates every hop, capped at 3), 500KB body cap, 8s timeout. Best-effort
+  extra DNS-resolution check layered on where the edge runtime supports it — full
+  DNS-rebinding closure isn't guaranteed, documented as a caveat in the code.
+- Content sent to the LLM: HTML stripped to visible text + `<title>`/meta
+  description only, truncated to ~6000 chars — not raw HTML.
+- Extracted fields: `name`, `price`, `currency`, `billingCycle` (restricted to the
+  app's actual `BillingCycle` cases — weekly/monthly/yearly, no "quarterly").
+- Pro-gated, same as Screenshot Import (in practice free either way — `ai-proxy`
+  already requires an active entitlement for every mode, url-lookup included).
+- On any failure (fetch blocked, non-2xx, unparseable JSON), the client silently
+  falls back to Phase 1's no-AI URL route rather than showing an error.
+- Shares the existing per-user/global daily request cap with screenshot import —
+  no new `app_config` key, no migration.
+
+**Built:**
+- `supabase/functions/_shared/pageFetch.ts` (new) — SSRF-guarded server-side fetch
+  + HTML-to-text extraction, reusable by future proxy routes.
+- `supabase/functions/ai-proxy/index.ts` — new optional `url` field on the request
+  body; when present, fetches+extracts the page (step 4c, after the existing
+  entitlement/cap checks) and builds the text prompt from it before entering the
+  existing provider cascade loop unchanged.
+- `Expired/Services/URLLookupAnalyzer.swift` (new) — client call + per-provider
+  response parsing (duplicates, not shares, `ScreenshotImportAnalyzer`'s
+  `openAIContent`/`claudeContent`/`geminiContent` — small working duplication over
+  touching a proven, heavily-tested file, same call made for R2 Phase 1's iTunes
+  search).
+- `AddEditPrefill` gained `cost`/`currency`/`billingCycle` fields; `applyPrefill()`
+  in `AddEditSubscriptionView` applies them when present.
+- `AddItemHubView` gained a "Read Page with AI" row alongside the existing no-AI
+  "Use…" row, Pro-gated via a new `onRequirePaywall` closure (mirrors how the
+  Screenshot route already reaches `HomeView`'s paywall).
+
+**Acceptance criteria:**
+1. A real subscription page with a visible price → name + price + currency +
+   billing cycle all prefilled correctly.
+2. A page the model can't parse (JS-rendered pricing, no visible price) → falls
+   back to Phase 1's favicon + host-guessed name, no error shown to the user.
+3. A non-Pro user tapping "Read Page with AI" sees the paywall, not a network call.
+4. A URL pointing at a private/internal address (e.g. `http://169.254.169.254/`,
+   `https://localhost/`) is rejected server-side before any fetch — verify via the
+   422 response, not just client behavior.
 
 ## v2
 

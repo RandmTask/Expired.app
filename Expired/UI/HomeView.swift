@@ -282,6 +282,10 @@ struct HomeView: View {
                     onSelectPrefill: { prefill in
                         showingAddHub = false
                         addHubPrefill = prefill
+                    },
+                    onRequirePaywall: {
+                        showingAddHub = false
+                        showPaywall = true
                     }
                 )
             }

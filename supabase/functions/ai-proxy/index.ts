@@ -6,6 +6,7 @@
 //     "visionPrompt": "<prompt for vision-capable providers>",
 //     "textPrompt":   "<prompt with OCR lines, for text-only providers>",
 //     "image": { "mime": "image/png", "base64": "..." },   // optional
+//     "url": "https://example.com",                        // optional, mutually exclusive with the above
 //     "simulateFailures": ["gemini"] }                     // optional, debug-only cascade testing
 //
 // "auto" tries providers from app_config.ai_fallback_order in sequence, server-side,
@@ -17,6 +18,8 @@
 //   3. premium entitlement active                       -> 402
 //   4. per-user daily request cap                        -> 429
 //   4b. app-wide daily request cap (all users)            -> 503
+//   4c. when `url` is present, fetch + extract the page server-side (SSRF-guarded,
+//       see `_shared/pageFetch.ts`) and build the text prompt from it              -> 422
 //   5. try each candidate provider in order; bump usage + real token count only
 //      once, on the first 2xx.
 //
@@ -28,6 +31,7 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { serviceClient, userIdFromRequest } from "../_shared/auth.ts";
 import { buildRequestBody, chatTarget, DEFAULT_MODEL, extractTokenCount, ImagePayload, ProviderID } from "../_shared/providers.ts";
+import { fetchPageText, FetchedPage, PageFetchError } from "../_shared/pageFetch.ts";
 
 const ALLOWED: ProviderID[] = ["openai", "claude", "gemini", "deepseek"];
 const REVENUECAT_API_URL = "https://api.revenuecat.com/v1/subscribers";
@@ -35,10 +39,30 @@ const REVENUECAT_API_URL = "https://api.revenuecat.com/v1/subscribers";
 interface RequestBody {
   mode: "auto" | "forced";
   provider?: ProviderID;
-  visionPrompt: string;
-  textPrompt: string;
+  visionPrompt?: string;
+  textPrompt?: string;
   image?: ImagePayload;
+  /** Add Item hub's "Read Page with AI" route — mutually exclusive with the prompt
+   * fields above. The proxy fetches and extracts the page itself; see step 4c. */
+  url?: string;
   simulateFailures?: ProviderID[];
+}
+
+/** The JSON-extraction instruction sent to the model once the page has been
+ * fetched and reduced to plain text. `billingCycle` is deliberately restricted to
+ * the app's actual `BillingCycle` cases (no "quarterly" — the model has no case to
+ * map it to client-side). */
+function buildUrlLookupPrompt(page: FetchedPage): string {
+  return `You extract subscription/membership pricing details from a webpage's text content.
+Return ONLY a single JSON object, no prose, no markdown fencing, in this exact shape:
+{"name": "string or null", "price": number or null, "currency": "3-letter ISO code or null", "billingCycle": "weekly|monthly|yearly or null"}
+
+Use null for any field you can't determine confidently. "price" must be the plain numeric plan price, no currency symbol or thousands separator.
+
+Page title: ${page.title || "(none)"}
+Page description: ${page.description || "(none)"}
+Page text:
+${page.text || "(none)"}`;
 }
 
 Deno.serve(async (req) => {
@@ -53,7 +77,7 @@ Deno.serve(async (req) => {
   let parsed: RequestBody;
   try {
     parsed = await req.json();
-    if (!parsed.visionPrompt && !parsed.textPrompt) throw new Error("bad request");
+    if (!parsed.visionPrompt && !parsed.textPrompt && !parsed.url) throw new Error("bad request");
     if (parsed.mode === "forced" && !parsed.provider) throw new Error("bad request");
   } catch {
     return json({ error: { message: "Invalid request body" } }, 400);
@@ -136,6 +160,26 @@ Deno.serve(async (req) => {
     return json({ error: { message: "AI import is at capacity for today. Try again tomorrow." } }, 503);
   }
 
+  // 4c. URL-lookup: fetch + extract the page server-side (SSRF-guarded) and build
+  // the text prompt from it. Mutually exclusive with client-supplied prompts.
+  let visionPrompt = parsed.visionPrompt ?? "";
+  let textPrompt = parsed.textPrompt ?? "";
+  const image = parsed.image;
+  if (parsed.url) {
+    let page: FetchedPage;
+    try {
+      page = await fetchPageText(parsed.url);
+    } catch (e) {
+      const detail = e instanceof PageFetchError ? e.message : String(e);
+      return json({ error: { message: "Unable to read this page.", detail } }, 422);
+    }
+    if (!page.text && !page.title) {
+      return json({ error: { message: "This page had no readable content." } }, 422);
+    }
+    textPrompt = buildUrlLookupPrompt(page);
+    visionPrompt = textPrompt;
+  }
+
   // 5. Candidate list: one named provider ("forced", used by the debug picker /
   // manual testing) or the configured cascade order ("auto").
   const candidates: ProviderID[] = parsed.mode === "forced"
@@ -163,9 +207,9 @@ Deno.serve(async (req) => {
     }
 
     const body = buildRequestBody(provider, model, {
-      visionPrompt: parsed.visionPrompt,
-      textPrompt: parsed.textPrompt,
-      image: parsed.image,
+      visionPrompt,
+      textPrompt,
+      image,
     });
 
     let upstream: Response;

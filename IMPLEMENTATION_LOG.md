@@ -1,5 +1,82 @@
 # Expired — Implementation Log
 
+## 2026-07-15 — R2 Phase 2: AI website lookup ("Read Page with AI")
+
+Scoped via a locked 10-question round (see `ROADMAP.md`'s R2 Phase 2 entry for the
+full decision list) before writing any code, since this was a genuinely new
+sub-feature (new proxy capability, prompt design, an SSRF-relevant server change) —
+not a case where the shared instructions' "ask before building" bar could be skipped.
+
+- **`supabase/functions/_shared/pageFetch.ts`** (new): SSRF-guarded server-side
+  webpage fetch + text extraction. Three defense layers: (1) reject IP-literal
+  hosts and known-internal hostnames (`localhost`, `*.local`, `*.internal`)
+  outright — a real subscription site is never a bare IP; (2) `redirect: "manual"`
+  with every hop re-validated against the same checks, capped at 3 — `fetch()`'s
+  default automatic redirect-following would silently bypass the initial host
+  check on a redirect to an internal address; (3) best-effort `Deno.resolveDns`
+  check for DNS-rebinding, feature-detected and skipped (not failed open or
+  closed) where the edge runtime doesn't support it. Explicitly documented in the
+  file header that DNS-rebinding isn't fully closed without guaranteed DNS
+  resolution support — an honest caveat rather than an overclaimed guarantee.
+  HTML is reduced to `<title>` + meta description + visible text (scripts/styles/
+  comments stripped), truncated to ~6000 chars, capped at 500KB read and an 8s
+  timeout.
+- **`supabase/functions/ai-proxy/index.ts`**: added an optional `url` field to the
+  request body (mutually exclusive with `visionPrompt`/`textPrompt`/`image`).
+  When present, step 4c (after the existing entitlement + daily-cap checks, before
+  the provider cascade loop) fetches+extracts the page and builds the text prompt
+  server-side, returning 422 on any fetch failure. Deliberately did **not** add a
+  new proxy function or a separate rate-limit counter — the existing cascade loop,
+  entitlement gate, and usage cap are mode-agnostic already, so `url` mode falls
+  through the same machinery `visionPrompt`/`textPrompt` calls already use.
+  `buildRequestBody`'s existing `useVision = VISION_CAPABLE.has(provider) &&
+  !!args.image` naturally resolves to the text-only branch for every provider
+  since url-lookup calls never set `image` — no change needed there.
+- **Rejected: separate app_config rate-limit key for URL lookups** — the locked
+  decision was to share the cap with screenshot import; a dedicated key would
+  need a migration for a distinction the proxy doesn't otherwise make.
+- **`Expired/Services/URLLookupAnalyzer.swift`** (new): client call + per-provider
+  response parsing. Deliberately **duplicates** (rather than shares)
+  `ScreenshotImportAnalyzer`'s private `openAIContent`/`claudeContent`/
+  `geminiContent` extractors — same call made in R2 Phase 1 for the iTunes search
+  duplication: touching a proven, heavily-tested file for a shared-helper
+  extraction isn't worth it for ~20 lines. On any failure (network, non-2xx,
+  JSON that doesn't parse to a usable `name`/`price`), throws — no internal
+  fallback here, since the *caller* (`AddItemHubView`) owns the fallback-to-
+  Phase-1 decision, keeping this file a pure "try AI, throw on failure" unit.
+- **`AddEditSubscriptionView.swift`**: `AddEditPrefill` gained `cost: Double?`,
+  `currency: String?`, `billingCycle: BillingCycle?` (all populated only by this
+  route — Search/URL-without-AI never set them). `applyPrefill()` applies
+  `currency` before `cost` so `CurrencyInfo.formatForEntry` formats with the
+  prefilled currency, not whatever was already in the field.
+- **`AddItemHubView.swift`**: new `aiURLRow` alongside the existing `urlRow`,
+  gated on `purchaseManager.isPremium` (lock icon + `onRequirePaywall()` callback
+  when not Pro — new closure param, wired in `HomeView` to
+  `showingAddHub = false; showPaywall = true`, mirroring how the Screenshot route
+  already reaches the paywall through `HomeView`). `resolveURLPrefillWithAI()`
+  calls the analyzer; on success, backfills a missing AI-guessed name with the
+  same host-based guess Phase 1 uses (`guessName(fromHost:)`) rather than leaving
+  it blank; on failure, calls the existing `resolveURLPrefill()` directly (self-
+  contained — it re-sets its own `resolvingID` and calls `onSelectPrefill` itself,
+  so no refactor was needed to reuse it as the fallback path).
+
+**Build:** iOS Simulator + macOS both `BUILD SUCCEEDED` (`DEVELOPER_DIR=Xcode-beta`).
+`deno check` clean on both new/changed `.ts` files (no Deno project config in this
+repo, so this is the type-check, not a full Supabase local-serve run).
+
+**How to test:** **Not deployed yet** — `supabase functions deploy ai-proxy` needs
+to be run before any of this is live (added to `TEST.md`; this is a state-changing
+action against shared infra, wasn't run without Deon's go-ahead). Once deployed: (1)
+`+` → Search → paste a real subscription page URL with a visible price → "Read Page
+with AI" → confirm name/price/currency/cycle prefilled. (2) A page with no visible
+price or heavy client-side rendering → confirm silent fallback to the favicon+name-
+only Phase 1 result, no error shown. (3) Downgrade/test a non-Pro account → tapping
+"Read Page with AI" should show the paywall immediately, no network call (check
+console/Charles for zero `ai-proxy` traffic). (4) `curl` the deployed function
+directly with `"url": "http://169.254.169.254/"` and confirm a 422, not a 200 —
+this is the one check that can't wait for the app UI, since a passing server-side
+SSRF guard test is what actually validates the security claim above.
+
 ## 2026-07-12 — R2: Best-in-class import flow, Phase 1 (Add Item hub)
 
 Roadmap item R2 (composition of existing pieces into one guided "Add Item" hub with
