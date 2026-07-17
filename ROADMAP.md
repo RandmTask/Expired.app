@@ -209,11 +209,13 @@ with currency conversion; `TimelineView` with 6 view modes; `CurrencyRateService
 
 ### R2. Import flow — Phase 2: AI website lookup 🟠 — no schema change
 
-> **Status (2026-07-15):** Built and compiling clean on iOS + macOS. **Not yet
-> deployed** — `supabase functions deploy ai-proxy` hasn't been run; the new `url`
-> mode is dead code in production until that happens (state-changing infra action,
-> needs Deon's go-ahead, see `TEST.md`). No live test against a real site yet either
-> (needs the deploy first).
+> **Status (2026-07-17):** Deployed to production (via Codex, offloaded per Deon's
+> request) and the SSRF guard verified live: a cloud-metadata IP and an explicit
+> HTTPS IP-literal target both correctly returned `422` (`scheme_not_allowed` /
+> `ip_literal_not_allowed`), while `https://example.com` cleared the guard normally
+> with `200`. **Outstanding:** no live test against a real subscription page's
+> full extraction (name/price/currency/cycle) yet, and no in-app walkthrough of the
+> non-Pro paywall path — see `TEST.md`.
 
 Extends the unified search's URL route with AI-assisted page reading via the
 `ai-proxy` (name, price, currency, billing cycle extracted from the subscription's

@@ -1,5 +1,31 @@
 # Expired — Implementation Log
 
+## 2026-07-17 — R2 Phase 2: `ai-proxy` deployed + SSRF guard verified live
+
+Deployed the `ai-proxy` function (built 2026-07-15, see entry below) to production.
+Per Deon's explicit request, offloaded the deploy + verification to Codex rather than
+running it directly, to save Claude tokens on a scriptable, low-judgment infra step —
+Claude wrote the Codex prompt (goal, exact commands, definition of done) and reviewed
+the reported results rather than trusting Codex's "done" claim at face value.
+
+- `supabase functions deploy ai-proxy` — succeeded. The `url` mode ("Read Page with
+  AI") is now live in production; no longer dead code.
+- SSRF guard verification (the one check that couldn't wait for the app UI, since it
+  validates the actual security claim in `pageFetch.ts` server-side):
+  - `http://169.254.169.254/` (cloud metadata IP, http) → `422`,
+    `detail: "scheme_not_allowed"` (rejected before even reaching the IP check,
+    since https-only is enforced first).
+  - An explicit HTTPS IP-literal target → `422`, `detail: "ip_literal_not_allowed"`
+    — confirms the IP-literal guard itself, not just the scheme guard.
+  - `https://example.com` → `200`, cleared the guard normally, provider cascade
+    reached (`gemini`/`gemini-3.1-flash-lite` in this run).
+  - All three as expected. No source files were touched by this step.
+
+Remaining before R2 Phase 2 can be marked 🟢: a live test against a real
+subscription page's full extraction (name/price/currency/billing cycle) and an
+in-app non-Pro paywall walkthrough — both need an interactive session, tracked in
+`TEST.md`.
+
 ## 2026-07-15 — R2 Phase 2: AI website lookup ("Read Page with AI")
 
 Scoped via a locked 10-question round (see `ROADMAP.md`'s R2 Phase 2 entry for the

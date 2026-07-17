@@ -30,15 +30,13 @@ as they're done; delete a whole entry once verified (its detail lives in
 
 ## Supabase (state-changing infra — needs Deon's go-ahead)
 
-- [ ] **Deploy the updated `ai-proxy` function** (`supabase functions deploy ai-proxy`)
-      — R2 Phase 2's new `url` mode ("Read Page with AI") is built and compiles but
-      is dead code in production until this runs. Say the word and Claude can run it.
-- [ ] **After deploying, verify the SSRF guard server-side**:
-      `curl` the deployed function with `"url": "http://169.254.169.254/"` (or any
-      private-IP/localhost target) and confirm a `422`, not a `200`. This is the one
-      check that can't wait for the app UI — it validates the actual security claim
-      in `pageFetch.ts`, not just app behavior.
-- [ ] **R2 Phase 2 — live test against a real subscription page** once deployed:
+- [x] **Deploy the updated `ai-proxy` function** — deployed 2026-07-17 via Codex
+      (offloaded per Deon's request). `url` mode ("Read Page with AI") is now live.
+- [x] **SSRF guard verified server-side** (2026-07-17, via Codex):
+      `http://169.254.169.254/` → `422 scheme_not_allowed`; an explicit HTTPS
+      IP-literal target → `422 ip_literal_not_allowed`; `https://example.com` →
+      `200`, cleared the guard normally. All three as expected.
+- [ ] **R2 Phase 2 — live test against a real subscription page** now that it's deployed:
       (1) a page with a clear visible price → name/price/currency/cycle all
       prefilled; (2) a page the model can't parse (JS-rendered pricing) → silent
       fallback to Phase 1's favicon+name-only result, no error shown; (3) a non-Pro
