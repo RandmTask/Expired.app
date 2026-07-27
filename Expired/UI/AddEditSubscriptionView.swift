@@ -1744,6 +1744,7 @@ struct AddEditSubscriptionView: View {
             newItem.categoryRaw = isDoc ? nil : selectedCategoryRaw
             newItem.iconData = iconData
             modelContext.insert(newItem)
+            ServicePopularityReporter.reportIfNewService(named: trimmedName)
         }
         // Persist before scheduling so CloudKit export and notifications act on saved data.
         try? modelContext.save()

@@ -2639,6 +2639,7 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PurchaseManager.self) private var purchaseManager
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = true
+    @AppStorage(ServicePopularityReporter.sharingEnabledKey) private var shareServicePopularity = true
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
     @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
     @AppStorage(ScreenshotAISettings.providerKey) private var screenshotAIProviderRaw = ScreenshotAIProvider.automatic.rawValue
@@ -3320,6 +3321,18 @@ struct SettingsView: View {
                     .disabled(isRefreshingFavicons)
                 }
 
+                // PRIVACY
+                settingsSection(title: "Privacy", icon: "hand.raised") {
+                    settingsRow {
+                        macSettingsLabel("Share Subscription Usage", icon: "chart.bar")
+                        Spacer()
+                        Toggle("", isOn: $shareServicePopularity)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .tint(.green)
+                    }
+                }
+
                 // BACKUP & SYNC
                 settingsSection(title: "Backup & Sync", icon: "icloud") {
                     settingsRow {
@@ -3857,6 +3870,22 @@ struct SettingsView: View {
                 .disabled(isRefreshingFavicons)
             } header: {
                 sectionHeader("DATA")
+            }
+
+            // MARK: Privacy
+            Section {
+                HStack {
+                    rowIcon("chart.bar")
+                    Text("Share Subscription Usage").foregroundStyle(.primary)
+                    Spacer()
+                    Toggle("", isOn: $shareServicePopularity)
+                        .labelsHidden()
+                        .tint(.green)
+                }
+            } header: {
+                sectionHeader("PRIVACY")
+            } footer: {
+                Text("When a subscription you add matches a known service (e.g. Netflix), the service name alone is sent anonymously — never your cost, dates, notes, or any identifier — to help prioritize which services Expired recognizes automatically. Off means nothing is ever sent.")
             }
 
             // MARK: Backup & Sync
