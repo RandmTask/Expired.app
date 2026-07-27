@@ -67,6 +67,7 @@ struct ContentView: View {
 #if os(iOS)
         .tabBarMinimizeBehavior(.onScrollDown)
         .expiredOnboardingGate()
+        .expiredSplash()
 #endif
     }
 }

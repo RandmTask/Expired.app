@@ -283,6 +283,23 @@ the picker grid (the catalog is also used by search, which should keep showing e
 
 UK pack (add alongside, same shape): NOW, Sky, BritBox, DAZN — `["GB"]`.
 
+**CA and NZ packs added 2026-07-27** (region coverage widened from AU/UK/US at Deon's
+discretion — natural fits given the AU/NZ/UK/CA Commonwealth-streaming overlap):
+
+| Add | Category | Regions |
+|---|---|---|
+| Crave | Streaming | `["CA"]` |
+| CBC Gem | Streaming | `["CA"]` |
+| TSN+ | Streaming | `["CA"]` |
+| Neon | Streaming | `["NZ"]` |
+| ThreeNow | Streaming | `["NZ"]` |
+| Sky Sport Now | Streaming | `["NZ"]` |
+
+Five region packs total at launch: AU, GB, CA, NZ, and US (US entries are simply the
+global-core tiles — the catalog has no US-only additions, since the global core already
+skews US streaming). Same "region filters the grid, never the catalog" rule applies to
+all five.
+
 **Non-app tiles (6)** — no `appStoreId`, no icon fetch, an SF Symbol instead. These carry
 `"itemType": "document"` where noted so the batch commit routes them correctly:
 
@@ -305,7 +322,56 @@ UK pack (add alongside, same shape): NOW, Sky, BritBox, DAZN — `["GB"]`.
   `proPage` to tag 6; both new pages need the Skip affordance the existing pages have.
 - `Expired/UI/HomeView.swift` — `EmptyStateView` gains the sample card + "Add your
   services" entry point (see below).
-- `Assets.xcassets` — ~26 bundled core icons.
+- `Assets.xcassets/OnboardingIcons/` — ~26 bundled core icons. See "Icon sourcing
+  pipeline" below — **do not** hand-source these one at a time.
+
+**Icon sourcing pipeline — cleanup, then generate, don't hand-source:**
+
+*Cleanup first (required — this is real committed cruft, not hypothetical):*
+`Expired/Assets.xcassets/App​Catalog​Icons​/` is a **dead, already-committed** asset
+catalog folder from an earlier abandoned attempt — 4 imagesets keyed by app-store ID
+(Netflix, YouTube, Spotify, Apple Music) plus a stray `YouTube Music` entry that matches
+no catalog entry, **and every path segment has `U+200B` zero-width-space characters
+baked into the name** (confirmed via `git ls-tree`, visible as `\342\200\213` in the raw
+path bytes — this is why it's easy to miss in a normal `ls`). Nothing in Swift
+references it (`grep -rn "AppCatalogIcons\|UIImage(named" Expired` finds no hits). There's
+also a second, equally-dead duplicate nested inside
+`Expired/Assets.xcassets/AppIcon.appiconset/App​Catalog​Icons​/` — an old
+drag-into-the-wrong-target mistake. Remove both with `git rm -r` (they're tracked) before
+adding the new folder — don't let three similarly-named asset folders coexist.
+
+*Generation — `bin/fetch-onboarding-icons.py` (already written, tested, executable):*
+Reads `Resources/AppCatalog.json`, fetches `artworkUrl512` from the iTunes Lookup API for
+every entry with an `appStoreId` that's either global (no `regions` field) or matches a
+`--region` flag, resizes to 180×180 with macOS's built-in `sips` (no PyPI dependencies —
+`curl`/`sips`/stdlib only), and writes each into
+`Assets.xcassets/OnboardingIcons/<appStoreId>.imageset/` as a **Single Scale** imageset
+(one `icon.png`, no separate 1x/2x/3x files — SwiftUI downsamples for smaller contexts and
+never upsamples, so a single 180px/@3x-resolution source stays sharp everywhere a 60pt
+tile is used). Idempotent — re-running skips imagesets that already have `icon.png`, so
+it's safe to run again after adding a new catalog entry rather than re-fetching all 26.
+
+```bash
+# Core global icons (run once the 32-entry catalog lands):
+python3 bin/fetch-onboarding-icons.py
+
+# Add a region pack's icons on top:
+python3 bin/fetch-onboarding-icons.py --region AU --region GB --region CA --region NZ
+
+# Re-fetch everything (e.g. after a catalog entry's appStoreId changes):
+python3 bin/fetch-onboarding-icons.py --force
+```
+
+Measured, not estimated: a real Netflix fetch through this exact script produced an
+8.5 KB PNG at the correct 180×180 dimensions (verified with `sips -g pixelWidth -g
+pixelHeight` during blueprint-writing). 26 icons × ~8–15 KB ≈ **200–300 KB total** —
+tighter than the ~650 KB figure floated earlier in this doc's decision log; that estimate
+assumed a heavier per-scale asset and can be treated as a safe upper bound, not the actual
+number.
+
+Failures (an app removed from the Store, a wrong ID) print a "fetch these manually or fix
+the ID" list and the script exits non-zero — treat that as a real failure to resolve, not
+noise to ignore; don't ship a tile with a missing icon.
 
 **Flow:**
 

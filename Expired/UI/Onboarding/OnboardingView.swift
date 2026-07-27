@@ -47,6 +47,9 @@ struct OnboardingGate: ViewModifier {
             return
         }
 
+        // A fullScreenCover presents above the splash overlay, so on a first launch the
+        // pager would slide up mid-animation. Let the splash finish first.
+        try? await Task.sleep(for: .seconds(SplashTiming.total))
         showOnboarding = true
     }
 }

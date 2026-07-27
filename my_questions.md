@@ -53,3 +53,23 @@ and it vanishes as soon as a real item exists — no delete, no sync, no residue
 
 The distinction, now written into `_shared/cloudkit-swiftdata.md`: the hazard is
 persistence, not pixels.
+
+## 2026-07-27 — Go ahead and spec the icon sourcing (iTunes scrape vs. manual), for US/AU/UK plus a couple more markets at your discretion.
+
+**A:** Wrote and tested `bin/fetch-onboarding-icons.py` — a one-time dev script (`curl` +
+macOS's built-in `sips`, no PyPI dependency) that reads `AppCatalog.json`, fetches each
+entry's `artworkUrl512` from the iTunes Lookup API, and bakes it into a Single Scale
+imageset (one 180×180 PNG per icon — sharp everywhere, since SwiftUI only ever downsamples
+it, never upsamples). Measured against a real Netflix fetch during spec-writing: 8.5 KB per
+icon, so ~200–300 KB for all 26 core icons, not the ~650 KB ballpark floated earlier.
+
+Added Canada and New Zealand as the extra markets (Crave/CBC Gem/TSN+ for CA, Neon/
+ThreeNow/Sky Sport Now for NZ) — natural fits given the AU/NZ/UK/CA streaming overlap. Five
+region packs at launch: AU, GB, CA, NZ, US.
+
+Also found real cruft while checking for a home for the new icons: a **dead, already-
+committed** asset-catalog folder from an earlier abandoned attempt, with zero-width-space
+characters baked into every path segment (invisible in `ls`, only visible via `git
+ls-tree`'s raw bytes) — plus a second copy of it accidentally dragged into the app icon
+set. Neither is referenced anywhere in Swift. Documented as a required cleanup step in R4
+rather than silently deleting it mid-spec.

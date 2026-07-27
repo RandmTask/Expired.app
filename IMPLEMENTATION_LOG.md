@@ -1,5 +1,15 @@
 # Expired — Implementation Log
 
+## 🔧 IN PROGRESS — R4 Onboarding service picker (started 2026-07-27)
+
+Building per ROADMAP.md's R4 blueprint (decisions locked 2026-07-27).
+- **Built so far:** nothing yet — starting with `AppCatalog.json`/`AppCatalog.swift` extension.
+- **Still to come:** `ServicePickerPage.swift`, `QuickSetupPage.swift`, `OnboardingView.swift` wiring
+  (tags 4/5, reminder-offset picker on the reminders page), `HomeView.EmptyStateView` sample card +
+  "Add your services" entry point, bundled icon assets.
+- **Next step:** extend `Resources/AppCatalog.json` to the full catalog (36 app entries + 6 non-app
+  tiles) and `AppCatalog.swift`'s `Entry`/`onboardingTiles(region:)`.
+
 ## 2026-07-27 (cont.) — TestFlight launch-crash: TRUE root cause found — RevenueCat's own SDK hard-crashes on a Test Store key in Release builds
 
 The supabase-swift fix below was still wrong. Deon ran the app from Xcode directly onto his
