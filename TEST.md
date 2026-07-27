@@ -5,6 +5,54 @@ decision, or an interactive Simulator session he hasn't greenlit yet. Check item
 as they're done; delete a whole entry once verified (its detail lives in
 `ROADMAP.md`/`IMPLEMENTATION_LOG.md` already — this file is just the punch list).
 
+## R4 — Onboarding service picker (added 2026-07-27)
+
+Both platforms build clean (`xcodebuild` generic iOS Simulator + generic macOS). Needs a
+real device/Simulator pass — grid layout, tile tap targets, and the quick-setup menus
+haven't been visually verified.
+
+- [ ] **1.** Fresh install (delete app first), free user, pick 8 services on the grid →
+      all 8 exist on Home after Quick Setup, no paywall shown during onboarding. y/n
+- [ ] **2.** From Home, add a 9th item the normal way → paywall *does* show (free-tier
+      cap still applies outside onboarding). y/n
+- [ ] **3.** Airplane mode, fresh install → grid is usable; tiles with a bundled icon
+      show it, others show a placeholder/initial — no blank tiles, no crash. y/n
+- [ ] **4.** Region set to AU (Settings → App Store Region) → Stan/Binge/Kayo appear in
+      the Streaming group. Region set to US → they're absent from the grid but still
+      findable by typing "Stan" in the Add Item search. y/n
+- [ ] **5.** Pick Netflix → Quick Setup → set billing to Monthly, day to 14, and today is
+      the 20th → after commit, edit the item → renewal date is the 14th of *next*
+      month. y/n
+- [ ] **6.** Same row, switch billing to Yearly → a month picker appears next to the day
+      picker. y/n
+- [ ] **7.** Skip both pages (grid "Skip for now") → Home shows the dimmed sample Netflix
+      card with a SAMPLE chip; Debug → Diagnostics shows item count 0. y/n
+- [ ] **8.** Tap the sample Netflix card → add flow opens prefilled with "Netflix". y/n
+- [ ] **9.** Tap "Add your services" below the sample card → the picker grid reopens as
+      its own sheet (not the full onboarding pager). y/n
+- [ ] **10.** Passport tile → after Quick Setup, the created item appears in the
+      Documents section, not as a subscription. y/n
+- [ ] **11.** Replay Onboarding (Settings → 4s long-press on version footer → Replay),
+      with Netflix already tracked → the Netflix tile shows pre-checked and disabled;
+      completing the flow does not create a duplicate. y/n
+- [ ] **12.** On the reminders onboarding page, set "Remind me" to 5 days before, then
+      pick 2–3 services → each created item's editor shows a single "5 days before"
+      reminder rule. y/n
+- [ ] Screenshot the grid and the Quick Setup rows if spacing/alignment looks off on
+      either iOS or macOS (macOS reaches this only via "Add your services" from Home —
+      onboarding itself is iOS-only, unchanged from before R4).
+
+**Known gap (not blocking, flagged for a future pass):** most of the 16 newly-added
+catalog entries (Audible, Apple TV+, Paramount+, ChatGPT Plus, Canva, Strava, PlayStation
+Plus, Xbox Game Pass, Stan, Binge, Kayo Sports, NOW, Sky, BritBox, DAZN, Amazon Prime)
+don't have a bundled icon yet — they'll show an initial-letter placeholder until real
+logo assets are added to Assets.xcassets keyed by `appStoreId` (same convention as the
+existing Netflix/YouTube/Spotify/Apple Music sets `AppCatalog.swift` now also checks).
+App Store IDs for the new entries in `Resources/AppCatalog.json` are best-effort and
+worth spot-checking — a wrong ID only degrades to a placeholder icon/failed lookup, never
+a crash, but should be verified before relying on the "Read Page with AI"/App Store
+search paths for these specific services.
+
 ## Launch screen / splash (added 2026-07-27)
 
 **Delete the app from the device first** — iOS caches the rendered launch screen, and a

@@ -203,7 +203,16 @@ with currency conversion; `TimelineView` with 6 view modes; `CurrencyRateService
 
 ---
 
-### R4. Onboarding service picker ("what do you subscribe to?") 🔴 — no schema change
+### R4. Onboarding service picker ("what do you subscribe to?") 🟠 — no schema change
+
+> **Status (2026-07-27):** Built — catalog extended (36 app entries + 6 non-app tiles),
+> `ServicePickerPage`/`QuickSetupPage` wired into the onboarding pager (tags 4/5) and into
+> a standalone `ServicePickerSheet` reachable from `HomeView`'s empty state ("Add your
+> services"), sample-Netflix-card empty state, reminder-offset picker on the reminders
+> page. Builds clean on iOS and macOS. **Outstanding before 🟢:** manual verification of
+> all 8 acceptance criteria (see `TEST.md`), and bundled icon assets for ~16 of the newly
+> added catalog entries (they render an initial-letter placeholder until real logo PNGs
+> are added to `Assets.xcassets`, keyed by `appStoreId`).
 
 Netflix-style multi-select logo grid during onboarding, so a first-run user leaves with a
 populated app instead of an empty one. Two new onboarding pages: a **picker grid** (tap to

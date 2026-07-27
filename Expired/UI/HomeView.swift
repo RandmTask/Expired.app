@@ -22,6 +22,7 @@ struct HomeView: View {
 
     @State private var showingAdd = false
     @State private var showingAddHub = false
+    @State private var showingServicePicker = false
     @State private var addHubPrefill: AddEditPrefill?
     @State private var showingImportReview = false
     @State private var editingItem: SubscriptionItem?
@@ -297,6 +298,7 @@ struct HomeView: View {
                 AddEditSubscriptionView(item: nil, prefill: addHubPrefill)
             }
             .sheet(item: $editingItem) { AddEditSubscriptionView(item: $0) }
+            .sheet(isPresented: $showingServicePicker) { ServicePickerSheet() }
             .expiredPaywallSheet(isPresented: $showPaywall)
             .sheet(isPresented: $showingImportReview) {
                 ScreenshotImportReviewSheet(
@@ -520,7 +522,7 @@ struct HomeView: View {
             iosListSections
 
             if allItems.isEmpty {
-                EmptyStateView { openAddSheet() }
+                EmptyStateView(onAdd: { openAddSheet() }, onTapSample: { addHubPrefill = AddEditPrefill(name: "Netflix", categoryRaw: SubscriptionCategory.streaming.rawValue) }, onAddServices: { showingServicePicker = true })
                     .frame(maxWidth: .infinity)
                     .padding(.top, 60)
                     .listRowBackground(Color.clear)
@@ -575,7 +577,7 @@ struct HomeView: View {
                     .padding(.horizontal)
 
                 if allItems.isEmpty {
-                    EmptyStateView { openAddSheet() }
+                    EmptyStateView(onAdd: { openAddSheet() }, onTapSample: { addHubPrefill = AddEditPrefill(name: "Netflix", categoryRaw: SubscriptionCategory.streaming.rawValue) }, onAddServices: { showingServicePicker = true })
                         .padding(.top, 60)
                 } else if allSectionsEmpty && filterOption != .all {
                     VStack(spacing: 8) {
@@ -2616,9 +2618,11 @@ private struct ScreenshotImportPriceEditor: View {
 
 struct EmptyStateView: View {
     let onAdd: () -> Void
+    let onTapSample: () -> Void
+    let onAddServices: () -> Void
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 20) {
             ExpiredBear(expression: .happy, size: 96)
 
             VStack(spacing: 8) {
@@ -2630,15 +2634,74 @@ struct EmptyStateView: View {
                     .multilineTextAlignment(.center)
             }
 
-            Button(action: onAdd) {
-                Label("Add Subscription", systemImage: "plus")
-                    .font(.system(size: 16, weight: .semibold))
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 14)
+            // In-memory sample only — never inserted into modelContext, so it can't
+            // sync, duplicate on reinstall, or need a delete path (see
+            // `_shared/cloudkit-swiftdata.md` §2e's "rendered sample ≠ seeded row").
+            SampleSubscriptionCard(item: PreviewData.netflix, onTap: onTapSample)
+                .padding(.horizontal, 24)
+
+            VStack(spacing: 10) {
+                Button(action: onAdd) {
+                    Label("Add Subscription", systemImage: "plus")
+                        .font(.system(size: 16, weight: .semibold))
+                        .padding(.horizontal, 28)
+                        .padding(.vertical, 14)
+                }
+                .buttonStyle(.glassProminent)
+
+                Button(action: onAddServices) {
+                    Text("Add your services")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundStyle(.secondary)
             }
-            .buttonStyle(.glassProminent)
         }
         .padding()
+    }
+}
+
+/// Dimmed, non-persisted sample row shown only in the empty state. Tapping it is
+/// functional (opens the add flow prefilled with Netflix), not decorative.
+private struct SampleSubscriptionCard: View {
+    let item: SubscriptionItem
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.secondary.opacity(0.15))
+                    Image(systemName: item.systemIconName)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name)
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Renews \(item.nextRenewalDate.formatted(date: .abbreviated, time: .omitted))")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Text("SAMPLE")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(0.4)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.15), in: Capsule())
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .glassEffect(in: .rect(cornerRadius: 16))
+            .opacity(0.6)
+        }
+        .buttonStyle(.plain)
     }
 }
 
