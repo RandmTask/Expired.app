@@ -16,19 +16,20 @@ import SwiftUI
 enum SplashTiming {
     /// Total time from launch to the splash being fully gone. Anything that must not
     /// appear on top of the splash (onboarding) waits this long first.
-    static let total: TimeInterval = 1.5
+    /// TEMP: bumped to 3s so Deon can actually see each stage while testing —
+    /// drop back to ~1.5s (adjust `hold` below) once the look is confirmed.
+    static let total: TimeInterval = 3.0
 
-    static let logoIn: TimeInterval = 0.55
-    static let wordmarkDelay: TimeInterval = 0.28
+    static let wordmarkDelay: TimeInterval = 0.15
     static let wordmarkIn: TimeInterval = 0.40
-    static let hold: TimeInterval = 0.30
-    static let out: TimeInterval = 0.38
+    static let out: TimeInterval = 0.40
+    /// Whatever's left after the fixed stages above, so `total` stays authoritative.
+    static let hold: TimeInterval = total - wordmarkDelay - wordmarkIn - out
 }
 
 struct SplashView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var logoShown = false
     @State private var wordmarkShown = false
     @State private var leaving = false
 
@@ -51,12 +52,13 @@ struct SplashView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 22) {
+                // No entrance animation here on purpose — this must be on screen in the
+                // very first frame, matching the static launch screen the instant it hands
+                // over. Only the wordmark animates in after it (the Duolingo pattern).
                 Image("LaunchLogo")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 118, height: 118)
-                    .opacity(logoShown ? 1 : 0)
-                    .scaleEffect(reduceMotion ? 1 : (logoShown ? 1 : 0.82))
 
                 Text("expired.")
                     .font(.system(size: 38, weight: .bold, design: .rounded))
@@ -74,14 +76,10 @@ struct SplashView: View {
 
     private func run() async {
         if reduceMotion {
-            withAnimation(.easeOut(duration: SplashTiming.logoIn)) {
-                logoShown = true
+            withAnimation(.easeOut(duration: SplashTiming.wordmarkIn)) {
                 wordmarkShown = true
             }
         } else {
-            withAnimation(.spring(response: SplashTiming.logoIn, dampingFraction: 0.7)) {
-                logoShown = true
-            }
             try? await Task.sleep(for: .seconds(SplashTiming.wordmarkDelay))
             withAnimation(.easeOut(duration: SplashTiming.wordmarkIn)) {
                 wordmarkShown = true

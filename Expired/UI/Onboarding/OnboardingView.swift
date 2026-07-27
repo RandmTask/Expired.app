@@ -215,10 +215,31 @@ struct OnboardingView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             notificationButton
+            reminderOffsetPicker
             Spacer()
             Spacer()
         }
         .padding(.horizontal, 32)
+    }
+
+    /// Sets the default lead time used both by the copy above and by every item R4's
+    /// picker grid seeds (`QuickSetupPage` reads this directly) — one control instead
+    /// of a separate "reminder defaults" setting.
+    private var reminderOffsetPicker: some View {
+        VStack(spacing: 6) {
+            Text("Remind me")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Picker("Remind me", selection: $reminderOffsetDays) {
+                Text("1 day before").tag(1)
+                Text("3 days before").tag(3)
+                Text("5 days before").tag(5)
+                Text("7 days before").tag(7)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+        .padding(.top, 4)
     }
 
     private var proPage: some View {
@@ -387,7 +408,7 @@ struct OnboardingView: View {
                 Haptics.fire(.light)
                 withAnimation { pageIndex += 1 }
             } label: {
-                Text(pageIndex == pageCount - 2 ? "Continue" : "Next")
+                Text("Next")
                     .font(.system(size: 16, weight: .semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
