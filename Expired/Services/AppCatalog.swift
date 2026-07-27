@@ -61,6 +61,22 @@ struct AppCatalog {
             .map(\.0)
     }
 
+    /// Exact-match lookup against the catalog's canonical name/aliases — used to decide
+    /// whether a saved item's name is safe to report to the anonymous service-popularity
+    /// counter (never sends arbitrary free-text a user typed). Returns the catalog's
+    /// canonical display name (not the alias that matched) so counts aren't split across
+    /// spelling variants.
+    static func knownServiceName(for query: String) -> String? {
+        let queryKey = canonicalName(query)
+        guard !queryKey.isEmpty,
+              let entry = entries.first(where: { entry in
+                  entry.lookupNames.contains { canonicalName($0) == queryKey }
+              }) else {
+            return nil
+        }
+        return entry.name
+    }
+
     static func localIconMatch(for query: String) -> LocalIconMatch? {
         let queryKey = canonicalName(query)
         guard !queryKey.isEmpty,

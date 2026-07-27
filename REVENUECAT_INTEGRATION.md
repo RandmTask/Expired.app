@@ -232,13 +232,18 @@ details. Expired currently checks `Expired Pro`.
 ### Still to complete
 
 - Configure and verify the yearly 7-day introductory offer in ASC.
-- Resolve the two paywall-editor validation issues ("Add a URL to the button" —
-  Terms/Privacy links on the draft template) and publish the paywall with yearly
-  featured. Currently an unpublished draft using a generic "MellowMind"
-  meditation-app template with placeholder pricing — cosmetically unrelated to
-  Expired, needs real copy/branding before publishing. Not a functional blocker:
-  RevenueCatUI shows its own default paywall UI when no custom one is published,
-  it doesn't crash or block purchases.
+- ~~Resolve the two paywall-editor validation issues... and publish~~ — **done
+  2026-07-27.** Renamed "Untitled Paywall" → "Expired Pro Paywall", rebranded via
+  RevenueCat's AI paywall editor (headline "Unlock Expired Pro", 3 feature bullets,
+  blue theme, new header image), Terms button → Apple's standard EULA
+  (`https://www.apple.com/legal/internet-services/itunes/dev/stdeula/`), Privacy
+  button → the new interim policy page (`docs/privacy.html`, hosted at
+  `https://randmtask.github.io/Expired.app/privacy.html`), added the missing
+  Lifetime Pro package (the original template only had 2 tiers), and published.
+  Verified live under Paywalls → Published. Package rows use `{{ product.price_per_* }}`
+  template bindings to the real `$rc_monthly`/`$rc_annual`/`$rc_lifetime` packages —
+  the editor's preview prices ($9.99/mo etc.) are dummy placeholders; the real app
+  pulls actual StoreKit prices at runtime.
 - Configure/test the Supabase webhook and production secret path.
 - ~~Replace the test SDK key in the release configuration~~ — **done 2026-07-27.**
   See `IMPLEMENTATION_LOG.md`'s 2026-07-27 entry: this was the actual TestFlight

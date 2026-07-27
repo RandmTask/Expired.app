@@ -203,7 +203,182 @@ with currency conversion; `TimelineView` with 6 view modes; `CurrencyRateService
 
 ---
 
-**Build order: R1 → R2 → R3** (locked 2026-07-05 — reminders are the app's core job).
+### R4. Onboarding service picker ("what do you subscribe to?") 🔴 — no schema change
+
+Netflix-style multi-select logo grid during onboarding, so a first-run user leaves with a
+populated app instead of an empty one. Two new onboarding pages: a **picker grid** (tap to
+toggle, ~32 tiles) and a **quick setup** batch screen (cost + renewal date inline, one
+compact row per selection). Replaces the cold-start "here's an empty list, go add
+something" moment that currently follows onboarding.
+
+**Decisions locked (2026-07-27):**
+
+- **Free-tier cap is waived for onboarding-seeded items.** `HomeView.freeItemLimit = 5`
+  ([`HomeView.swift:17`](Expired/UI/HomeView.swift), enforced in `openAddSheet()` at
+  `:1411`) stays as-is for the normal add path, but items created by R4's batch commit
+  bypass it. Rationale: the cap exists to convert, and converting 90 seconds into first
+  launch — before the app has demonstrated anything — is the worst possible moment to ask.
+  A free user who picks 8 keeps 8; adding a 9th via the normal path hits the paywall.
+  **Consequence accepted:** the free tier is effectively "5, or up to ~32 via onboarding."
+  Grid selection is capped at 10 to bound this.
+- **`nextRenewalDate` stays non-optional** — no schema change. Quick Setup asks for
+  **day-of-month** ("renews on the 14th") and derives the next future occurrence, rather
+  than making the field optional. When billing cycle is `.yearly`, a month picker appears
+  alongside the day. Skipping the date entirely falls back to `today + 1 cycle`.
+- **No price prefills.** Prices are regional and plan-dependent; a confidently-wrong price
+  is worse than an empty field and rots silently. Empty field, currency symbol shown,
+  numeric keyboard focused. `cost: Double?` is already optional, so unknown-cost is
+  representable — unknown-date is not, hence the point above.
+- **Icons: bundle the global core, fetch the region packs.** Only ~6 of 32 tiles are
+  region-specific; the rest (Netflix, Spotify, Disney+, Prime, Apple TV+, ChatGPT, Adobe,
+  Dropbox, Audible…) are global, as are all 6 non-app tiles. Bundle ~26 core icons as
+  assets (~650 KB at 360 px PNG) so the grid is instant and offline-proof; region-pack
+  icons resolve at runtime through the existing `itunes.apple.com/lookup` path. Worst case
+  offline is 5 placeholder tiles, not 32. Trademark note: this is nominative use for
+  identification, same as the App Store search already does at runtime — accepted
+  deliberately, not by default.
+- **Region packs: AU, UK, US at launch.** Everywhere else gets the global core, which is
+  genuinely usable (a Brazilian user sees Netflix/Spotify/Disney+/Prime and misses
+  Globoplay, which the "Add your own" tile covers). Adding a pack later is a JSON edit,
+  no code change.
+- **Region filters the grid, never the catalog.** Other regions' entries stay in
+  `AppCatalog.json` and remain reachable via `AppCatalog.search` / "Add your own" — an
+  Australian living in London still needs Stan findable.
+- **Placed after the reminders page, before the Pro page.** The user has just built a real
+  list of their own services and just set their reminder offset; "all 8 of these are now
+  armed, keep them all with Pro" is far more concrete than an abstract feature list.
+  Placing it right after `welcomePage` was rejected — the user doesn't yet know what the
+  app does, so the grid has no context.
+- **Selecting a service auto-creates its reminder** using the default offset configured on
+  the preceding reminders page. This is the payoff of the ordering above.
+- **Empty state gets a non-persisted sample card, not a seeded row.** See "Empty state"
+  below — this is a deliberate carve-out from the demo-seeding ban, documented in
+  [`_shared/cloudkit-swiftdata.md`](../_shared/cloudkit-swiftdata.md).
+- **Non-app tiles create document-type items** (`itemTypeRaw`), not subscriptions, so
+  Passport / Insurance / Rego land in the right Home section from the start.
+- **No search field on the grid.** The grid's job is *recall* ("oh right, I pay for
+  Audible"), not lookup — a search field turns it into `AddItemHubView`, which already
+  exists. The "Add your own" tile at the end covers the miss case.
+
+**Catalog changes — `Resources/AppCatalog.json` (20 → 32 + 6 non-app):**
+
+Add an optional `"regions": ["AU"]` field; **absent means global**. Existing 20 entries all
+stay global. Also add an optional `"onboarding": true` flag marking which entries appear in
+the picker grid (the catalog is also used by search, which should keep showing everything).
+
+| Add (12) | Category | Regions |
+|---|---|---|
+| Audible | Streaming | global |
+| Apple TV+ | Streaming | global |
+| Paramount+ | Streaming | global |
+| Amazon Prime *(distinct from Prime Video)* | Personal & Lifestyle | global |
+| ChatGPT Plus | Work & Productivity | global |
+| Canva | Work & Productivity | global |
+| Strava | Health & Fitness | global |
+| PlayStation Plus | Personal & Lifestyle | global |
+| Xbox Game Pass | Personal & Lifestyle | global |
+| Stan | Streaming | `["AU"]` |
+| Binge | Streaming | `["AU"]` |
+| Kayo Sports | Streaming | `["AU"]` |
+
+UK pack (add alongside, same shape): NOW, Sky, BritBox, DAZN — `["GB"]`.
+
+**Non-app tiles (6)** — no `appStoreId`, no icon fetch, an SF Symbol instead. These carry
+`"itemType": "document"` where noted so the batch commit routes them correctly:
+
+`Gym` (figure.run) · `Insurance` (shield.lefthalf.filled, document) · `Rent / Mortgage`
+(house.fill) · `Car registration` (car.fill, document) · `Passport`
+(person.text.rectangle.fill, document) · `Utilities` (bolt.fill)
+
+**Files:**
+
+- `Expired/Services/AppCatalog.swift` — add `regions`/`onboarding`/`itemType`/`symbolName`
+  to `Entry`; add `static func onboardingTiles(region:) -> [OnboardingTile]` returning
+  global + region-matched entries, region-matched sorted first within each category. Lift
+  the `regionCode` computation out of [`AddItemHubView.swift:38`](Expired/UI/AddItemHubView.swift)
+  into `AppCatalog` so both read one source. Do **not** change `search(_:limit:)` — it must
+  keep returning every region's entries.
+- `Expired/UI/Onboarding/ServicePickerPage.swift` (new) — the grid.
+- `Expired/UI/Onboarding/QuickSetupPage.swift` (new) — the batch screen + commit.
+- `Expired/UI/Onboarding/OnboardingView.swift` — insert the two pages as tags 4 and 5 in
+  the existing `TabView` ([`:80`](Expired/UI/Onboarding/OnboardingView.swift)), pushing
+  `proPage` to tag 6; both new pages need the Skip affordance the existing pages have.
+- `Expired/UI/HomeView.swift` — `EmptyStateView` gains the sample card + "Add your
+  services" entry point (see below).
+- `Assets.xcassets` — ~26 bundled core icons.
+
+**Flow:**
+
+```
+splash → welcome → subs&docs → screenshot import → reminders
+                                                       ↓
+                                            ★ PICK YOUR SERVICES (grid)
+                                                       ↓
+                                            ★ QUICK SETUP (batch rows)
+                                                       ↓
+                                                   pro page → paywall
+```
+
+**Page A — grid.** 3 columns on iPhone, category-grouped with sticky pill headers matching
+`GlassSectionView`. Tile = 60 pt icon + name, `.glassEffect(in: .rect(cornerRadius: 20))`
+per the design system; selected = tinted border + checkmark badge. Sticky footer CTA reads
+`Continue with 4 selected`, or `Skip for now` at zero. Selection capped at 10 (tile 11 gets
+a `.warning` haptic + inline note, not a paywall). Final tile is **"Add your own"** →
+dismisses onboarding into `AddItemHubView`.
+
+**Page B — quick setup.** One compact row per selection:
+`[icon] Netflix · [$ cost] · [monthly ▾] · [renews on 14th ▾]`. Inline editing only — **never
+push N sequential `AddEditSubscriptionView` sheets**, which is unbearable at 8 items. Row
+order matches selection order. A per-row `×` removes it from the batch. Commit button reads
+`Add 4 items`.
+
+**Commit:** one `modelContext` insert loop + a single `save()`, then
+`NotificationManager.shared.refreshAll(context:)` once at the end — not per item. Dedupe
+against existing items on `AppCatalog.canonicalName` before inserting.
+
+**Empty state (`EmptyStateView`, used at [`HomeView.swift:522`](Expired/UI/HomeView.swift)
+and `:577`):**
+
+Render a **dimmed sample Netflix card with a `SAMPLE` chip** — a `SubscriptionItem`
+constructed in memory and **never inserted into `modelContext`**. `PreviewData.swift`
+already builds exactly these throwaway items for its `isStoredInMemoryOnly` container;
+reuse that construction rather than writing a parallel one. Tapping it opens the add flow
+**prefilled with Netflix** (a functional shortcut, not decoration). It disappears the moment
+`allItems` is non-empty — no delete, no sync, no residue. Below it, an **"Add your
+services"** button reopens the R4 picker grid, giving the grid a permanent home instead of
+being a one-shot onboarding page.
+
+**Replay (per [`_shared/onboarding-conventions.md`](../_shared/onboarding-conventions.md)):**
+both new pages *do* appear on replay — services already tracked render pre-checked and
+disabled rather than being skipped. Dedupe on `AppCatalog.canonicalName`, not raw string
+equality. Note that `OnboardingGate.checkOnboardingState()`
+([`:39`](Expired/UI/Onboarding/OnboardingView.swift)) marks onboarding complete whenever
+item count > 0 — that's the *launch gate* and is correct; replay must bypass it via the
+transient trigger the conventions doc describes, not by touching `hasCompletedOnboarding`.
+
+**Acceptance criteria:**
+1. Fresh install, free user, pick 8 services → all 8 exist on Home, no paywall shown during
+   onboarding. Adding a 9th from Home *does* show the paywall.
+2. Airplane mode, fresh install → all core tiles render their bundled icons; only
+   region-pack tiles show placeholders. Grid is fully usable.
+3. Region set to AU → Stan/Binge/Kayo appear at the top of Streaming. Region set to US →
+   they're absent from the grid but still findable by typing "Stan" in `AddItemHubView`.
+4. Pick Netflix + set "renews on the 14th" on the 20th of the month → `nextRenewalDate` is
+   the 14th of *next* month. Yearly cycle exposes a month picker; skipping the date gives
+   `today + 1 cycle`.
+5. Skip both pages → Home shows the sample Netflix card with a `SAMPLE` chip; the item count
+   is 0 (verify in Debug → Diagnostics, not just visually) and nothing syncs to CloudKit.
+6. Passport tile → creates a *document*-type item in the documents section, not a
+   subscription.
+7. Replay from Settings with Netflix already tracked → Netflix tile is pre-checked and
+   disabled; completing the flow creates no duplicate.
+8. Reminder offset set to 5 days on the reminders page → all 8 seeded items have a 5-day
+   rule, verified in the item editor.
+
+---
+
+**Build order: R1 → R2 → R3 → R4** (R1–R3 locked 2026-07-05 — reminders are the app's core
+job; R4 appended 2026-07-27, it depends on R1's reminder defaults being settled).
 
 ## Post-v1.0
 
