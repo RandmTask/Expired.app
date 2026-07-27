@@ -67,21 +67,20 @@ struct RemindersEditorView: View {
         if notifications.isEmpty {
             emptyLabel
         } else {
-            ForEach(notifications.indices, id: \.self) { index in
+            ForEach(Array(notifications.enumerated()), id: \.element.id) { index, rule in
                 if index > 0 {
                     Divider().padding(.leading, 16)
                 }
                 ReminderRuleRow(
-                    rule: notifications[index],
+                    rule: rule,
                     baseDate: baseDate,
                     itemHour: itemHour,
                     itemMinute: itemMinute,
                     onDelete: {
-                        let i = index
-                        withAnimation { _ = notifications.remove(at: i) }
+                        withAnimation { notifications.removeAll { $0.id == rule.id } }
                     },
                     onUpdate: { updated in
-                        applyUpdate(updated, at: index)
+                        applyUpdate(updated, ruleID: rule.id)
                     }
                 )
             }
@@ -136,8 +135,9 @@ struct RemindersEditorView: View {
         }
     }
 
-    private func applyUpdate(_ updated: NotificationRuleDraft, at index: Int) {
+    private func applyUpdate(_ updated: NotificationRuleDraft, ruleID: UUID) {
         var updatedList = notifications
+        guard let index = updatedList.firstIndex(where: { $0.id == ruleID }) else { return }
         let duplicateIndices = updatedList.indices.filter { i in
             i != index && isDuplicate(updated, updatedList[i])
         }
