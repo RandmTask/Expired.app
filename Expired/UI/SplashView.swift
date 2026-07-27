@@ -16,12 +16,11 @@ import SwiftUI
 enum SplashTiming {
     /// Total time from launch to the splash being fully gone. Anything that must not
     /// appear on top of the splash (onboarding) waits this long first.
-    /// TEMP: bumped to 3s so Deon can actually see each stage while testing —
-    /// drop back to ~1.5s (adjust `hold` below) once the look is confirmed.
-    static let total: TimeInterval = 3.0
+    static let total: TimeInterval = 2.5
 
-    static let wordmarkDelay: TimeInterval = 0.15
-    static let wordmarkIn: TimeInterval = 0.40
+    static let logoIn: TimeInterval = 0.40
+    static let wordmarkDelay: TimeInterval = 0.25
+    static let wordmarkIn: TimeInterval = 0.60
     static let out: TimeInterval = 0.40
     /// Whatever's left after the fixed stages above, so `total` stays authoritative.
     static let hold: TimeInterval = total - wordmarkDelay - wordmarkIn - out
@@ -30,6 +29,7 @@ enum SplashTiming {
 struct SplashView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @State private var logoShown = false
     @State private var wordmarkShown = false
     @State private var leaving = false
 
@@ -52,13 +52,14 @@ struct SplashView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 22) {
-                // No entrance animation here on purpose — this must be on screen in the
-                // very first frame, matching the static launch screen the instant it hands
-                // over. Only the wordmark animates in after it (the Duolingo pattern).
+                // Fade starts the instant the splash appears — no delay before the logo
+                // begins showing, matching the static launch screen's handover — it just
+                // isn't at full opacity for its first `logoIn` seconds.
                 Image("LaunchLogo")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 118, height: 118)
+                    .opacity(logoShown ? 1 : 0)
 
                 Text("expired.")
                     .font(.system(size: 38, weight: .bold, design: .rounded))
@@ -75,18 +76,20 @@ struct SplashView: View {
     }
 
     private func run() async {
-        if reduceMotion {
-            withAnimation(.easeOut(duration: SplashTiming.wordmarkIn)) {
-                wordmarkShown = true
-            }
-        } else {
+        // Kick off both fades in the same run-loop turn: the logo starts immediately,
+        // the wordmark is merely scheduled to start `wordmarkDelay` later — this is not
+        // "wait, then start the wordmark fade," it's "start both clocks now."
+        withAnimation(.easeOut(duration: SplashTiming.logoIn)) {
+            logoShown = true
+        }
+        Task {
             try? await Task.sleep(for: .seconds(SplashTiming.wordmarkDelay))
             withAnimation(.easeOut(duration: SplashTiming.wordmarkIn)) {
                 wordmarkShown = true
             }
         }
 
-        try? await Task.sleep(for: .seconds(SplashTiming.hold))
+        try? await Task.sleep(for: .seconds(SplashTiming.wordmarkDelay + SplashTiming.hold))
         withAnimation(.easeIn(duration: SplashTiming.out)) {
             leaving = true
         }
