@@ -15,7 +15,14 @@ final class SupabaseService {
     private init() {
         client = SupabaseClient(
             supabaseURL: BackendConfig.supabaseURL,
-            supabaseKey: BackendConfig.supabasePublishableKey
+            supabaseKey: BackendConfig.supabasePublishableKey,
+            // Opts into the SDK's forthcoming default: emit the locally stored session
+            // immediately as the initial session (checking `isExpired` ourselves where it
+            // matters), instead of the current default that awaits a network refresh first.
+            // The SDK's own runtime warning flags the current default as "incorrect
+            // behavior... will be fixed in the next major release" — see
+            // https://github.com/supabase/supabase-swift/pull/822.
+            options: SupabaseClientOptions(auth: .init(emitLocalSessionAsInitialSession: true))
         )
     }
 

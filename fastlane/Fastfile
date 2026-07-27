@@ -1,0 +1,42 @@
+default_platform(:ios)
+
+PROJECT_PATH = "Expired.xcodeproj"
+SCHEME = "Expired"
+APP_IDENTIFIER = "com.swiftstudio.Expired"
+DEVELOPER_TEAM_ID = "NWB3XNKTN6"
+XCODE_PATH = "/Applications/Xcode-beta.app"
+
+before_all do
+  skip_docs
+  ensure_bundle_exec
+  xcode_select(XCODE_PATH)
+  ENV["LC_ALL"] = "en_US.UTF-8"
+  ENV["LANG"] = "en_US.UTF-8"
+end
+
+private_lane :connect_api_key do
+  ensure_env_vars(env_vars: %w[ASC_KEY_ID ASC_KEY_PATH])
+  key_path = File.expand_path(ENV.fetch("ASC_KEY_PATH"))
+  UI.user_error!("ASC_KEY_PATH does not exist: #{key_path}") unless File.file?(key_path)
+  app_store_connect_api_key(key_id: ENV.fetch("ASC_KEY_ID"), issuer_id: ENV["ASC_ISSUER_ID"], key_filepath: key_path, duration: 1200, in_house: false)
+end
+
+private_lane :build_release do
+  build_app(project: PROJECT_PATH, scheme: SCHEME, configuration: "Release", export_method: "app-store", export_team_id: DEVELOPER_TEAM_ID, destination: "generic/platform=iOS", output_directory: "build/fastlane", output_name: "Expired.ipa", clean: false, xcargs: "-allowProvisioningUpdates", export_xcargs: "-allowProvisioningUpdates")
+end
+
+platform :ios do
+  lane(:archive) { build_release }
+  lane :beta do |options|
+    api_key = connect_api_key
+    version = get_version_number(xcodeproj: PROJECT_PATH, target: SCHEME)
+    local_build = get_build_number(xcodeproj: PROJECT_PATH).to_i
+    remote_build = latest_testflight_build_number(api_key: api_key, app_identifier: APP_IDENTIFIER, version: version, initial_build_number: 0).to_i
+    increment_build_number(xcodeproj: PROJECT_PATH, build_number: [local_build, remote_build + 1].max)
+    build_release
+    upload_options = { api_key: api_key, app_identifier: APP_IDENTIFIER, skip_waiting_for_build_processing: true, skip_submission: true, notify_external_testers: false }
+    changelog = options[:changelog].to_s.strip
+    upload_options[:changelog] = changelog unless changelog.empty?
+    upload_to_testflight(**upload_options)
+  end
+end

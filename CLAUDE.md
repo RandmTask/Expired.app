@@ -623,6 +623,31 @@ If you've made 2+ attempts at the same bug without a fix, stop and:
 
 ---
 
+## Debug Menu (hidden, per `_shared/settings-conventions.md`)
+
+- **Entry gesture:** iOS — 4-second long-press on the Settings **version footer**
+  (bottom of the list, `Expired X.Y (build)`). macOS — ⌥-click the same footer. A
+  plain tap/click (no modifier) copies the version string to the pasteboard instead.
+  No visible affordance either way. (Relocated 2026-07-27 from a long-press on the
+  Screenshot Import "Analyzer" row — that trigger no longer exists.)
+- **Contents** (`UI/DebugAIFailureSimulatorView.swift`): Diagnostics (Copy Diagnostic
+  Report — app/device/RevenueCat/Supabase/CloudKit state in one pasteable block),
+  Testing tools (Replay Onboarding, Mascot Gallery), Reset Data, CloudKit Debug
+  (account/store/transcript + copy), Force AI Failure simulator, Identity Repair.
+- **Safe for TestFlight** (no visible control, testers won't stumble into it); must
+  be stripped or hard-gated before public App Store release since it includes
+  destructive data-reset actions. Simplest removal path when the time comes: delete
+  the version-footer gesture modifiers in `ContentView.swift` (`versionFooterRow`)
+  and the `DebugAIFailureSimulatorView` sheet presentations — the view itself can
+  stay in the target unused.
+- **RevenueCat key mode is surfaced here on purpose.** `BackendConfig.revenueCatAPIKey`
+  is currently a Test Store key (`test_...`) — the Diagnostics section shows a red
+  warning row whenever it detects that prefix, so it can't be silently forgotten
+  before submission. Do not remove that warning when swapping to the production key;
+  it should simply stop firing once the key is `appl_...`.
+
+---
+
 ## Collaboration Style
 
 ### How to work with this codebase

@@ -1,10 +1,12 @@
 import SwiftUI
 import SwiftData
 
-/// Testing-only sheet, reachable via a hidden long-press on the Settings "Analyzer"
-/// row — never a visible control. Bundles the AI-cascade failure simulator with the
-/// other developer utilities (replay onboarding, mascot preview, reset data,
-/// CloudKit debug). Never shown to real users.
+/// Testing-only sheet, reachable via a hidden 4-second long-press (iOS) / ⌥-click
+/// (macOS) on the Settings version footer — never a visible control. Bundles the
+/// AI-cascade failure simulator with the other developer utilities (replay
+/// onboarding, mascot preview, reset data, CloudKit debug, diagnostic report).
+/// Safe to ship in TestFlight (no visible affordance); strip before public App
+/// Store release per `_shared/settings-conventions.md`.
 struct DebugAIFailureSimulatorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -27,6 +29,7 @@ struct DebugAIFailureSimulatorView: View {
     var body: some View {
         NavigationStack {
             List {
+                diagnosticsSection
                 testingToolsSection
                 resetSection
                 cloudKitDebugSection
@@ -42,7 +45,7 @@ struct DebugAIFailureSimulatorView: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .alert("Reset All Subscriptions?", isPresented: $showResetConfirm) {
+            .alert("Delete All Data?", isPresented: $showResetConfirm) {
                 Button("Delete Everything", role: .destructive) { resetSubscriptions() }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -57,6 +60,61 @@ struct DebugAIFailureSimulatorView: View {
         #if os(macOS)
         .frame(minWidth: 380, minHeight: 320)
         #endif
+    }
+
+    // MARK: - Diagnostics
+
+    /// One-tap launch/crash diagnostic report — the fastest path to getting Deon's
+    /// device state into a bug report without reading him the Xcode console.
+    private var diagnosticsSection: some View {
+        Section {
+            Button {
+                copyToPasteboard(buildDiagnosticReport())
+                Haptics.fire(.success)
+            } label: {
+                Label("Copy Diagnostic Report", systemImage: "doc.on.doc")
+            }
+            if BackendConfig.revenueCatAPIKey.hasPrefix("test_") {
+                Label("RevenueCat is using a TEST STORE key — swap before App Store submission", systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+        } header: {
+            Text("Diagnostics")
+        } footer: {
+            Text("Copies app/device/CloudKit/RevenueCat/Supabase state as text — paste it directly into a bug report.")
+        }
+    }
+
+    private func buildDiagnosticReport() -> String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        #if os(iOS)
+        let platform = "iOS \(UIDevice.current.systemVersion) (\(UIDevice.current.model))"
+        #elseif os(macOS)
+        let platform = "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"
+        #else
+        let platform = "Unknown"
+        #endif
+        let keyMode = BackendConfig.revenueCatAPIKey.hasPrefix("test_") ? "TEST STORE (not production-safe)" : "Production"
+
+        var lines: [String] = []
+        lines.append("Expired Diagnostic Report")
+        lines.append("Generated: \(Date().formatted(date: .abbreviated, time: .standard))")
+        lines.append("App: \(version) (\(build))")
+        lines.append("Platform: \(platform)")
+        lines.append("Bundle ID: \(Bundle.main.bundleIdentifier ?? "unknown")")
+        lines.append("")
+        lines.append("RevenueCat key mode: \(keyMode)")
+        lines.append("RevenueCat configured: \(PurchaseManager.shared.isConfigured)")
+        lines.append("RevenueCat appUserID: \(PurchaseManager.shared.appUserID ?? "nil")")
+        lines.append("isPremium: \(PurchaseManager.shared.isPremium)")
+        lines.append("")
+        lines.append("Supabase user ID: \(SupabaseService.shared.currentUserID ?? "nil")")
+        lines.append("")
+        lines.append(cloudKitDebug.transcript())
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Testing tools
@@ -93,7 +151,7 @@ struct DebugAIFailureSimulatorView: View {
                     Image(systemName: "trash")
                         .foregroundStyle(.red)
                         .frame(width: 22, alignment: .center)
-                    Text("Reset Subscriptions")
+                    Text("Delete All Data")
                         .foregroundStyle(.primary)
                 }
             }
@@ -107,14 +165,14 @@ struct DebugAIFailureSimulatorView: View {
                     Image(systemName: "arrow.counterclockwise")
                         .foregroundStyle(.secondary)
                         .frame(width: 22, alignment: .center)
-                    Text("Reset for Testing")
+                    Text("Reset Premium Status")
                         .foregroundStyle(.primary)
                 }
             }
         } header: {
             Text("Reset Data")
         } footer: {
-            Text("Wipes all subscription/document data for a clean test run. Deletes on every synced device. Reset for Testing logs out the RevenueCat sandbox identity.")
+            Text("Delete All Data permanently deletes every subscription/document (Netflix, insurance, etc.) — not just the Pro purchase. Reset Premium Status leaves your subscription data untouched and only logs RevenueCat out to a fresh sandbox identity, so Expired Pro shows inactive again for testing the paywall.")
         }
     }
 

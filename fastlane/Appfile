@@ -1,0 +1,2 @@
+app_identifier(ENV.fetch("APP_IDENTIFIER", "com.swiftstudio.Expired"))
+team_id(ENV.fetch("DEVELOPER_TEAM_ID", "NWB3XNKTN6"))

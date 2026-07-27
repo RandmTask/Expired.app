@@ -57,6 +57,36 @@ as they're done; delete a whole entry once verified (its detail lives in
       Console before the next TestFlight build or those fields won't sync for
       testers on the old schema.
 
+## Launch crash fix + debug menu relocation (2026-07-27 batch)
+
+- [ ] **TestFlight: fresh install launches without crashing.** CONFIRMED root cause
+      (reproduced live under the Xcode debugger running Release-on-device, not just
+      inferred from a stripped `.ips`): RevenueCat's own SDK deliberately
+      `fatalError`s (`Configuration.swift`'s `checkForSimulatedStoreAPIKeyInRelease`)
+      whenever a Test Store (`test_…`) key runs in a Release build — TestFlight is
+      always Release. There is no workaround; the only fix is the real key. Fixed by
+      swapping `BackendConfig.revenueCatAPIKey` to the real "Expired (App Store)" SDK
+      key (`appl_…`, already provisioned in RevenueCat since 2026-07-11, just never
+      wired into the app). **Needs a real TestFlight build + reinstall to verify** —
+      Debug/Release builds succeeding locally isn't proof, only that it compiles.
+      The two earlier guesses this session (a `supabase-swift` force-unwrap bug, and
+      a theoretical RevenueCatUI paywall-workflow crash) were both wrong for this
+      specific incident — kept as real, harmless improvements (version bump,
+      `PaywallGate`) but neither was the actual cause.
+- [ ] **TestFlight: onboarding → "Start Free Trial" doesn't crash either.** Now
+      exercises the real paywall config for the first time — worth confirming
+      explicitly: fresh install, walk onboarding to the Pro page, tap Start Free
+      Trial. Expect RevenueCatUI's default paywall UI (no custom one is published
+      yet — see `REVENUECAT_INTEGRATION.md`'s "Still to complete") — never a crash.
+- [ ] **iOS: Settings → 4-second long-press on the version footer opens Debug
+      Menu.** No visible affordance beforehand. The old long-press on the
+      "Analyzer" row in Screenshot Import no longer does anything.
+- [ ] **macOS: Settings → ⌥-click the version footer opens Debug Menu**; a plain
+      click copies `Expired 1.0 (n)` to the pasteboard.
+- [ ] **Debug Menu → Diagnostics → Copy Diagnostic Report** produces a pasteable
+      block with app version/build, device, RevenueCat key mode (should say
+      "TEST STORE"), CloudKit summary, and Supabase user ID.
+
 ## Launch gate (blocks TestFlight/App Store — see `ROADMAP.md` for full detail)
 
 - [ ] Real App Store Connect app in RevenueCat (only synthetic Test Store exists today).

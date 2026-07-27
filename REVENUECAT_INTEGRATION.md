@@ -232,11 +232,22 @@ details. Expired currently checks `Expired Pro`.
 ### Still to complete
 
 - Configure and verify the yearly 7-day introductory offer in ASC.
-- Resolve the two paywall-editor validation issues and publish the paywall with
-  yearly featured.
+- Resolve the two paywall-editor validation issues ("Add a URL to the button" —
+  Terms/Privacy links on the draft template) and publish the paywall with yearly
+  featured. Currently an unpublished draft using a generic "MellowMind"
+  meditation-app template with placeholder pricing — cosmetically unrelated to
+  Expired, needs real copy/branding before publishing. Not a functional blocker:
+  RevenueCatUI shows its own default paywall UI when no custom one is published,
+  it doesn't crash or block purchases.
 - Configure/test the Supabase webhook and production secret path.
-- Replace the test SDK key in the release configuration and flip off sandbox
-  fallback at launch.
+- ~~Replace the test SDK key in the release configuration~~ — **done 2026-07-27.**
+  See `IMPLEMENTATION_LOG.md`'s 2026-07-27 entry: this was the actual TestFlight
+  crash cause (RevenueCat's SDK hard-crashes on a Test Store key in a Release
+  build, by design). `BackendConfig.swift` now uses the real `Expired (App Store)`
+  SDK key. Still TODO: flip off any sandbox-only fallback (the `X-Is-Sandbox: true`
+  header in the AI proxy's entitlement check, per `monetization-stack-decisions`
+  memory gotcha #4) before actual App Store release — not urgent while
+  TestFlight-only.
 
 ## 9. Evidence log template
 

@@ -1,5 +1,138 @@
 # Expired — Implementation Log
 
+## 2026-07-27 (cont.) — TestFlight launch-crash: TRUE root cause found — RevenueCat's own SDK hard-crashes on a Test Store key in Release builds
+
+The supabase-swift fix below was still wrong. Deon ran the app from Xcode directly onto his
+iPhone with the **Release** build configuration (exactly the tethered-debugger approach
+recommended at the end of the previous entry) — and Xcode's debugger caught the real fatal
+error live, at the actual source line, no address-guessing required:
+
+```
+RevenueCat/Configuration.swift:533: Fatal error: [RevenueCat]: Test Store API key used in
+Release build: test_aT********PtAI. Please configure the App Store app on the RevenueCat
+dashboard and use its corresponding Apple API key before releasing.
+```
+
+This is `Configuration.APIKeyValidationResult.checkForSimulatedStoreAPIKeyInRelease` —
+**RevenueCat's SDK deliberately calls `fatalError()`** whenever a Test Store (`test_…`) key
+is used in a Release build configuration. TestFlight is always Release. This explains every
+symptom perfectly: works in Xcode Debug (check doesn't run), crashes immediately on every
+TestFlight launch (the check fires inside `Purchases.configure()`, called from
+`PurchaseManager.configure(appUserID:)` in our launch `.task`), and no code on our side could
+ever have prevented it — the crash happens inside RevenueCat's SDK, by design, before any of
+our own paywall/Supabase code runs. Deon's challenge ("Lumina works fine with a test
+RevenueCat key on TestFlight") turned out to confirm this rather than contradict it — checked
+Lumina's `BackendConfig.swift`: its key is `appl_WfZbhshlrIgqCPRZYpcUwHBADyR`, already a real
+production key, not a Test Store one.
+
+**Fix:** most of the App Store Connect + RevenueCat production setup already existed from a
+2026-07-11 session (see `REVENUECAT_INTEGRATION.md` §8) — real ASC app, all three products,
+`Expired Pro` entitlement, the `default` offering with all three packages correctly mapped to
+the real App Store product IDs. It had just never been wired into the app. Retrieved the real
+"Expired (App Store)" SDK key from the RevenueCat dashboard (project `79ab2961` → API keys) and
+swapped `BackendConfig.revenueCatAPIKey` from the `test_…` key to `appl_XevJqAQqqKxoFgCMbwpoYQBALMR`.
+Verified: Release/device-destination build succeeds. TestFlight purchases still route through
+Apple's Sandbox automatically (no real charges) until the app is actually live — swapping to
+the real key does not block purchase testing, it's required for it to work in Release at all.
+
+**Not yet done (see `REVENUECAT_INTEGRATION.md` "Still to complete"):** the offering's attached
+paywall is still an unpublished draft using a generic "MellowMind" meditation-app template with
+placeholder pricing, and has two unresolved validation issues (missing Terms/Privacy button
+URLs). This is cosmetic, not a crash risk — RevenueCatUI shows its own default paywall UI when
+no custom one is published. Deliberately not fixed in this batch (paywall copy/branding is a
+product decision, not a bug fix); flagged for Deon to decide when to tackle.
+
+**Process note, worth keeping:** this is the second wrong-then-corrected diagnosis in this same
+incident (see below — the `supabase-swift` theory was also wrong). Both wrong guesses were built
+from symbolicating a stripped `.ips` against a dSYM, which repeatedly pointed at plausible-looking
+but ultimately misattributed framework internals (Release-optimized generic-closure address
+collisions). The one thing that actually worked on the first try: running the exact Release
+configuration under Xcode's live debugger on a real device. Static crash-log forensics is a
+reasonable first attempt when only a `.ips` is available, but a live tethered repro is strictly
+better and should be reached for sooner next time a static guess doesn't hold up, rather than
+symbolicating a second or third stripped address by hand.
+
+## 2026-07-27 — TestFlight launch-crash fix: supabase-swift version bump (confirmed root cause) + RevenueCatUI paywall gate + debug menu relocation
+
+Deon reported an immediate crash on a fresh TestFlight install (reproducible after
+reinstalling). First pass (below) misdiagnosed it as the RevenueCat Test Store
+paywall based on static code reading; Deon then retrieved the actual `.ips` crash
+report (device Settings → Analytics Data), which let us symbolicate against the
+matching archive's dSYM (UUID `122A5E1D-527C-3251-9CFC-EDD1AB751AFC`,
+`~/Library/Developer/Xcode/Archives/2026-07-26/Expired 26-7-2026, 7.42pm.xcarchive`)
+and find the real cause.
+
+- **Confirmed root cause: a force-unwrap crash inside `supabase-swift` 2.48.0's JWT
+  verification path**, fixed upstream in v2.51.0 (PR
+  [#1079](https://github.com/supabase/supabase-swift/pull/1079), "harden RSA JWK
+  verification against malformed keys" — `JWTAlgorithm` force-unwrapped
+  `JWK.rsaPublishKey`, nil for certain keys, crashing the process). The crash
+  report's exception was `EXC_BREAKPOINT`/`SIGTRAP` on a Swift Concurrency
+  cooperative-pool thread (not the main thread) inside `_assertionFailure`, called
+  from frames that resolved (via `atos` against the dSYM) into
+  `AuthClient.user(jwt:)`/`AuthClient.configuration` in the Supabase Auth module —
+  exactly the code `SupabaseService.ensureSession()` (`ExpiredApp.swift`'s launch
+  `.task`) exercises when checking/verifying a stored session's JWT at every
+  launch. This explains "immediately on launch" precisely — it doesn't require any
+  user interaction, unlike the paywall theory below.
+- **Fix: bumped `supabase-swift` from 2.48.0 to 2.53.0.** The Xcode package
+  reference's `minimumVersion` was pinned at `2.5.1` (`Expired.xcodeproj/
+  project.pbxproj`), so 2.48.0 satisfied it and had simply never been refreshed —
+  raised to `2.53.0` and re-resolved (`Package.resolved` updated). Verified: Debug
+  simulator build and Release device-destination build both succeed.
+- **Also applied, low-risk, vendor-recommended:** `SupabaseService.swift` now passes
+  `SupabaseClientOptions(auth: .init(emitLocalSessionAsInitialSession: true))` to
+  `SupabaseClient(...)`. This isn't the crash fix — it's a separate, unrelated
+  warning ("Initial session emitted after attempting to refresh the local stored
+  session... incorrect behavior... will be fixed in the next major release," see
+  [#822](https://github.com/supabase/supabase-swift/pull/822)) that was showing up
+  in the console every launch. Opting in now avoids depending on behavior Supabase's
+  own SDK flags as due to change.
+- **Process note:** the original hypothesis below (RevenueCat Test Store paywall)
+  was built entirely from static code reading without a real crash trace, and was
+  wrong — a concrete instance of this repo's own "instrument before theorizing"
+  rule. The `PaywallGate` change was still kept (see below) since it's a real
+  defensive improvement independent of which bug caused this particular crash, but
+  it would not have fixed this incident on its own.
+
+### Original (incomplete) hypothesis, kept for the paywall defensive fix it produced
+
+- **First-pass theory (wrong for this crash, but still a real latent risk worth
+  guarding against):** `BackendConfig.revenueCatAPIKey` (`BackendConfig.swift:29`)
+  is a hardcoded RevenueCat **Test Store** key with no `#if DEBUG` gate — it ships
+  in every build, TestFlight included, which is also why the "Using a Test Store
+  API key" SDK warning shows up in the console. That key feeds `RevenueCatUI`'s
+  `PaywallView()` (`UI/Paywall.swift`), which renders whatever offering/paywall
+  template is configured in the RevenueCat dashboard for the *current* project, and
+  has no graceful empty state if that offering has no packages.
+- **Fix kept regardless: `PaywallGate` (`UI/Paywall.swift`).** `expiredPaywallSheet`
+  no longer presents `PaywallView()` directly. `PaywallGate` loads offerings first
+  (awaiting `PurchaseManager.loadOfferings()` if not already cached), and only
+  constructs `PaywallView()` if `offerings?.current?.availablePackages` is
+  non-empty. If not, it shows `PaywallUnavailableView` — a plain SwiftUI sheet with
+  a message, Restore Purchases, and Close — which cannot crash regardless of what
+  RevenueCat's dashboard is configured to serve. The test-key swap itself is still
+  deliberately deferred (Deon's call — stays as a reminder until the real App Store
+  Connect + RevenueCat production setup is ready; tracked in `TEST.md`'s Launch gate
+  section).
+- **Debug menu relocated to match `_shared/settings-conventions.md`** (this section
+  already existed in the shared playbook — Expired had drifted from it). Was: hidden
+  long-press on the Settings "Analyzer" row (Screenshot Import section). Now: 4-second
+  long-press on the Settings **version footer** (iOS) / ⌥-click the version footer
+  (macOS), per the documented standard. A plain tap on the version footer copies
+  `Expired X.Y (build)` to the pasteboard for bug reports.
+- **New Diagnostics section in `DebugAIFailureSimulatorView`** — "Copy Diagnostic
+  Report" assembles app version/build, platform, bundle ID, RevenueCat key mode
+  (flags TEST STORE explicitly), RevenueCat configured/appUserID/isPremium, Supabase
+  user ID, and the existing CloudKit debug transcript into one pasteable block — the
+  fastest way for Deon to hand over full device state without reading a console.
+- **Not yet done, and the more decisive next step:** get an actual symbolicated
+  crash report (device Settings → Privacy & Security → Analytics & Improvements →
+  Analytics Data → `Expired-*.ips`, or Xcode → Organizer → Crashes) to confirm this
+  diagnosis against the real trace, or reproduce by running the **Release** build
+  configuration on a tethered device (Edit Scheme → Run → Release) to hit the crash
+  under the debugger directly.
+
 ## 2026-07-17 — R2 Phase 2: `ai-proxy` deployed + SSRF guard verified live
 
 Deployed the `ai-proxy` function (built 2026-07-15, see entry below) to production.

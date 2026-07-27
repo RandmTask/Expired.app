@@ -2649,6 +2649,7 @@ struct SettingsView: View {
     @State private var isLoadingModels = false
     @State private var modelLoadError: String?
     @State private var showDebugAIFailureSimulator = false
+    @State private var showVersionCopiedToast = false
     @AppStorage("appearanceMode") private var appearanceMode = 0
     @AppStorage("notificationHour")   private var notificationHour: Int = 9
     @AppStorage("notificationMinute") private var notificationMinute: Int = 0
@@ -3154,7 +3155,6 @@ struct SettingsView: View {
                 settingsSection(title: "Screenshot Import", icon: "doc.viewfinder") {
                     settingsRow {
                         macSettingsLabel("Analyzer", icon: "sparkles")
-                            .onLongPressGesture { showDebugAIFailureSimulator = true }
                         if !purchaseManager.isPremium { ProChip() }
                         Spacer()
                         Menu {
@@ -3404,6 +3404,9 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
 
+                versionFooterRow
+                    .padding(.top, 4)
+
                 Spacer(minLength: 40)
             }
             .padding(24)
@@ -3528,6 +3531,52 @@ struct SettingsView: View {
             .textCase(nil)
             .foregroundStyle(.secondary)
             .tracking(0.4)
+    }
+
+    // MARK: - Version footer / hidden debug entry
+
+    private var versionBuildString: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "Expired \(version) (\(build))"
+    }
+
+    private func copyVersionString() {
+        #if os(iOS)
+        UIPasteboard.general.string = versionBuildString
+        #elseif os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(versionBuildString, forType: .string)
+        #endif
+        Haptics.fire(.light)
+    }
+
+    /// Tap copies the version string (for bug reports); a 4-second long-press (iOS)
+    /// reveals the hidden Debug section. Never a visible affordance — see
+    /// `_shared/settings-conventions.md` "Hidden debug section".
+    private var versionFooterRow: some View {
+        Text(versionBuildString)
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+            #if os(iOS)
+            .onTapGesture { copyVersionString() }
+            .onLongPressGesture(minimumDuration: 4.0) {
+                Haptics.fire(.success)
+                showDebugAIFailureSimulator = true
+            }
+            #elseif os(macOS)
+            .onTapGesture {
+                if NSEvent.modifierFlags.contains(.option) {
+                    Haptics.fire(.success)
+                    showDebugAIFailureSimulator = true
+                } else {
+                    copyVersionString()
+                }
+            }
+            #endif
     }
 
     private var iosSettingsBody: some View {
@@ -3660,7 +3709,6 @@ struct SettingsView: View {
                 HStack {
                     rowIcon("sparkles")
                     Text("Analyzer").foregroundStyle(.primary)
-                        .onLongPressGesture { showDebugAIFailureSimulator = true }
                     if !purchaseManager.isPremium { ProChip() }
                     Spacer()
                     Menu {
@@ -3864,6 +3912,11 @@ struct SettingsView: View {
                 sectionHeader("BACKUP & SYNC")
             } footer: {
                 Text("iCloud Sync keeps data across all your devices — restart the app after changing. Daily snapshots save automatically to iCloud Drive (skipped if nothing changed). Export writes an unencrypted JSON file (icons excluded); import merges by item, never deleting. Keep the file private.")
+            }
+
+            Section {
+                versionFooterRow
+                    .listRowBackground(Color.clear)
             }
         }
         .navigationTitle("Settings")

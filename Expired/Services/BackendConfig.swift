@@ -25,8 +25,13 @@ enum BackendConfig {
     }
 
     // MARK: RevenueCat
-    /// Public SDK key. `test_…` is the sandbox key; swap for the production key before release.
-    static let revenueCatAPIKey = "test_aTQLDKzrPfEdvwGfOFVEChZPtAI"
+    /// Public SDK key. This is the real "Expired (App Store)" app configuration in RevenueCat
+    /// (project 79ab2961), linked to the real App Store Connect app and products — not the
+    /// Test Store. RevenueCat's SDK hard-crashes (`fatalError`) if a `test_…` key runs in a
+    /// Release build; this key is safe for Debug, TestFlight, and production alike. Purchases
+    /// made from Xcode/TestFlight builds route through Apple's Sandbox automatically — no real
+    /// charges — until the app is actually live on the App Store.
+    static let revenueCatAPIKey = "appl_XevJqAQqqKxoFgCMbwpoYQBALMR"
 
     /// Entitlement identifier configured in the RevenueCat dashboard (display name "Expired Pro").
     static let proEntitlementID = "Expired Pro"

@@ -1,4 +1,5 @@
 import SwiftUI
+import RevenueCat
 import RevenueCatUI
 
 // Centralised Pro-gating helpers shared by every paywall trigger.
@@ -31,9 +32,16 @@ struct ProChip: View {
 extension View {
     /// Presents RevenueCat's hosted paywall as a sheet. The SDK dismisses it
     /// automatically on a successful purchase.
+    ///
+    /// Wrapped in `PaywallGate` rather than presenting `PaywallView` directly:
+    /// RevenueCatUI renders whatever offering/template is configured in the
+    /// RevenueCat dashboard, and it has no graceful fallback if that offering has
+    /// no packages (e.g. a Test Store project without a matching production
+    /// paywall setup) — it crashes instead of showing an empty state. The gate
+    /// checks for at least one package before ever constructing `PaywallView`.
     func expiredPaywallSheet(isPresented: Binding<Bool>) -> some View {
         sheet(isPresented: isPresented) {
-            PaywallView(displayCloseButton: true)
+            PaywallGate()
         }
     }
 
@@ -50,6 +58,78 @@ extension View {
             MacManageSubscriptionSheet()
         }
 #endif
+    }
+}
+
+/// Loads offerings (if not already cached) and only then decides whether it's safe
+/// to hand control to RevenueCatUI's `PaywallView`. Never presents `PaywallView`
+/// against a nil/empty offering.
+private struct PaywallGate: View {
+    @Environment(PurchaseManager.self) private var purchaseManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var isChecking = true
+    @State private var canShowPaywall = false
+
+    var body: some View {
+        Group {
+            if isChecking {
+                ProgressView()
+                    .task { await checkOfferings() }
+            } else if canShowPaywall {
+                PaywallView(displayCloseButton: true)
+            } else {
+                PaywallUnavailableView()
+            }
+        }
+    }
+
+    private func checkOfferings() async {
+        if purchaseManager.offerings == nil {
+            await purchaseManager.loadOfferings()
+        }
+        canShowPaywall = !(purchaseManager.offerings?.current?.availablePackages.isEmpty ?? true)
+        isChecking = false
+    }
+}
+
+/// Shown instead of `PaywallView` when RevenueCat has no usable offering — e.g. the
+/// Test Store project isn't configured with a matching paywall/offering, or the
+/// network fetch failed. Never blocks the user from using the free tier.
+private struct PaywallUnavailableView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var isRestoring = false
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 34))
+                .foregroundStyle(.secondary)
+            Text("Store Unavailable")
+                .font(.headline)
+            Text("Expired Pro isn't available right now. This usually means the store connection failed — check your internet connection and try again shortly.")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 24)
+            Button {
+                isRestoring = true
+                Task {
+                    _ = await PurchaseManager.shared.restore()
+                    isRestoring = false
+                }
+            } label: {
+                if isRestoring {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("Restore Purchases")
+                }
+            }
+            Button("Close") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+        }
+        .padding(28)
+        .frame(minWidth: 320)
     }
 }
 
