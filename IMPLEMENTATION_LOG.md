@@ -10,6 +10,36 @@ Building per ROADMAP.md's R4 blueprint (decisions locked 2026-07-27).
 - **Next step:** extend `Resources/AppCatalog.json` to the full catalog (36 app entries + 6 non-app
   tiles) and `AppCatalog.swift`'s `Entry`/`onboardingTiles(region:)`.
 
+## 2026-07-27 (cont.) — Anonymous service-popularity analytics + paywall polish + debug menu clarity
+
+- **`service_popularity` table + `increment_service_popularity()` RPC deployed to
+  production Supabase** (`supabase/migrations/0008_service_popularity.sql`, applied via
+  dashboard SQL editor — CLI here is authenticated to a different Supabase account, only
+  saw Lumina Library). RLS enabled with no policies; all access goes through the
+  security-definer function, so anon/authenticated can only ever call
+  `increment_service_popularity(name)`, never touch the table directly. Verified live:
+  called with `'Netflix'`, confirmed the row, then deleted the test row so the table
+  starts clean.
+- **Client: `ServicePopularityReporter`** (`Services/ServicePopularityReporter.swift`).
+  Reports a service name after a *new* item save in `AddEditSubscriptionView.saveAndDismiss()`,
+  only if: the Settings → Privacy → "Share Subscription Usage" toggle is on (default on,
+  per Deon's decision), the name exact-matches `AppCatalog.knownServiceName(for:)` (never
+  sends free text a user typed), and this device hasn't already reported that canonical
+  name (`UserDefaults` set, dedup — "once per unique service per device" per Deon's
+  decision). No user identifier of any kind is ever sent, by design — a device revoking
+  consent later just stops future reports; nothing to retroactively delete.
+- **RevenueCat paywall finished and published** — see `REVENUECAT_INTEGRATION.md` §8 for
+  full detail: rebranded for Expired via the dashboard's AI paywall editor, added the
+  previously-missing Lifetime tier, Terms/Privacy button URLs fixed (Apple's standard
+  EULA + the new interim privacy policy page), renamed "Untitled Paywall" →
+  "Expired Pro Paywall", published. Confirmed live under Paywalls → Published.
+- **Debug Menu clarity fixes** (`UI/DebugAIFailureSimulatorView.swift`): "Reset
+  Subscriptions" → **"Delete All Data"** (Deon read the old name as "reset the monthly
+  subscription," not "delete every subscription/document including Netflix etc.") and
+  "Reset for Testing" → **"Reset Premium Status"** (same underlying `logOutForTesting()`
+  RevenueCat-identity-swap behavior — this is also the answer to "how do I clear a test
+  Lifetime Pro purchase," it already existed, just wasn't named for what it does).
+
 ## 2026-07-27 (cont.) — Animated launch screen (static `UILaunchScreen` + SwiftUI splash)
 
 Brand launch experience: dark plate → icon glyph springs in → "expired." wordmark fades up

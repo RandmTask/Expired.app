@@ -97,11 +97,9 @@ plain white/black launch after an update is almost always this, not a broken ass
       a theoretical RevenueCatUI paywall-workflow crash) were both wrong for this
       specific incident — kept as real, harmless improvements (version bump,
       `PaywallGate`) but neither was the actual cause.
-- [ ] **TestFlight: onboarding → "Start Free Trial" doesn't crash either.** Now
-      exercises the real paywall config for the first time — worth confirming
-      explicitly: fresh install, walk onboarding to the Pro page, tap Start Free
-      Trial. Expect RevenueCatUI's default paywall UI (no custom one is published
-      yet — see `REVENUECAT_INTEGRATION.md`'s "Still to complete") — never a crash.
+- [x] **TestFlight: onboarding → "Start Free Trial" doesn't crash either.** Confirmed
+      2026-07-27 — the redesigned, published "Expired Pro Paywall" now shows (blue
+      theme, 3 tiers including Lifetime), not RevenueCatUI's generic fallback.
 - [ ] **iOS: Settings → 4-second long-press on the version footer opens Debug
       Menu.** No visible affordance beforehand. The old long-press on the
       "Analyzer" row in Screenshot Import no longer does anything.
@@ -110,6 +108,17 @@ plain white/black launch after an update is almost always this, not a broken ass
 - [ ] **Debug Menu → Diagnostics → Copy Diagnostic Report** produces a pasteable
       block with app version/build, device, RevenueCat key mode (should say
       "TEST STORE"), CloudKit summary, and Supabase user ID.
+- [ ] **Debug Menu → "Delete All Data"** (renamed from "Reset Subscriptions") reads
+      clearly now as "deletes everything," not "resets the Pro purchase." y/n
+- [ ] **Debug Menu → "Reset Premium Status"** (renamed from "Reset for Testing")
+      clears an active/Lifetime purchase for re-testing without touching subscription
+      data. y/n
+- [ ] **Settings → Privacy → "Share Subscription Usage" toggle** — add a known service
+      (e.g. Netflix) with the toggle on → confirm no error/crash (silent success). Turn
+      the toggle off, add a different known service → confirm nothing is sent (check
+      the `service_popularity` table in Supabase doesn't grow). Both are silent either
+      way, so this needs a Supabase dashboard check to actually confirm — not
+      user-visible in the app.
 
 ## Launch gate (blocks TestFlight/App Store — see `ROADMAP.md` for full detail)
 
