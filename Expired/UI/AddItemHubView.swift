@@ -7,7 +7,6 @@ import SwiftUI
 struct AddItemHubView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(PurchaseManager.self) private var purchaseManager
-    @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
 
     let onSelectManual: () -> Void
     let onSelectScreenshot: () -> Void
@@ -35,13 +34,7 @@ struct AddItemHubView: View {
         let results: [AppStoreResult]
     }
 
-    private var regionCode: String {
-        let trimmed = appStoreRegion.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty || trimmed == "auto" {
-            return Locale.current.region?.identifier.lowercased() ?? "us"
-        }
-        return trimmed.lowercased()
-    }
+    private var regionCode: String { AppCatalog.regionCode }
 
     private var trimmedSearch: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)

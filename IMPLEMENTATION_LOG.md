@@ -10,6 +10,53 @@ Building per ROADMAP.md's R4 blueprint (decisions locked 2026-07-27).
 - **Next step:** extend `Resources/AppCatalog.json` to the full catalog (36 app entries + 6 non-app
   tiles) and `AppCatalog.swift`'s `Entry`/`onboardingTiles(region:)`.
 
+## 2026-07-27 (cont.) — Animated launch screen (static `UILaunchScreen` + SwiftUI splash)
+
+Brand launch experience: dark plate → icon glyph springs in → "expired." wordmark fades up
+in the icon's teal→violet→magenta gradient → whole thing fades out into the app (~1.5s).
+
+**Decision: static launch screen is background-colour-only, no `UIImageName`.** The
+bait-and-switch illusion only holds if the static screen and the animated view's first
+frame are pixel-identical. Matching a system-centred launch image against a SwiftUI
+`VStack` (which shifts the logo up to make room for the wordmark) is fiddly and would be
+re-broken by any later layout tweak. A flat fill is trivially exact — both halves read the
+same `LaunchBackground` asset — and the logo animating in from nothing is the deliberate-
+looking Duolingo pattern anyway. Rejected: putting the logo in the static screen and
+hand-tuning the SwiftUI frame to match.
+
+**The splash is an overlay, not a gate.** `ContentView` stays mounted underneath the whole
+time, so the CloudKit/Supabase/notification startup work in `ExpiredApp.body` is not
+delayed by a cosmetic animation. Teardown is an unconditional timer, never contingent on an
+animation completion handler — a splash that can get stuck is a launch-blocking bug.
+
+**Had to un-composite the logo out of the app icon.** No transparent source artwork exists;
+`AppIcon.appiconset/1024.png` has a dark *gradient* plate baked in, so chroma-keying fails.
+Solved `px = c·a + bg·(1−a)` per pixel with `bg` modelled per row from margin columns the
+glyph never reaches (throwaway `swiftc` + CoreGraphics script — PIL isn't installed on this
+machine and `sips` can't do it). Two traps, both now in the shared playbook: the
+rounded-corner residue blows the bounding box out to the full image unless it's masked
+before measuring, and an alpha floor below ~0.10 leaves a plate-coloured haze that is
+invisible on a dark splash but obvious over white.
+
+**Onboarding had to be delayed past the splash.** `fullScreenCover` presents at window
+level — i.e. *above* an overlay — so on a genuine first launch the pager slid up
+mid-animation. `OnboardingGate` now waits `SplashTiming.total` first; that constant is the
+single source of truth both sides read, so they can't drift.
+
+**Also:** `INFOPLIST_KEY_UIStatusBarStyle` flipped `Default` → `LightContent`. The launch
+plate is near-black, and in Light appearance the default status bar draws black-on-black.
+
+**Xcode trap that cost the most time to anticipate:** the template's
+`INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphone*]` build settings synthesise an *empty*
+`UILaunchScreen` dict that fights a real one in `Info.plist`. Both lines deleted from
+`project.pbxproj`. Verified in the built product rather than assumed —
+`PlistBuddy -c "Print :UILaunchScreen"` on `Expired.app/Info.plist` reports
+`UIColorName = LaunchBackground`, and `assetutil` confirms both new assets are in
+`Assets.car`.
+
+New files: `Expired/UI/SplashView.swift`, `Assets.xcassets/LaunchLogo.imageset`,
+`Assets.xcassets/LaunchBackground.colorset`, `_shared/launch-screens.md`.
+
 ## 2026-07-27 (cont.) — TestFlight launch-crash: TRUE root cause found — RevenueCat's own SDK hard-crashes on a Test Store key in Release builds
 
 The supabase-swift fix below was still wrong. Deon ran the app from Xcode directly onto his

@@ -5,6 +5,30 @@ decision, or an interactive Simulator session he hasn't greenlit yet. Check item
 as they're done; delete a whole entry once verified (its detail lives in
 `ROADMAP.md`/`IMPLEMENTATION_LOG.md` already — this file is just the punch list).
 
+## Launch screen / splash (added 2026-07-27)
+
+**Delete the app from the device first** — iOS caches the rendered launch screen, and a
+plain white/black launch after an update is almost always this, not a broken asset.
+
+- [ ] **1.** Cold launch → the very first frame is a dark plate (no white flash). y/n
+- [ ] **2.** There is **no visible seam or jump** between the system launch screen and the
+      animated one — it reads as one continuous screen. y/n
+- [ ] **3.** Icon glyph springs in, then "expired." fades up beneath it in the
+      teal→violet→magenta gradient, then the whole thing fades into the app. y/n
+- [ ] **4.** Total splash time feels right (~1.5s) — not sluggish. y/n
+      *(if not: `SplashTiming` in `UI/SplashView.swift`)*
+- [ ] **5.** Settings → Appearance → **Light**, then cold launch → the status bar clock and
+      icons are **legible** (light-coloured) over the dark plate, not black-on-black. y/n
+      *This is the one I couldn't verify statically — the Info.plist style covers the
+      system launch screen, but the ~1.5s splash is drawn by the app's own view controller
+      and may still take Light appearance. If it's black-on-black, say so and I'll fix it.*
+- [ ] **6.** Settings → Accessibility → Motion → **Reduce Motion ON**, cold launch → logo
+      and wordmark cross-fade with no scaling or sliding. y/n
+- [ ] **7.** **First-launch only** (delete app → reinstall): onboarding appears *after* the
+      splash has finished, not sliding up over the middle of it. y/n
+- [ ] **8.** Tapping during the splash doesn't get swallowed / cause a mis-tap. y/n
+- [ ] Screenshot the splash mid-animation if the logo size or wordmark spacing looks off.
+
 ## Device / Simulator
 
 - [ ] **Reconnect iPhone and build to device** — showed offline as of 2026-07-13.

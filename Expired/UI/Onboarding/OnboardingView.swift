@@ -71,8 +71,14 @@ struct OnboardingView: View {
     @State private var showSplash = true
     @State private var showPaywall = false
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
+    @State private var reminderOffsetDays = 3
+    @State private var selectedTileIDs: [String] = []
+    @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
 
-    private let pageCount = 5
+    private let pageCount = 7
+    /// Pages with their own footer CTA (grid + quick setup) — the generic
+    /// `continueButton`/chrome must stay hidden for these.
+    private let customFooterPages: Set<Int> = [4, 5]
 
     var body: some View {
         ZStack {
@@ -86,12 +92,27 @@ struct OnboardingView: View {
                     trackEverythingPage.tag(1)
                     screenshotImportPage.tag(2)
                     remindersPage.tag(3)
-                    proPage.tag(4)
+                    ServicePickerPage(
+                        selectedTileIDs: $selectedTileIDs,
+                        onContinue: { withAnimation { pageIndex = 5 } },
+                        onSkip: { withAnimation { pageIndex = 6 } },
+                        onAddYourOwn: onComplete
+                    ).tag(4)
+                    QuickSetupPage(
+                        selectedTileIDs: $selectedTileIDs,
+                        reminderOffsetDays: reminderOffsetDays,
+                        currency: preferredCurrency,
+                        onCommit: { withAnimation { pageIndex = 6 } },
+                        onSkip: { withAnimation { pageIndex = 6 } }
+                    ).tag(5)
+                    proPage.tag(6)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
 
                 pageDots
-                continueButton
+                if !customFooterPages.contains(pageIndex) {
+                    continueButton
+                }
             }
             .padding(.bottom, 24)
             .opacity(showSplash ? 0 : 1)
