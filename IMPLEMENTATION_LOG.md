@@ -1,14 +1,74 @@
 # Expired — Implementation Log
 
-## 🔧 IN PROGRESS — R4 Onboarding service picker (started 2026-07-27)
+## 2026-07-27 (cont.) — R4: Onboarding service picker built
 
-Building per ROADMAP.md's R4 blueprint (decisions locked 2026-07-27).
-- **Built so far:** nothing yet — starting with `AppCatalog.json`/`AppCatalog.swift` extension.
-- **Still to come:** `ServicePickerPage.swift`, `QuickSetupPage.swift`, `OnboardingView.swift` wiring
-  (tags 4/5, reminder-offset picker on the reminders page), `HomeView.EmptyStateView` sample card +
-  "Add your services" entry point, bundled icon assets.
-- **Next step:** extend `Resources/AppCatalog.json` to the full catalog (36 app entries + 6 non-app
-  tiles) and `AppCatalog.swift`'s `Entry`/`onboardingTiles(region:)`.
+Built the full R4 blueprint (ROADMAP.md, decisions locked 2026-07-27): a Netflix-style
+multi-select grid + inline batch setup screen during onboarding, so free-user first
+launches leave with a populated app instead of an empty one.
+
+- `Resources/AppCatalog.json` — extended from 20 to 36 App Store entries (12 global +
+  4 UK-region additions beyond the blueprint's headline "32" count, since the detailed
+  per-entry table specified 16 new entries total and I followed the table over the
+  rounded summary number) + 6 non-app tiles (Gym, Insurance, Rent/Mortgage, Car
+  registration, Passport, Utilities), each with the new optional `regions`/`onboarding`/
+  `itemType`/`symbolName` fields.
+- `AppCatalog.swift` — `Entry.appStoreId` made optional (non-app tiles have none);
+  added `OnboardingTile`, `onboardingTiles(region:)` (global + region-matched, sorted
+  region-first within category); lifted `regionCode` out of `AddItemHubView` into
+  `AppCatalog.regionCode` (reads `UserDefaults` directly since it's no longer a SwiftUI
+  view); exposed `canonicalName` (was `private`) for the batch commit's dedupe check;
+  added an Asset-Catalog icon lookup (`UIImage`/`NSImage(named:)` keyed by `appStoreId`)
+  alongside the existing loose-bundle `iconFilename` mechanism, so any icons dropped into
+  `Assets.xcassets` under that naming convention activate automatically with no code
+  change.
+- New `UI/Onboarding/ServicePickerPage.swift` (grid, category-grouped, 10-item cap,
+  disables/pre-checks already-tracked services for replay) and `QuickSetupPage.swift`
+  (inline batch rows — cost/cycle/day-of-month, never N sequential editor sheets; single
+  insert loop + one `save()` + one `NotificationManager.refreshAll` at the end, per
+  `_shared/onboarding-conventions.md`'s commit-as-one-transaction rule).
+- `OnboardingView.swift` — inserted both pages as tags 4/5 (pro page pushed to 6,
+  `pageCount` 5→7); added a "Remind me" segmented picker to the reminders page so the
+  seeded items' notification offset is user-chosen, not hardcoded, satisfying the
+  blueprint's acceptance criterion 8.
+- New `UI/Onboarding/ServicePickerSheet.swift` — a standalone 2-step (grid → quick setup)
+  container reused from `HomeView`'s empty state, so the grid has a permanent home
+  outside the one-shot onboarding pager.
+- `HomeView.swift` — `EmptyStateView` gains a dimmed, non-persisted sample Netflix card
+  (`SampleSubscriptionCard`, built from `PreviewData.netflix`, never inserted into
+  `modelContext` — the "rendered sample ≠ seeded row" carve-out in
+  `_shared/cloudkit-swiftdata.md` §2e) with a `SAMPLE` chip; tapping it opens the add
+  flow prefilled with Netflix. An "Add your services" button below reopens the picker
+  grid via `ServicePickerSheet`.
+- Free-tier cap (`HomeView.freeItemLimit = 5`) is untouched and still applies to the
+  normal add path; the onboarding batch commit bypasses it entirely by construction
+  (`QuickSetupPage.commit()` never calls `openAddSheet()`'s gate).
+
+**Known gap, flagged rather than faked:** I have no way to source real trademarked logo
+PNGs for the ~16 newly added catalog entries (Audible, Apple TV+, Paramount+, ChatGPT
+Plus, Canva, Strava, PlayStation Plus, Xbox Game Pass, Stan, Binge, Kayo Sports, NOW,
+Sky, BritBox, DAZN, Amazon Prime) — they render an initial-letter placeholder until real
+assets are added. The code path (`AppCatalog.bundledIconData`) is ready for them the
+moment they're dropped into `Assets.xcassets` as image sets named by `appStoreId`. App
+Store IDs for these new entries are best-effort from training knowledge, not verified
+against the live App Store — a wrong ID degrades to a placeholder/failed lookup, never a
+crash, but is worth spot-checking before relying on them.
+
+**Concurrent-session note:** a separate Claude Code session was active in this same repo
+mid-build (confirmed via the project's periodic auto-commit history — an unrelated splash
+screen feature, plus a new `Assets.xcassets/OnboardingIcons/` folder with real bundled
+icons that collides by image-set name with 3 pre-existing entries in an older icon
+group). Deon confirmed this was expected/parallel work and asked me to proceed without
+reconciling those assets — left for that session/Deon to resolve.
+
+Both platforms build clean: `xcodebuild -destination 'generic/platform=iOS Simulator'`
+and `'generic/platform=macOS'`, both `** BUILD SUCCEEDED **`, zero errors.
+
+**How to test:** see `TEST.md`'s new "R4 — Onboarding service picker" section (12 items,
+mapped 1:1 to the blueprint's 8 acceptance criteria plus a few UI checks) — needs a real
+device/Simulator pass, which I haven't done.
+
+**Model:** Sonnet, medium effort — no Opus escalation needed; the CloudKit/notification
+commit path followed the blueprint's locked decisions directly.
 
 ## 2026-07-27 (cont.) — Anonymous service-popularity analytics + paywall polish + debug menu clarity
 
