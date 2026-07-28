@@ -1,16 +1,20 @@
 import SwiftUI
 import SwiftData
 
-/// Testing-only sheet, reachable via a hidden 4-second long-press (iOS) / ⌥-click
-/// (macOS) on the Settings version footer — never a visible control. Bundles the
-/// AI-cascade failure simulator with the other developer utilities (replay
-/// onboarding, mascot preview, reset data, CloudKit debug, diagnostic report).
-/// Safe to ship in TestFlight (no visible affordance); strip before public App
-/// Store release per `_shared/settings-conventions.md`.
+/// Debug section content, reachable via a hidden 4-second long-press (iOS) / ⌥-click
+/// (macOS) on the Settings version footer — never a visible control. Renders as plain
+/// `Section`s embedded directly into the Settings screen's own List (not a sheet), so
+/// once revealed it stays visible across navigation until "Hide Debug" is tapped —
+/// per `_shared/settings-conventions.md`'s "Hidden debug section" convention. Bundles
+/// the AI-cascade failure simulator with the other developer utilities (replay
+/// onboarding, mascot preview, reset data, CloudKit debug, diagnostic report). Safe to
+/// ship in TestFlight (no visible affordance); strip before public App Store release.
 struct DebugAIFailureSimulatorView: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @ObservedObject private var cloudKitDebug = CloudKitDebugStore.shared
+
+    /// Re-conceals the section — the caller owns the persisted reveal flag.
+    let onHide: () -> Void
 
     @State private var forcedFailures: Set<ScreenshotAIProvider>
     @State private var isResyncing = false
@@ -20,46 +24,41 @@ struct DebugAIFailureSimulatorView: View {
     @State private var showResetConfirm = false
     @State private var resetResult: String?
 
-    init() {
+    init(onHide: @escaping () -> Void) {
+        self.onHide = onHide
         _forcedFailures = State(initialValue: Set(
             DebugAIFailureSimulator.allDebuggableProviders.filter(DebugAIFailureSimulator.isForcedToFail)
         ))
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                diagnosticsSection
-                testingToolsSection
-                resetSection
-                cloudKitDebugSection
-                forceFailureSection
-                identityRepairSection
-            }
-            .navigationTitle("Debug Menu")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .alert("Delete All Data?", isPresented: $showResetConfirm) {
-                Button("Delete Everything", role: .destructive) { resetSubscriptions() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Permanently deletes every subscription and document — including archived items — and their reminders. This syncs to iCloud and removes them from all your signed-in devices. Cannot be undone.")
-            }
+        Group {
+            diagnosticsSection
+            testingToolsSection
+            resetSection
+            cloudKitDebugSection
+            forceFailureSection
+            identityRepairSection
+            hideSection
+        }
+        .alert("Delete All Data?", isPresented: $showResetConfirm) {
+            Button("Delete Everything", role: .destructive) { resetSubscriptions() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Permanently deletes every subscription and document — including archived items — and their reminders. This syncs to iCloud and removes them from all your signed-in devices. Cannot be undone.")
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $showReplayOnboarding) {
             OnboardingView { showReplayOnboarding = false }
         }
         #endif
-        #if os(macOS)
-        .frame(minWidth: 380, minHeight: 320)
-        #endif
+    }
+
+    private var hideSection: some View {
+        Section {
+            Button("Hide Debug", action: onHide)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - Diagnostics

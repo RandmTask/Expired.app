@@ -1,11 +1,13 @@
 import SwiftUI
 import SwiftData
 
-/// R4 Page A — "what do you already use?" Category-grouped multi-select logo grid.
-/// Self-contained: renders its own header + sticky footer CTA rather than relying on
-/// `OnboardingView`'s generic continue button, since the CTA text is selection-count
-/// dependent. Reused both inside the onboarding pager and from `HomeView`'s empty
-/// state / Settings replay (per `_shared/onboarding-conventions.md`).
+/// R4 Page A — "what do you already use?" Flat, 4-across multi-select logo grid of
+/// real apps only (no category headers, no non-app/document tiles — Deon's call,
+/// 2026-07-27, after the first cut felt cluttered: "focus on popular apps or
+/// websites"). Self-contained: renders its own header + sticky footer CTA rather
+/// than relying on `OnboardingView`'s generic continue button, since the CTA text is
+/// selection-count dependent. Reused both inside the onboarding pager and from
+/// `HomeView`'s empty state / Settings replay (per `_shared/onboarding-conventions.md`).
 struct ServicePickerPage: View {
     @Query private var existingItems: [SubscriptionItem]
 
@@ -21,25 +23,12 @@ struct ServicePickerPage: View {
 
     @State private var showCapWarning = false
 
-    private let columns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+    private let columns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
 
     private var tiles: [AppCatalog.OnboardingTile] { AppCatalog.onboardingTiles() }
 
     private var existingNames: Set<String> {
         Set(existingItems.map { AppCatalog.canonicalName($0.name) })
-    }
-
-    private var groupedTiles: [(category: String, tiles: [AppCatalog.OnboardingTile])] {
-        var order: [String] = []
-        var groups: [String: [AppCatalog.OnboardingTile]] = [:]
-        for tile in tiles {
-            if groups[tile.category] == nil {
-                groups[tile.category] = []
-                order.append(tile.category)
-            }
-            groups[tile.category]?.append(tile)
-        }
-        return order.map { ($0, groups[$0] ?? []) }
     }
 
     var body: some View {
@@ -57,25 +46,11 @@ struct ServicePickerPage: View {
             .padding(.bottom, 14)
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
-                    ForEach(groupedTiles, id: \.category) { group in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(group.category.uppercased())
-                                .font(.system(size: 11, weight: .bold))
-                                .tracking(0.6)
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 4)
-
-                            LazyVGrid(columns: columns, spacing: 12) {
-                                ForEach(group.tiles) { tile in
-                                    tileView(tile)
-                                }
-                            }
-                        }
+                LazyVGrid(columns: columns, spacing: 16) {
+                    ForEach(tiles) { tile in
+                        tileView(tile)
                     }
-
                     addYourOwnTile
-                        .padding(.top, 4)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
@@ -146,20 +121,21 @@ struct ServicePickerPage: View {
 
     private var addYourOwnTile: some View {
         Button(action: onAddYourOwn) {
-            HStack(spacing: 12) {
+            VStack(spacing: 6) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.secondary.opacity(0.08))
-                        .frame(width: 44, height: 44)
+                        .strokeBorder(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                        .frame(width: 60, height: 60)
                     Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.system(size: 20, weight: .semibold))
                         .foregroundStyle(.blue)
                 }
                 Text("Add your own")
-                    .font(.system(size: 15, weight: .semibold))
-                Spacer()
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

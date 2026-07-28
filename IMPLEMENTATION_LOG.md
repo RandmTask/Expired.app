@@ -1,5 +1,75 @@
 # Expired — Implementation Log
 
+## 2026-07-28 — R4 fixes from first test pass
+
+Deon tested the R4 build (previous entry) and reported issues; all addressed:
+
+- **Page order** — `OnboardingView.swift`: reminders page moved *after* the picker
+  grid/quick setup (was before), so "all N of these are now armed" lands as a concrete
+  payoff instead of an abstract setting. This broke the original "select a service →
+  auto-creates its reminder using the already-configured offset" flow, since the offset
+  isn't known yet at Quick Setup time — fixed by seeding a default 3-day rule at commit,
+  then `OnboardingView.applyReminderOffsetToCreatedItems()` overwrites just the
+  session's newly-created items' rules once the user picks the real offset on the (now
+  later) reminders page. `QuickSetupPage.onCommit` signature changed to pass back the
+  inserted items' `UUID`s so this can target only its own items, never pre-existing ones.
+- **Debug menu persistence** — `DebugAIFailureSimulatorView.swift` + `ContentView.swift`:
+  converted from a `.sheet` to an inline Settings section gated by a persisted
+  `@AppStorage("debugSectionRevealed")` flag with a "Hide Debug" row, matching
+  `_shared/settings-conventions.md`'s actual convention (Deon: "it stays present until we
+  click hide debug like in our other apps... I don't want to have to keep pressing the
+  version number over and over"). `DebugAIFailureSimulatorView`'s body no longer wraps
+  its own `NavigationStack`/`List` — it now emits bare `Section`s so it composes directly
+  into the Settings screen's existing List (iOS) / ScrollView (macOS, unstyled `Section`
+  fallback — acceptable for a debug-only surface).
+- **Wrong App Store IDs** — 8 of the 16 newly-added catalog entries had incorrect
+  `appStoreId`s (guessed from training knowledge, flagged as a caveat in the prior entry
+  and it turned out to matter): Max, Adobe Creative Cloud (app discontinued — swapped to
+  Adobe Express), Paramount+, PlayStation Plus, Xbox Game Pass, Stan, Binge, Kayo Sports,
+  NOW, Sky, BritBox, DAZN. Verified correct IDs via live `itunes.apple.com/search`/`lookup`
+  calls (not guessing again) and fixed `Resources/AppCatalog.json`.
+- **Icon fetch script bug** — `bin/fetch-onboarding-icons.py` (added by a concurrent
+  session) always looked up artwork against the `us` storefront regardless of the
+  `--region` flag, so region-exclusive apps (Stan/Binge/Kayo = AU-only, NOW/Sky = GB-only
+  on the App Store) silently 404'd even with a correct ID. Fixed to look up against the
+  entry's own region; re-ran the script — 33 of 34 App Store entries now have real bundled
+  icons (only `iCloud+` has no App Store listing to fetch from, pre-existing/unrelated to
+  R4, falls back to its local icon file as before).
+- **Grid redesign** — `AppCatalog.swift`'s `onboardingTiles(region:)` now excludes
+  non-app tiles (`appStoreId == nil`) entirely and drops the category sort key;
+  `ServicePickerPage.swift` is now a flat 4-column grid with no section headers (Deon:
+  "no need for the section headers... no need for documents to be added here, lets focus
+  on popular apps or websites"). The 6 non-app catalog entries (Gym, Insurance, etc.) are
+  set `"onboarding": false` in the JSON — still searchable via `AddItemHubView`, just not
+  shown in the grid.
+- **Quick Setup row overflow** — `QuickSetupPage.swift`: the cost field + billing-cycle
+  menu + renewal-day menu (+ optional yearly-month menu) were crammed onto one `HStack`
+  line, genuinely clipping the billing-cycle label on narrower devices (not just a
+  transient animation glitch, as the screenshot showed literal truncated text). Split
+  into two rows: cost + billing cycle on top, renewal day (+ month) below.
+- **Reminders row ghost-icon bug** — `RemindersEditorView.swift`'s `SwipeActionsContainer`
+  rendered both swipe-action panels (bell/clock/trash) at full opacity at all times,
+  relying on the row content being fully opaque to hide them at rest. The reminder row's
+  content has transparent gaps (a `Spacer`, horizontal padding), letting a panel's solid
+  tint bleed through as a "ghost" icon overlapping the row text — this had regressed since
+  an earlier fix for the same symptom. Fixed at the root: panels are now explicitly
+  `.opacity(0)` unless actually swiped open, instead of relying on occlusion.
+- **Design options presented, not yet decided:** three onboarding-grid tile styles shown
+  as a visual mockup (squircle+label / circular avatar+label / icon-only-no-label) per
+  Deon's "use your design chops" ask — current build ships Option A (squircle+label);
+  awaiting his pick before changing it further.
+
+Both platforms rebuilt clean after every change (`xcodebuild` generic iOS Simulator +
+generic macOS, `** BUILD SUCCEEDED **`, zero errors) — verified twice, once mid-batch and
+once at the end, since several unrelated fixes landed in sequence.
+
+**How to test:** `TEST.md`'s R4 section was rewritten with 13 new numbered y/n items
+covering every fix above — pasted directly into chat this time (see
+[[tests-md-not-a-substitute-for-asking]] memory — the prior batch summary updated
+`TEST.md` but never asked in chat, which Deon called out explicitly).
+
+**Model:** Sonnet, medium effort throughout.
+
 ## 2026-07-27 (cont.) — R4: Onboarding service picker built
 
 Built the full R4 blueprint (ROADMAP.md, decisions locked 2026-07-27): a Netflix-style

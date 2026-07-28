@@ -76,16 +76,18 @@ struct AppCatalog {
         return trimmed.lowercased()
     }
 
-    /// Tiles for the R4 onboarding grid: every `onboarding`-flagged entry that is
-    /// either global (no `regions`) or matches `region`. Region-matched entries sort
-    /// first within their category; region here is expected as an uppercase ISO
-    /// country code (e.g. "AU") — defaults to `regionCode` uppercased.
+    /// Tiles for the R4 onboarding grid: every `onboarding`-flagged, real App Store
+    /// entry (no `symbolName`-only non-app tiles — Deon's call, 2026-07-27: the grid
+    /// is "popular apps or websites", not a generic document picker) that is either
+    /// global (no `regions`) or matches `region`. Region-matched entries sort first,
+    /// then alphabetically — no category grouping, flat grid. `region` is an
+    /// uppercase ISO country code (e.g. "AU") — defaults to `regionCode` uppercased.
     static func onboardingTiles(region: String? = nil) -> [OnboardingTile] {
         let regionKey = (region ?? regionCode).uppercased()
 
         return entries
             .filter { entry in
-                guard entry.onboarding == true else { return false }
+                guard entry.onboarding == true, entry.appStoreId != nil else { return false }
                 // Absent `regions` = global, always included. Region filters the
                 // grid only — non-matching regional entries stay searchable via
                 // `search(_:limit:)`, just not shown as onboarding tiles here.
@@ -105,7 +107,6 @@ struct AppCatalog {
                 )
             }
             .sorted { lhs, rhs in
-                if lhs.category != rhs.category { return lhs.category < rhs.category }
                 if lhs.isRegionMatch != rhs.isRegionMatch { return lhs.isRegionMatch && !rhs.isRegionMatch }
                 return lhs.name < rhs.name
             }

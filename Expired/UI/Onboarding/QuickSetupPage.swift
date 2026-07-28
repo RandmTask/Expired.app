@@ -12,7 +12,10 @@ struct QuickSetupPage: View {
     @Binding var selectedTileIDs: [String]
     let reminderOffsetDays: Int
     let currency: String
-    let onCommit: () -> Void
+    /// Passed the newly inserted items' IDs so a caller that shows its own reminder
+    /// offset step *after* this page (see `OnboardingView`) can retroactively apply
+    /// the user's final choice without touching pre-existing items.
+    let onCommit: ([UUID]) -> Void
     let onSkip: () -> Void
 
     struct Row: Identifiable {
@@ -109,7 +112,10 @@ struct QuickSetupPage: View {
 
                 FormDivider()
 
-                HStack(spacing: 8) {
+                // Two rows, not one — cramming cost + billing cycle + renewal day (+
+                // optional yearly month) onto a single line clipped the trailing
+                // label on narrower devices (Deon, 2026-07-27, R4 test feedback).
+                VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 2) {
                         Text(CurrencyInfo.symbol(for: currency))
                             .font(.system(size: 15))
@@ -119,34 +125,16 @@ struct QuickSetupPage: View {
 #if os(iOS)
                             .keyboardType(.decimalPad)
 #endif
-                            .frame(width: 56)
-                    }
+                            .frame(width: 64)
 
-                    Spacer()
+                        Spacer()
 
-                    Menu {
-                        ForEach(BillingCycle.allCases.filter { $0 != .custom }, id: \.self) { cycle in
-                            Button(cycle.rawValue) { rowBinding.wrappedValue.billingCycle = cycle }
-                        }
-                    } label: {
-                        Text(row.billingCycle.rawValue)
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-#if os(macOS)
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-#endif
-
-                    if row.billingCycle == .yearly {
                         Menu {
-                            ForEach(1...12, id: \.self) { month in
-                                Button(Calendar.current.monthSymbols[month - 1]) {
-                                    rowBinding.wrappedValue.yearlyMonth = month
-                                }
+                            ForEach(BillingCycle.allCases.filter { $0 != .custom }, id: \.self) { cycle in
+                                Button(cycle.rawValue) { rowBinding.wrappedValue.billingCycle = cycle }
                             }
                         } label: {
-                            Text(Calendar.current.shortMonthSymbols[row.yearlyMonth - 1])
+                            Text(row.billingCycle.rawValue)
                                 .font(.system(size: 13, weight: .semibold))
                         }
 #if os(macOS)
@@ -156,19 +144,42 @@ struct QuickSetupPage: View {
 #endif
                     }
 
-                    Menu {
-                        ForEach(1...31, id: \.self) { day in
-                            Button("\(day)") { rowBinding.wrappedValue.dayOfMonth = day }
+                    HStack(spacing: 8) {
+                        Menu {
+                            ForEach(1...31, id: \.self) { day in
+                                Button("\(day)") { rowBinding.wrappedValue.dayOfMonth = day }
+                            }
+                        } label: {
+                            Text("Renews \(ordinal(row.dayOfMonth))")
+                                .font(.system(size: 13, weight: .semibold))
+                                .lineLimit(1)
                         }
-                    } label: {
-                        Text("Renews \(ordinal(row.dayOfMonth))")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
 #if os(macOS)
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
 #endif
+
+                        if row.billingCycle == .yearly {
+                            Menu {
+                                ForEach(1...12, id: \.self) { month in
+                                    Button(Calendar.current.monthSymbols[month - 1]) {
+                                        rowBinding.wrappedValue.yearlyMonth = month
+                                    }
+                                }
+                            } label: {
+                                Text(Calendar.current.shortMonthSymbols[row.yearlyMonth - 1])
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+#if os(macOS)
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
+                            .fixedSize()
+#endif
+                        }
+
+                        Spacer()
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
@@ -226,6 +237,7 @@ struct QuickSetupPage: View {
         }
 
         let existingNames = Set(existingItems.map { AppCatalog.canonicalName($0.name) })
+        var insertedIDs: [UUID] = []
 
         for row in rows {
             guard !existingNames.contains(AppCatalog.canonicalName(row.tile.name)) else { continue }
@@ -251,12 +263,13 @@ struct QuickSetupPage: View {
                 notifications: [NotificationRule(offsetType: .daysBefore, value: reminderOffsetDays)]
             )
             modelContext.insert(item)
+            insertedIDs.append(item.id)
         }
 
         try? modelContext.save()
         let ctx = modelContext
         Task { await NotificationManager.shared.refreshAll(context: ctx) }
-        onCommit()
+        onCommit(insertedIDs)
     }
 
     /// Derives the next future occurrence from a day-of-month (and, for yearly billing,

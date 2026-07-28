@@ -409,14 +409,23 @@ struct SwipeActionsContainer<Content: View>: View {
         let panelWidth = CGFloat(list.count) * actionWidth
 
         ZStack {
+            // Both panels are laid out at all times (left-aligned + right-aligned),
+            // but must be explicitly hidden at rest — relying on `content()` being
+            // fully opaque to occlude them doesn't hold whenever content has any
+            // transparent gap (a Spacer, horizontal padding), which let a panel's
+            // solid-tint icon "ghost" through behind the row text (Deon, 2026-07-27
+            // R4 test feedback — this had regressed since the earlier
+            // "ghost/overlapping delete button" fix).
             HStack(spacing: 0) {
                 panel(list)
                 Spacer(minLength: 0)
             }
+            .opacity(offset > 0 ? 1 : 0)
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
                 panel(list)
             }
+            .opacity(offset < 0 ? 1 : 0)
             content()
                 .contentShape(Rectangle())
                 .offset(x: offset)

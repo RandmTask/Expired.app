@@ -130,8 +130,12 @@ def main():
             skipped += 1
             continue
 
-        print(f"Fetching {name} ({app_store_id})...")
-        artwork_url = fetch_artwork_url(app_store_id)
+        # Region-exclusive apps (Stan/Binge/Kayo = AU, NOW/Sky = GB, …) don't exist
+        # in the US storefront — a bare US lookup 404s even for a correct ID. Use
+        # the entry's own region (lowercased) when it has one.
+        lookup_country = (entry.get("regions") or ["us"])[0].lower()
+        print(f"Fetching {name} ({app_store_id}, country={lookup_country})...")
+        artwork_url = fetch_artwork_url(app_store_id, country=lookup_country)
         if not artwork_url:
             failed.append(name)
             continue

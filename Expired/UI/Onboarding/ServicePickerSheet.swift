@@ -18,7 +18,7 @@ struct ServicePickerSheet: View {
                         selectedTileIDs: $selectedTileIDs,
                         reminderOffsetDays: 3,
                         currency: preferredCurrency,
-                        onCommit: { dismiss() },
+                        onCommit: { _ in dismiss() },
                         onSkip: { dismiss() }
                     )
                 } else {

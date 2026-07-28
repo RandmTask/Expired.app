@@ -5,53 +5,62 @@ decision, or an interactive Simulator session he hasn't greenlit yet. Check item
 as they're done; delete a whole entry once verified (its detail lives in
 `ROADMAP.md`/`IMPLEMENTATION_LOG.md` already — this file is just the punch list).
 
-## R4 — Onboarding service picker (added 2026-07-27)
+## R4 — Onboarding service picker (added 2026-07-27, revised same day after test feedback)
 
-Both platforms build clean (`xcodebuild` generic iOS Simulator + generic macOS). Needs a
-real device/Simulator pass — grid layout, tile tap targets, and the quick-setup menus
-haven't been visually verified.
+Both platforms build clean (`xcodebuild` generic iOS Simulator + generic macOS). Page
+order changed (grid → quick setup → reminders → pro, reminders moved after the grid),
+grid is now a flat 4-across icon-only-per-tile layout (no category headers, no
+document/generic tiles), 5 App Store IDs were wrong and are now fixed + re-fetched (Stan,
+Binge, Kayo Sports, NOW, Sky), the Quick Setup row overflow/clipping bug is fixed (split
+into two lines), and the reminders swipe-action ghost-icon bug is fixed. Debug menu is
+now a persistent inline Settings section instead of a sheet. None of this has had a real
+device/Simulator pass yet.
 
 - [ ] **1.** Fresh install (delete app first), free user, pick 8 services on the grid →
-      all 8 exist on Home after Quick Setup, no paywall shown during onboarding. y/n
-- [ ] **2.** From Home, add a 9th item the normal way → paywall *does* show (free-tier
-      cap still applies outside onboarding). y/n
-- [ ] **3.** Airplane mode, fresh install → grid is usable; tiles with a bundled icon
-      show it, others show a placeholder/initial — no blank tiles, no crash. y/n
-- [ ] **4.** Region set to AU (Settings → App Store Region) → Stan/Binge/Kayo appear in
-      the Streaming group. Region set to US → they're absent from the grid but still
-      findable by typing "Stan" in the Add Item search. y/n
-- [ ] **5.** Pick Netflix → Quick Setup → set billing to Monthly, day to 14, and today is
-      the 20th → after commit, edit the item → renewal date is the 14th of *next*
-      month. y/n
-- [ ] **6.** Same row, switch billing to Yearly → a month picker appears next to the day
-      picker. y/n
-- [ ] **7.** Skip both pages (grid "Skip for now") → Home shows the dimmed sample Netflix
-      card with a SAMPLE chip; Debug → Diagnostics shows item count 0. y/n
-- [ ] **8.** Tap the sample Netflix card → add flow opens prefilled with "Netflix". y/n
-- [ ] **9.** Tap "Add your services" below the sample card → the picker grid reopens as
-      its own sheet (not the full onboarding pager). y/n
-- [ ] **10.** Passport tile → after Quick Setup, the created item appears in the
-      Documents section, not as a subscription. y/n
-- [ ] **11.** Replay Onboarding (Settings → 4s long-press on version footer → Replay),
-      with Netflix already tracked → the Netflix tile shows pre-checked and disabled;
-      completing the flow does not create a duplicate. y/n
-- [ ] **12.** On the reminders onboarding page, set "Remind me" to 5 days before, then
-      pick 2–3 services → each created item's editor shows a single "5 days before"
-      reminder rule. y/n
-- [ ] Screenshot the grid and the Quick Setup rows if spacing/alignment looks off on
-      either iOS or macOS (macOS reaches this only via "Add your services" from Home —
-      onboarding itself is iOS-only, unchanged from before R4).
+      Quick Setup → Reminders → all 8 exist on Home, no paywall shown during
+      onboarding. y/n
+- [ ] **2.** From Home, add a 9th item the normal way → paywall *does* show. y/n
+- [ ] **3.** Grid is flat (no section headers), shows 4 tiles across, and every tile is
+      just an icon + name — no "Insurance"/"Passport"/other document tiles appear. y/n
+- [ ] **4.** Airplane mode, fresh install → grid tiles show real logos (33 of 34 App
+      Store entries now have a bundled icon — only iCloud+ falls back to its own local
+      icon file, which also works offline). y/n
+- [ ] **5.** Region set to AU → Stan/Binge/Kayo Sports appear with real logos (not
+      placeholders). Region set to GB → NOW/Sky/BritBox/DAZN appear with real logos. y/n
+- [ ] **6.** Pick Netflix → Quick Setup row shows cost field + billing cycle on one line,
+      renewal day (+ month, if yearly) on the line below — nothing is clipped or
+      overlapping. y/n
+- [ ] **7.** Set billing Monthly, day 14, and today is the 20th → after commit, edit the
+      item → renewal date is the 14th of *next* month. Switch to Yearly → a month picker
+      appears. y/n
+- [ ] **8.** Skip the grid ("Skip for now") → still lands on the Reminders page (not
+      straight to Pro) → Home shows the dimmed sample Netflix card with a SAMPLE chip;
+      Debug → Diagnostics shows item count 0. y/n
+- [ ] **9.** Tap the sample Netflix card → add flow opens prefilled "Netflix". Tap "Add
+      your services" below it → the picker grid reopens as its own sheet, not the full
+      onboarding pager. y/n
+- [ ] **10.** Replay Onboarding, with Netflix already tracked → the Netflix tile shows
+      pre-checked and disabled; completing the flow creates no duplicate. y/n
+- [ ] **11.** Pick 2–3 services → Quick Setup → commit → **on the (now later) Reminders
+      page** set "Remind me" to 5 days before → each created item's editor shows a single
+      "5 days before" rule (not whatever the default was at Quick Setup time). y/n
+- [ ] **12.** Settings → 4-second long-press the version footer (iOS) or ⌥-click it
+      (macOS) → a Debug section appears inline in the Settings list (not a sheet) →
+      navigate to another settings row and back → Debug section is still there → tap
+      "Hide Debug" → it disappears. y/n
+- [ ] **13.** Open an existing item with reminders (e.g. one created by Quick Setup) →
+      the reminder rows render cleanly — no red/orange/gray icon square overlapping the
+      row text at rest. Swipe a row left → bell/clock/trash icons appear correctly. y/n
+- [ ] Screenshot the grid, Quick Setup rows, and the item editor's reminder rows if
+      anything still looks off.
 
-**Known gap (not blocking, flagged for a future pass):** most of the 16 newly-added
-catalog entries (Audible, Apple TV+, Paramount+, ChatGPT Plus, Canva, Strava, PlayStation
-Plus, Xbox Game Pass, Stan, Binge, Kayo Sports, NOW, Sky, BritBox, DAZN, Amazon Prime)
-don't have a bundled icon yet — they'll show an initial-letter placeholder until real
-logo assets are added to Assets.xcassets keyed by `appStoreId` (same convention as the
-existing Netflix/YouTube/Spotify/Apple Music sets `AppCatalog.swift` now also checks).
-App Store IDs for the new entries in `Resources/AppCatalog.json` are best-effort and
-worth spot-checking — a wrong ID only degrades to a placeholder icon/failed lookup, never
-a crash, but should be verified before relying on the "Read Page with AI"/App Store
-search paths for these specific services.
+**Design decision pending:** three grid tile-style options were shown (squircle+label /
+circular avatar+label / icon-only-no-label) — the current build uses squircle+label
+(Option A). Reply with which one you want if a different style is preferred.
+
+**Known, not fixed:** `iCloud+`'s App Store link (`appStoreId: 500654020`) is stale/dead
+— there's no standalone "iCloud" App Store listing, this predates R4. Low priority since
+its icon comes from a local file, not the App Store lookup.
 
 ## Launch screen / splash (added 2026-07-27)
 

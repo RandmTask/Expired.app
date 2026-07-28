@@ -2650,7 +2650,9 @@ struct SettingsView: View {
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
     @State private var modelLoadError: String?
-    @State private var showDebugAIFailureSimulator = false
+    /// Device-local only (never synced) — persists the revealed state across
+    /// navigation per `_shared/settings-conventions.md`'s "Hidden debug section".
+    @AppStorage("debugSectionRevealed") private var debugSectionRevealed = false
     @State private var showVersionCopiedToast = false
     @AppStorage("appearanceMode") private var appearanceMode = 0
     @AppStorage("notificationHour")   private var notificationHour: Int = 9
@@ -3421,6 +3423,10 @@ struct SettingsView: View {
                 versionFooterRow
                     .padding(.top, 4)
 
+                if debugSectionRevealed {
+                    DebugAIFailureSimulatorView(onHide: { debugSectionRevealed = false })
+                }
+
                 Spacer(minLength: 40)
             }
             .padding(24)
@@ -3432,9 +3438,6 @@ struct SettingsView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Please restart the app for the iCloud sync change to take effect.")
-        }
-        .sheet(isPresented: $showDebugAIFailureSimulator) {
-            DebugAIFailureSimulatorView()
         }
     }
 
@@ -3579,13 +3582,13 @@ struct SettingsView: View {
             .onTapGesture { copyVersionString() }
             .onLongPressGesture(minimumDuration: 4.0) {
                 Haptics.fire(.success)
-                showDebugAIFailureSimulator = true
+                debugSectionRevealed = true
             }
             #elseif os(macOS)
             .onTapGesture {
                 if NSEvent.modifierFlags.contains(.option) {
                     Haptics.fire(.success)
-                    showDebugAIFailureSimulator = true
+                    debugSectionRevealed = true
                 } else {
                     copyVersionString()
                 }
@@ -3948,6 +3951,10 @@ struct SettingsView: View {
                 versionFooterRow
                     .listRowBackground(Color.clear)
             }
+
+            if debugSectionRevealed {
+                DebugAIFailureSimulatorView(onHide: { debugSectionRevealed = false })
+            }
         }
         .navigationTitle("Settings")
         .largeNavigationTitle()
@@ -3956,9 +3963,6 @@ struct SettingsView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Please restart the app for the iCloud sync change to take effect.")
-        }
-        .sheet(isPresented: $showDebugAIFailureSimulator) {
-            DebugAIFailureSimulatorView()
         }
     }
 

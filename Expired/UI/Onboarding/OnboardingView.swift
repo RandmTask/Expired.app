@@ -65,6 +65,7 @@ extension View {
 struct OnboardingView: View {
     let onComplete: () -> Void
 
+    @Environment(\.modelContext) private var modelContext
     @Environment(PurchaseManager.self) private var purchaseManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pageIndex = 0
@@ -73,12 +74,24 @@ struct OnboardingView: View {
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
     @State private var reminderOffsetDays = 3
     @State private var selectedTileIDs: [String] = []
+    /// IDs of items the picker grid/quick setup created this session — the (now
+    /// later) reminders page retroactively applies the user's chosen offset to
+    /// exactly these, never touching pre-existing items.
+    @State private var createdItemIDs: [UUID] = []
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
 
+    /// Page order: welcome → track everything → screenshot import → picker grid →
+    /// quick setup → reminders → pro. Reminders sits after the picker (not before)
+    /// so "all N of these are now armed" lands as a concrete payoff — Deon's call
+    /// after using the original before-the-grid placement, 2026-07-27.
     private let pageCount = 7
+    private let servicePickerTag = 3
+    private let quickSetupTag = 4
+    private let remindersTag = 5
+    private let proTag = 6
     /// Pages with their own footer CTA (grid + quick setup) — the generic
     /// `continueButton`/chrome must stay hidden for these.
-    private let customFooterPages: Set<Int> = [4, 5]
+    private let customFooterPages: Set<Int> = [3, 4]
 
     var body: some View {
         ZStack {
@@ -91,21 +104,24 @@ struct OnboardingView: View {
                     welcomePage.tag(0)
                     trackEverythingPage.tag(1)
                     screenshotImportPage.tag(2)
-                    remindersPage.tag(3)
                     ServicePickerPage(
                         selectedTileIDs: $selectedTileIDs,
-                        onContinue: { withAnimation { pageIndex = 5 } },
-                        onSkip: { withAnimation { pageIndex = 6 } },
+                        onContinue: { withAnimation { pageIndex = quickSetupTag } },
+                        onSkip: { withAnimation { pageIndex = remindersTag } },
                         onAddYourOwn: onComplete
-                    ).tag(4)
+                    ).tag(servicePickerTag)
                     QuickSetupPage(
                         selectedTileIDs: $selectedTileIDs,
                         reminderOffsetDays: reminderOffsetDays,
                         currency: preferredCurrency,
-                        onCommit: { withAnimation { pageIndex = 6 } },
-                        onSkip: { withAnimation { pageIndex = 6 } }
-                    ).tag(5)
-                    proPage.tag(6)
+                        onCommit: { ids in
+                            createdItemIDs.append(contentsOf: ids)
+                            withAnimation { pageIndex = remindersTag }
+                        },
+                        onSkip: { withAnimation { pageIndex = remindersTag } }
+                    ).tag(quickSetupTag)
+                    remindersPage.tag(remindersTag)
+                    proPage.tag(proTag)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
 
@@ -125,6 +141,23 @@ struct OnboardingView: View {
         }
         .expiredPaywallSheet(isPresented: $showPaywall)
         .task { await refreshNotificationStatus() }
+    }
+
+    /// Overwrites the notification rule on every item created by this onboarding
+    /// session with the finally-chosen offset — items are seeded with a default
+    /// 3-day rule at Quick Setup commit time (before the user reaches this page),
+    /// so this is what makes acceptance criterion 8 ("5 days before → all seeded
+    /// items show a 5-day rule") true regardless of page order.
+    private func applyReminderOffsetToCreatedItems() {
+        guard !createdItemIDs.isEmpty else { return }
+        let idSet = Set(createdItemIDs)
+        guard let items = try? modelContext.fetch(FetchDescriptor<SubscriptionItem>()) else { return }
+        for item in items where idSet.contains(item.id) {
+            item.notifications = [NotificationRule(offsetType: .daysBefore, value: reminderOffsetDays)]
+        }
+        try? modelContext.save()
+        let ctx = modelContext
+        Task { await NotificationManager.shared.refreshAll(context: ctx) }
     }
 
     // MARK: Pages
@@ -406,6 +439,9 @@ struct OnboardingView: View {
         if pageIndex < pageCount - 1 {
             Button {
                 Haptics.fire(.light)
+                if pageIndex == remindersTag {
+                    applyReminderOffsetToCreatedItems()
+                }
                 withAnimation { pageIndex += 1 }
             } label: {
                 Text("Next")

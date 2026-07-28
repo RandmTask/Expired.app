@@ -43,7 +43,7 @@
     },
     {
         "name": "Max",
-        "appStoreId": "971265422",
+        "appStoreId": "1666653815",
         "category": "Streaming",
         "onboarding": true
     },
@@ -92,8 +92,11 @@
     },
     {
         "name": "Adobe Creative Cloud",
-        "appStoreId": "852473028",
+        "appStoreId": "1051937863",
         "category": "Professional & Business",
+        "aliases": [
+            "Adobe Express"
+        ],
         "onboarding": true
     },
     {
@@ -136,28 +139,39 @@
         "name": "Apple TV+",
         "appStoreId": "1174078549",
         "category": "Streaming",
-        "aliases": ["Apple TV", "Apple TV Plus"],
+        "aliases": [
+            "Apple TV",
+            "Apple TV Plus"
+        ],
         "onboarding": true
     },
     {
         "name": "Paramount+",
-        "appStoreId": "1508588322",
+        "appStoreId": "530168168",
         "category": "Streaming",
-        "aliases": ["Paramount Plus"],
+        "aliases": [
+            "Paramount Plus"
+        ],
         "onboarding": true
     },
     {
         "name": "Amazon Prime",
         "appStoreId": "297606951",
         "category": "Personal & Lifestyle",
-        "aliases": ["Amazon", "Prime"],
+        "aliases": [
+            "Amazon",
+            "Prime"
+        ],
         "onboarding": true
     },
     {
         "name": "ChatGPT Plus",
         "appStoreId": "6448311069",
         "category": "Work & Productivity",
-        "aliases": ["ChatGPT", "OpenAI"],
+        "aliases": [
+            "ChatGPT",
+            "OpenAI"
+        ],
         "onboarding": true
     },
     {
@@ -174,107 +188,133 @@
     },
     {
         "name": "PlayStation Plus",
-        "appStoreId": "977599555",
+        "appStoreId": "410896080",
         "category": "Personal & Lifestyle",
-        "aliases": ["PS Plus", "PSN"],
+        "aliases": [
+            "PS Plus",
+            "PSN"
+        ],
         "onboarding": true
     },
     {
         "name": "Xbox Game Pass",
-        "appStoreId": "1404300302",
+        "appStoreId": "736179781",
         "category": "Personal & Lifestyle",
-        "aliases": ["Game Pass", "Xbox"],
+        "aliases": [
+            "Game Pass",
+            "Xbox"
+        ],
         "onboarding": true
     },
     {
         "name": "Stan",
-        "appStoreId": "1024580042",
+        "appStoreId": "948095331",
         "category": "Streaming",
-        "regions": ["AU"],
+        "regions": [
+            "AU"
+        ],
         "onboarding": true
     },
     {
         "name": "Binge",
-        "appStoreId": "1536323058",
+        "appStoreId": "1486598248",
         "category": "Streaming",
-        "regions": ["AU"],
+        "regions": [
+            "AU"
+        ],
         "onboarding": true
     },
     {
         "name": "Kayo Sports",
-        "appStoreId": "1436092130",
+        "appStoreId": "1434518367",
         "category": "Streaming",
-        "aliases": ["Kayo"],
-        "regions": ["AU"],
+        "aliases": [
+            "Kayo"
+        ],
+        "regions": [
+            "AU"
+        ],
         "onboarding": true
     },
     {
         "name": "NOW",
-        "appStoreId": "1005541381",
+        "appStoreId": "512266300",
         "category": "Streaming",
-        "aliases": ["NOW TV"],
-        "regions": ["GB"],
+        "aliases": [
+            "NOW TV"
+        ],
+        "regions": [
+            "GB"
+        ],
         "onboarding": true
     },
     {
         "name": "Sky",
-        "appStoreId": "536598862",
+        "appStoreId": "446086440",
         "category": "Streaming",
-        "aliases": ["Sky Go"],
-        "regions": ["GB"],
+        "aliases": [
+            "Sky Go"
+        ],
+        "regions": [
+            "GB"
+        ],
         "onboarding": true
     },
     {
         "name": "BritBox",
-        "appStoreId": "1440509939",
+        "appStoreId": "1206838907",
         "category": "Streaming",
-        "regions": ["GB"],
+        "regions": [
+            "GB"
+        ],
         "onboarding": true
     },
     {
         "name": "DAZN",
-        "appStoreId": "1109809243",
+        "appStoreId": "1129523589",
         "category": "Streaming",
-        "regions": ["GB"],
+        "regions": [
+            "GB"
+        ],
         "onboarding": true
     },
     {
         "name": "Gym",
         "category": "Health & Fitness",
         "symbolName": "figure.run",
-        "onboarding": true
+        "onboarding": false
     },
     {
         "name": "Insurance",
         "category": "Financial",
         "symbolName": "shield.lefthalf.filled",
         "itemType": "Document",
-        "onboarding": true
+        "onboarding": false
     },
     {
         "name": "Rent / Mortgage",
         "category": "Financial",
         "symbolName": "house.fill",
-        "onboarding": true
+        "onboarding": false
     },
     {
         "name": "Car registration",
         "category": "Financial",
         "symbolName": "car.fill",
         "itemType": "Document",
-        "onboarding": true
+        "onboarding": false
     },
     {
         "name": "Passport",
         "category": "Personal & Lifestyle",
         "symbolName": "person.text.rectangle.fill",
         "itemType": "Document",
-        "onboarding": true
+        "onboarding": false
     },
     {
         "name": "Utilities",
         "category": "Utilities",
         "symbolName": "bolt.fill",
-        "onboarding": true
+        "onboarding": false
     }
 ]
