@@ -6,9 +6,40 @@
         "onboarding": true
     },
     {
-        "name": "YouTube",
+        "name": "YouTube Premium",
         "appStoreId": "544007664",
         "category": "Streaming",
+        "aliases": [
+            "YouTube"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "Disney+",
+        "appStoreId": "1446075923",
+        "category": "Streaming",
+        "aliases": [
+            "Disney Plus"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "Max",
+        "appStoreId": "1666653815",
+        "category": "Streaming",
+        "aliases": [
+            "HBO Max",
+            "HBO"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "Prime Video",
+        "appStoreId": "545519333",
+        "category": "Streaming",
+        "aliases": [
+            "Amazon Prime Video"
+        ],
         "onboarding": true
     },
     {
@@ -18,9 +49,31 @@
         "onboarding": true
     },
     {
-        "name": "Disney+",
-        "appStoreId": "1446075923",
+        "name": "Apple TV+",
+        "appStoreId": "1174078549",
         "category": "Streaming",
+        "aliases": [
+            "Apple TV",
+            "Apple TV Plus"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "Peacock",
+        "appStoreId": "1508186374",
+        "category": "Streaming",
+        "aliases": [
+            "Peacock TV"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "Paramount+",
+        "appStoreId": "530168168",
+        "category": "Streaming",
+        "aliases": [
+            "Paramount Plus"
+        ],
         "onboarding": true
     },
     {
@@ -36,58 +89,55 @@
         "onboarding": true
     },
     {
-        "name": "Prime Video",
-        "appStoreId": "545519333",
+        "name": "Audible",
+        "appStoreId": "379693831",
         "category": "Streaming",
         "onboarding": true
     },
     {
-        "name": "Max",
-        "appStoreId": "1666653815",
+        "name": "YouTube Music",
+        "appStoreId": "1017492454",
         "category": "Streaming",
         "onboarding": true
     },
     {
-        "name": "Dropbox",
-        "appStoreId": "327630330",
-        "category": "Digital Utilities & Cloud",
-        "onboarding": true
-    },
-    {
-        "name": "Google One",
-        "appStoreId": "1451784400",
-        "category": "Digital Utilities & Cloud",
-        "onboarding": true
-    },
-    {
-        "name": "iCloud+",
-        "appStoreId": "500654020",
-        "category": "Digital Utilities & Cloud",
-        "iconFilename": "iCloud icon.png",
+        "name": "ChatGPT Plus",
+        "appStoreId": "6448311069",
+        "category": "AI Tools",
         "aliases": [
-            "iCloud",
-            "iCloud Plus",
-            "iCloud+ with storage",
-            "iCloud storage"
+            "ChatGPT",
+            "OpenAI"
         ],
         "onboarding": true
     },
     {
-        "name": "Microsoft 365",
-        "appStoreId": "541164041",
-        "category": "Work & Productivity",
+        "name": "Claude Pro",
+        "appStoreId": "6473753684",
+        "category": "AI Tools",
+        "aliases": [
+            "Claude",
+            "Anthropic"
+        ],
         "onboarding": true
     },
     {
-        "name": "Notion",
-        "appStoreId": "1232780281",
-        "category": "Work & Productivity",
+        "name": "Google Gemini",
+        "appStoreId": "6477489729",
+        "category": "AI Tools",
+        "aliases": [
+            "Gemini",
+            "Google AI"
+        ],
         "onboarding": true
     },
     {
-        "name": "Zoom",
-        "appStoreId": "546505307",
-        "category": "Work & Productivity",
+        "name": "GitHub Copilot",
+        "appStoreId": "1477376905",
+        "category": "AI Tools",
+        "aliases": [
+            "GitHub",
+            "Copilot"
+        ],
         "onboarding": true
     },
     {
@@ -95,25 +145,29 @@
         "appStoreId": "1051937863",
         "category": "Professional & Business",
         "aliases": [
+            "Adobe",
             "Adobe Express"
         ],
         "onboarding": true
     },
     {
-        "name": "GitHub",
-        "appStoreId": "1477376905",
+        "name": "Canva",
+        "appStoreId": "897446215",
         "category": "Professional & Business",
+        "aliases": [
+            "Canva Pro"
+        ],
         "onboarding": true
     },
     {
-        "name": "Duolingo",
-        "appStoreId": "570060128",
-        "category": "Personal & Lifestyle",
+        "name": "WHOOP",
+        "appStoreId": "933944389",
+        "category": "Health & Fitness",
         "onboarding": true
     },
     {
-        "name": "Headspace",
-        "appStoreId": "493145008",
+        "name": "Strava",
+        "appStoreId": "426826309",
         "category": "Health & Fitness",
         "onboarding": true
     },
@@ -124,40 +178,206 @@
         "onboarding": true
     },
     {
+        "name": "Calm",
+        "appStoreId": "571800810",
+        "category": "Health & Fitness",
+        "onboarding": true
+    },
+    {
+        "name": "Headspace",
+        "appStoreId": "493145008",
+        "category": "Health & Fitness",
+        "onboarding": true
+    },
+    {
+        "name": "Oura",
+        "appStoreId": "1043837948",
+        "category": "Health & Fitness",
+        "aliases": [
+            "Oura Ring"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "Peloton",
+        "appStoreId": "792750948",
+        "category": "Health & Fitness",
+        "onboarding": true
+    },
+    {
+        "name": "Runna",
+        "appStoreId": "1594204443",
+        "category": "Health & Fitness",
+        "onboarding": true
+    },
+    {
+        "name": "iCloud+",
+        "appStoreId": "500654020",
+        "category": "Digital Utilities & Cloud",
+        "iconFilename": "iCloud icon.png",
+        "aliases": [
+            "iCloud",
+            "iCloud Plus",
+            "iCloud storage"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "Google One",
+        "appStoreId": "1451784400",
+        "category": "Digital Utilities & Cloud",
+        "onboarding": true
+    },
+    {
+        "name": "Microsoft 365",
+        "appStoreId": "541164041",
+        "category": "Work & Productivity",
+        "aliases": [
+            "Office 365"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "1Password",
+        "appStoreId": "1511601750",
+        "category": "Digital Utilities & Cloud",
+        "onboarding": true
+    },
+    {
+        "name": "NordVPN",
+        "appStoreId": "905953485",
+        "category": "Digital Utilities & Cloud",
+        "aliases": [
+            "Nord VPN"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "Dropbox",
+        "appStoreId": "327630330",
+        "category": "Digital Utilities & Cloud",
+        "onboarding": true
+    },
+    {
+        "name": "Notion",
+        "appStoreId": "1232780281",
+        "category": "Work & Productivity",
+        "onboarding": true
+    },
+    {
+        "name": "Todoist",
+        "appStoreId": "572688855",
+        "category": "Work & Productivity",
+        "onboarding": true
+    },
+    {
         "name": "Tinder",
         "appStoreId": "547702041",
         "category": "Personal & Lifestyle",
         "onboarding": true
     },
     {
-        "name": "Audible",
-        "appStoreId": "379693831",
-        "category": "Streaming",
+        "name": "Hinge",
+        "appStoreId": "595287172",
+        "category": "Personal & Lifestyle",
         "onboarding": true
     },
     {
-        "name": "Apple TV+",
-        "appStoreId": "1174078549",
-        "category": "Streaming",
+        "name": "Bumble",
+        "appStoreId": "930441707",
+        "category": "Personal & Lifestyle",
+        "onboarding": true
+    },
+    {
+        "name": "LinkedIn Premium",
+        "appStoreId": "288429040",
+        "category": "Professional & Business",
         "aliases": [
-            "Apple TV",
-            "Apple TV Plus"
+            "LinkedIn"
         ],
         "onboarding": true
     },
     {
-        "name": "Paramount+",
-        "appStoreId": "530168168",
-        "category": "Streaming",
+        "name": "PlayStation Plus",
+        "appStoreId": "410896080",
+        "category": "Gaming",
         "aliases": [
-            "Paramount Plus"
+            "PS Plus",
+            "PSN",
+            "PlayStation"
         ],
+        "onboarding": true
+    },
+    {
+        "name": "Xbox Game Pass",
+        "appStoreId": "736179781",
+        "category": "Gaming",
+        "aliases": [
+            "Game Pass",
+            "Xbox"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "Nintendo Switch Online",
+        "appStoreId": "1234806557",
+        "category": "Gaming",
+        "aliases": [
+            "Nintendo",
+            "Switch Online"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "Discord Nitro",
+        "appStoreId": "985746746",
+        "category": "Gaming",
+        "aliases": [
+            "Discord"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "Twitch",
+        "appStoreId": "460177396",
+        "category": "Gaming",
+        "onboarding": true
+    },
+    {
+        "name": "The New York Times",
+        "appStoreId": "284862083",
+        "category": "Personal & Lifestyle",
+        "aliases": [
+            "NYTimes",
+            "NYT"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "The Wall Street Journal",
+        "appStoreId": "364387007",
+        "category": "Personal & Lifestyle",
+        "aliases": [
+            "WSJ"
+        ],
+        "onboarding": true
+    },
+    {
+        "name": "MasterClass",
+        "appStoreId": "1273867416",
+        "category": "Personal & Lifestyle",
+        "onboarding": true
+    },
+    {
+        "name": "Substack",
+        "appStoreId": "1581650857",
+        "category": "Personal & Lifestyle",
         "onboarding": true
     },
     {
         "name": "Amazon Prime",
         "appStoreId": "297606951",
-        "category": "Personal & Lifestyle",
+        "category": "Shopping & Delivery",
         "aliases": [
             "Amazon",
             "Prime"
@@ -165,45 +385,9 @@
         "onboarding": true
     },
     {
-        "name": "ChatGPT Plus",
-        "appStoreId": "6448311069",
-        "category": "Work & Productivity",
-        "aliases": [
-            "ChatGPT",
-            "OpenAI"
-        ],
-        "onboarding": true
-    },
-    {
-        "name": "Canva",
-        "appStoreId": "897446215",
-        "category": "Work & Productivity",
-        "onboarding": true
-    },
-    {
-        "name": "Strava",
-        "appStoreId": "426826309",
-        "category": "Health & Fitness",
-        "onboarding": true
-    },
-    {
-        "name": "PlayStation Plus",
-        "appStoreId": "410896080",
+        "name": "Duolingo",
+        "appStoreId": "570060128",
         "category": "Personal & Lifestyle",
-        "aliases": [
-            "PS Plus",
-            "PSN"
-        ],
-        "onboarding": true
-    },
-    {
-        "name": "Xbox Game Pass",
-        "appStoreId": "736179781",
-        "category": "Personal & Lifestyle",
-        "aliases": [
-            "Game Pass",
-            "Xbox"
-        ],
         "onboarding": true
     },
     {

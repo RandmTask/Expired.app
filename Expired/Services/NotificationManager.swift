@@ -99,9 +99,13 @@ final class NotificationManager {
 
     // MARK: - Permission
 
+    /// Shows the system permission dialog. **Only ever call this from an explicit,
+    /// user-visible "enable reminders" moment** (the onboarding reminders page, or
+    /// Settings) — never from app launch or as a side effect of saving data. See
+    /// `refreshAll(context:requestingAuthorization:)` and
+    /// `_shared/onboarding-conventions.md` "Never fire a permission prompt before
+    /// the page that explains it".
     func requestAuthorization() async {
-        // Re-register every launch — categories are not persisted across launches,
-        // so already-authorized users would otherwise lose the "View"/"Dismiss" actions.
         registerCategories()
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
@@ -111,6 +115,14 @@ final class NotificationManager {
         } catch {
             print("[Notifications] Authorization request failed: \(error)")
         }
+    }
+
+    /// Re-registers notification categories without ever prompting. Categories are
+    /// not persisted across launches, so already-authorized users would otherwise
+    /// lose the "View"/"Dismiss" actions — but a user who hasn't been asked yet must
+    /// not be prompted just because the app launched.
+    func registerCategoriesOnly() {
+        registerCategories()
     }
 
     // MARK: - Notification categories (enables "View" action on lock screen)
@@ -141,8 +153,17 @@ final class NotificationManager {
     /// fire moments, cap to the soonest ~62, clear all app-prefixed pending requests, and
     /// reschedule. Fetching fresh here (rather than accepting a caller-supplied array) means
     /// there is one authoritative source — every old call site had a different `@Query` filter.
-    func refreshAll(context: ModelContext) async {
-        await requestAuthorization()
+    /// - Parameter requestingAuthorization: when `true` (the default) an undecided
+    ///   user is prompted before scheduling. Pass `false` from any path that runs
+    ///   *before* the UI has explained what reminders are — notably onboarding's
+    ///   batch commit, which used to surface the system dialog mid-flow, several
+    ///   pages before the reminders page that asks for it.
+    func refreshAll(context: ModelContext, requestingAuthorization: Bool = true) async {
+        if requestingAuthorization {
+            await requestAuthorization()
+        } else {
+            registerCategories()
+        }
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .authorized ||

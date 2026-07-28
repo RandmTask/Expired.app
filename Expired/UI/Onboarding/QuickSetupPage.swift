@@ -34,7 +34,7 @@ struct QuickSetupPage: View {
             VStack(spacing: 6) {
                 Text("Quick Setup")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
-                Text("Cost is optional — fill it in later if you're not sure.")
+                Text("Fill in cost and details later if you're unsure.")
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
@@ -112,79 +112,94 @@ struct QuickSetupPage: View {
 
                 FormDivider()
 
-                // Two rows, not one — cramming cost + billing cycle + renewal day (+
-                // optional yearly month) onto a single line clipped the trailing
-                // label on narrower devices (Deon, 2026-07-27, R4 test feedback).
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 2) {
-                        Text(CurrencyInfo.symbol(for: currency))
-                            .font(.system(size: 15))
-                            .foregroundStyle(.secondary)
-                        TextField("Cost", text: rowBinding.costText)
-                            .font(.system(size: 15))
-#if os(iOS)
-                            .keyboardType(.decimalPad)
-#endif
-                            .frame(width: 64)
+                // Cost on the left, both menus grouped together on the right (Deon,
+                // 2026-07-28: "monthly and renews 28th should be on the same side").
+                HStack(spacing: 10) {
+                    costField(rowBinding)
 
-                        Spacer()
+                    Spacer(minLength: 8)
 
-                        Menu {
+                    HStack(spacing: 6) {
+                        menuChip(label: row.billingCycle.rawValue) {
                             ForEach(BillingCycle.allCases.filter { $0 != .custom }, id: \.self) { cycle in
                                 Button(cycle.rawValue) { rowBinding.wrappedValue.billingCycle = cycle }
                             }
-                        } label: {
-                            Text(row.billingCycle.rawValue)
-                                .font(.system(size: 13, weight: .semibold))
                         }
-#if os(macOS)
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-#endif
-                    }
-
-                    HStack(spacing: 8) {
-                        Menu {
-                            ForEach(1...31, id: \.self) { day in
-                                Button("\(day)") { rowBinding.wrappedValue.dayOfMonth = day }
-                            }
-                        } label: {
-                            Text("Renews \(ordinal(row.dayOfMonth))")
-                                .font(.system(size: 13, weight: .semibold))
-                                .lineLimit(1)
-                        }
-#if os(macOS)
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-#endif
 
                         if row.billingCycle == .yearly {
-                            Menu {
+                            menuChip(label: Calendar.current.shortMonthSymbols[row.yearlyMonth - 1]) {
                                 ForEach(1...12, id: \.self) { month in
                                     Button(Calendar.current.monthSymbols[month - 1]) {
                                         rowBinding.wrappedValue.yearlyMonth = month
                                     }
                                 }
-                            } label: {
-                                Text(Calendar.current.shortMonthSymbols[row.yearlyMonth - 1])
-                                    .font(.system(size: 13, weight: .semibold))
                             }
-#if os(macOS)
-                            .menuStyle(.borderlessButton)
-                            .menuIndicator(.hidden)
-                            .fixedSize()
-#endif
                         }
 
-                        Spacer()
+                        if row.billingCycle != .oneOff {
+                            menuChip(label: ordinal(row.dayOfMonth)) {
+                                ForEach(1...31, id: \.self) { day in
+                                    Button(ordinal(day)) { rowBinding.wrappedValue.dayOfMonth = day }
+                                }
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
             }
         }
+    }
+
+    /// Bare `TextField` + a loose currency glyph read as an unfinished form field, so
+    /// this gives the amount a real filled container with the symbol inside it.
+    private func costField(_ rowBinding: Binding<Row>) -> some View {
+        HStack(spacing: 3) {
+            Text(CurrencyInfo.symbol(for: currency))
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
+            TextField("0.00", text: rowBinding.costText)
+                .font(.system(size: 15, weight: .medium, design: .rounded))
+#if os(iOS)
+                .keyboardType(.decimalPad)
+#endif
+                .frame(width: 58)
+#if os(macOS)
+                .textFieldStyle(.plain)
+#endif
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// Compact menu rendered as a pill.
+    ///
+    /// `.contentTransition(.identity)` is load-bearing: SwiftUI's default text content
+    /// transition animates a changed Menu label by interpolating between the old and
+    /// new strings, and mid-interpolation the label is laid out at the *old* width
+    /// while drawing the new text — so picking a longer value ("One-time") flashes
+    /// visibly clipped for ~0.2s before settling. `.fixedSize()` stops the pill from
+    /// being squeezed by the enclosing HStack for the same reason.
+    @ViewBuilder
+    private func menuChip<Content: View>(label: String, @ViewBuilder content: () -> Content) -> some View {
+        Menu {
+            content()
+        } label: {
+            Text(label)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .contentTransition(.identity)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        }
+        .fixedSize()
+        .animation(nil, value: label)
+#if os(macOS)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+#endif
     }
 
     @ViewBuilder
@@ -268,7 +283,10 @@ struct QuickSetupPage: View {
 
         try? modelContext.save()
         let ctx = modelContext
-        Task { await NotificationManager.shared.refreshAll(context: ctx) }
+        // No permission prompt here — the reminders page comes next and asks for it
+        // with context. Scheduling still runs; it simply no-ops until authorized,
+        // and the reminders page's own refresh re-schedules once permission lands.
+        Task { await NotificationManager.shared.refreshAll(context: ctx, requestingAuthorization: false) }
         onCommit(insertedIDs)
     }
 

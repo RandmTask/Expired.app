@@ -27,6 +27,10 @@ struct AppCatalog {
         let itemType: String?
         /// SF Symbol name for non-app tiles (no `appStoreId`, no icon fetch).
         let symbolName: String?
+        /// Explicit Asset Catalog image-set name, for web-only services that have no
+        /// App Store app to key an icon off. Written by `bin/fetch-onboarding-icons.py`
+        /// alongside `iconURL`; takes precedence over the `appStoreId` lookup.
+        let iconAsset: String?
 
         var lookupNames: [String] {
             [name] + (aliases ?? [])
@@ -173,14 +177,19 @@ struct AppCatalog {
         )
     }
 
-    /// Bundled icon for an entry, checked in order: the loose-bundle `iconFilename`
-    /// (existing mechanism), then an Asset Catalog image set named by `appStoreId`
-    /// (the `AppCatalogIcons` group already bundles a handful of these).
+    /// Bundled icon for an entry, checked in order: an explicit `iconAsset` image set
+    /// (web-sourced icons), an Asset Catalog image set named by `appStoreId` (what
+    /// `bin/fetch-onboarding-icons.py` writes), then the loose-bundle `iconFilename`.
+    /// The loose file is the last resort rather than the first so a freshly fetched,
+    /// correctly-sized App Store icon always beats a hand-added legacy file.
     private static func bundledIconData(for entry: Entry) -> Data? {
-        if let iconFilename = entry.iconFilename, let data = localIconData(filename: iconFilename) {
+        if let iconAsset = entry.iconAsset, let data = assetCatalogIconData(named: iconAsset) {
             return data
         }
         if let appStoreId = entry.appStoreId, let data = assetCatalogIconData(named: appStoreId) {
+            return data
+        }
+        if let iconFilename = entry.iconFilename, let data = localIconData(filename: iconFilename) {
             return data
         }
         return nil

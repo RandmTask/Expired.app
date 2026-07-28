@@ -1,5 +1,86 @@
 # Expired — Implementation Log
 
+## 2026-07-28 (cont.) — R4 round 2: catalog curation, permission timing, swipe rewrite
+
+Second round of fixes from Deon's device testing.
+
+**Catalog: 32 → 57 tiles, curated by what people actually *pay for*.** The previous
+list was assembled from memory and drifted toward well-known apps rather than
+well-subscribed ones — it carried GitHub (free for nearly everyone; the paid product
+is Copilot) and Zoom (overwhelmingly employer-expensed), while missing Peacock, Calm,
+WHOOP, Oura, Peloton, Hinge, Nintendo Switch Online, NYTimes and every mainstream AI
+assistant. Rebuilt from Deon's category list: 50 global + 7 regional. Entries are now
+named after the **paid tier** (`GitHub Copilot`, `YouTube Premium`, `LinkedIn
+Premium`, `ChatGPT Plus`, `Discord Nitro`) with the bare brand kept as an alias —
+`canonicalName` strips "premium"/"plus"/"pro", so dedupe is unaffected. Duolingo kept
+deliberately despite weak paid conversion: high recognition, costs one tile.
+
+**Icons: 56/57 now real.** Every App Store ID verified against the live iTunes API
+before use. Also fixed a genuine bug in `bin/fetch-onboarding-icons.py` that had been
+misreporting valid IDs as failures: Apple's artwork CDN resets the connection on
+rapid sequential pulls, and the script had no retry — so a run "failed" 6 apps whose
+IDs were perfectly correct, which is exactly the kind of false signal that sends you
+off re-verifying data that was never wrong. Added 4-attempt backoff, plus a quality
+gate (reject sources < 120px or aspect skew > 1.15) and `iconURL`/`iconAsset` support
+for web-only services, per Deon's ask.
+
+**Notification permission fired ~2 pages too early.** Two independent causes, both
+indirect: `ExpiredApp`'s launch `.task` called `requestAuthorization()` on every
+launch including the very first, and `NotificationManager.refreshAll` called it at
+the top — so onboarding's batch commit surfaced the system dialog from a page that
+has nothing to do with reminders. Fixed by splitting the concerns:
+`registerCategoriesOnly()` for the launch path (categories genuinely do need
+re-registering each launch, which is why the prompt got attached there), a
+`requestingAuthorization:` parameter on `refreshAll` (passed `false` from
+`QuickSetupPage.commit`), and gating the launch-time request on
+`hasCompletedOnboarding` so returning users still have a fallback path. Written up in
+`_shared/onboarding-conventions.md` — this is a one-shot-per-install prompt, so a
+wrong-moment prompt is expensive to even *retest*.
+
+**Swipe actions rewritten** (`SwipeActionsContainer`). Deon asked the right question
+— "why isn't it native?" — so the answer is now a comment in the file: `.swipeActions`
+requires a `List`, and this editor lives in the item form's `ScrollView` + glass
+`FormCard`, where a nested `List` collapses to zero height. Given that constraint,
+fixed the two real defects: open-row identity moved from per-row `@State` to the
+parent (`RemindersEditorView.openRowID`) so only one row can be open, and the drag
+clamp is now asymmetric off the settled offset so an open row can only be dragged
+*closed*, never straight through zero into the opposite panel — that was the
+"swiping back triggers a left swipe" glitch. Note `_shared/gestures.md`'s golden rule
+is "never hand-roll open-swipe state"; that rule assumes a `List` is available, so I
+added an explicit carve-out documenting when it inverts, rather than silently
+contradicting it. **Worth revisiting:** dropping swipe entirely for inline buttons is
+arguably the better design here, since the row lives in a form the user is already
+editing — flagged in the doc, not done unilaterally.
+
+**Menu label truncation** (`"One-time"` flashing clipped): not an overflow, despite
+looking like one. SwiftUI's default text content transition interpolates old→new
+string and lays the label out at the *old* width while drawing the new text. Fixed
+with `.contentTransition(.identity)` + `.fixedSize()`. Documented in
+`_shared/ui-conventions.md` including how to tell it apart from real clipping — if it
+self-corrects after ~0.2s it's this, and re-laying-out the row (which is what I did
+last round) doesn't help.
+
+**Other UI:** reminders-page segmented Picker replaced with four glass chips (a
+segmented control sizes every segment to the widest label and clips rather than
+shrinking — "3 days befo…"); Quick Setup cost field given a real filled container
+with the currency symbol inside it, and the billing-cycle + renewal-day menus grouped
+together on the right; grid icons 60 → 68pt; non-app tiles (Gym/Insurance/Passport…)
+removed from the grid but kept in the catalog as `onboarding: false` so they stay
+searchable and still route to the right item type.
+
+**New: debug-only grid-style switcher.** `ServiceGridStyle` defines 8 layouts
+(squircle ×2 sizes, icon-only ×2, circular ×2, honeycomb, compact); a menu appears
+top-left on the picker grid **only once the hidden Debug section has been revealed**,
+so it's invisible to real users. Persisted in `@AppStorage`. Built so the "which
+looks best" question gets settled on-device with real icons rather than from mockups.
+
+Both platforms rebuilt clean throughout (`** BUILD SUCCEEDED **`, zero errors).
+
+**How to test:** `TEST.md`'s R4 section, rewritten — 14 items, pasted into chat.
+Item 13 asks Deon to pick the winning grid style.
+
+**Model:** Opus, medium effort.
+
 ## 2026-07-28 — R4 fixes from first test pass
 
 Deon tested the R4 build (previous entry) and reported issues; all addressed:

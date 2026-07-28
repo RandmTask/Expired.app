@@ -5,62 +5,67 @@ decision, or an interactive Simulator session he hasn't greenlit yet. Check item
 as they're done; delete a whole entry once verified (its detail lives in
 `ROADMAP.md`/`IMPLEMENTATION_LOG.md` already — this file is just the punch list).
 
-## R4 — Onboarding service picker (added 2026-07-27, revised same day after test feedback)
+## R4 — Onboarding service picker (added 2026-07-27, revised 2026-07-28 round 2)
 
-Both platforms build clean (`xcodebuild` generic iOS Simulator + generic macOS). Page
-order changed (grid → quick setup → reminders → pro, reminders moved after the grid),
-grid is now a flat 4-across icon-only-per-tile layout (no category headers, no
-document/generic tiles), 5 App Store IDs were wrong and are now fixed + re-fetched (Stan,
-Binge, Kayo Sports, NOW, Sky), the Quick Setup row overflow/clipping bug is fixed (split
-into two lines), and the reminders swipe-action ghost-icon bug is fixed. Debug menu is
-now a persistent inline Settings section instead of a sheet. None of this has had a real
-device/Simulator pass yet.
+Both platforms build clean. This round: catalog expanded 32 → 57 tiles (50 global +
+7 regional) curated by *what people actually pay for*; 56/57 now have real bundled
+App Store icons; icons enlarged (60 → 68pt); notification permission no longer fires
+early; Quick Setup row relaid out with a styled cost field; menu label truncation
+fixed; reminders swipe rewritten (one row at a time, no opposite-side flip); a
+debug-only grid-style switcher added.
 
-- [ ] **1.** Fresh install (delete app first), free user, pick 8 services on the grid →
-      Quick Setup → Reminders → all 8 exist on Home, no paywall shown during
-      onboarding. y/n
-- [ ] **2.** From Home, add a 9th item the normal way → paywall *does* show. y/n
-- [ ] **3.** Grid is flat (no section headers), shows 4 tiles across, and every tile is
-      just an icon + name — no "Insurance"/"Passport"/other document tiles appear. y/n
-- [ ] **4.** Airplane mode, fresh install → grid tiles show real logos (33 of 34 App
-      Store entries now have a bundled icon — only iCloud+ falls back to its own local
-      icon file, which also works offline). y/n
-- [ ] **5.** Region set to AU → Stan/Binge/Kayo Sports appear with real logos (not
-      placeholders). Region set to GB → NOW/Sky/BritBox/DAZN appear with real logos. y/n
-- [ ] **6.** Pick Netflix → Quick Setup row shows cost field + billing cycle on one line,
-      renewal day (+ month, if yearly) on the line below — nothing is clipped or
-      overlapping. y/n
-- [ ] **7.** Set billing Monthly, day 14, and today is the 20th → after commit, edit the
-      item → renewal date is the 14th of *next* month. Switch to Yearly → a month picker
-      appears. y/n
-- [ ] **8.** Skip the grid ("Skip for now") → still lands on the Reminders page (not
-      straight to Pro) → Home shows the dimmed sample Netflix card with a SAMPLE chip;
-      Debug → Diagnostics shows item count 0. y/n
-- [ ] **9.** Tap the sample Netflix card → add flow opens prefilled "Netflix". Tap "Add
-      your services" below it → the picker grid reopens as its own sheet, not the full
-      onboarding pager. y/n
-- [ ] **10.** Replay Onboarding, with Netflix already tracked → the Netflix tile shows
-      pre-checked and disabled; completing the flow creates no duplicate. y/n
-- [ ] **11.** Pick 2–3 services → Quick Setup → commit → **on the (now later) Reminders
-      page** set "Remind me" to 5 days before → each created item's editor shows a single
-      "5 days before" rule (not whatever the default was at Quick Setup time). y/n
-- [ ] **12.** Settings → 4-second long-press the version footer (iOS) or ⌥-click it
-      (macOS) → a Debug section appears inline in the Settings list (not a sheet) →
-      navigate to another settings row and back → Debug section is still there → tap
-      "Hide Debug" → it disappears. y/n
-- [ ] **13.** Open an existing item with reminders (e.g. one created by Quick Setup) →
-      the reminder rows render cleanly — no red/orange/gray icon square overlapping the
-      row text at rest. Swipe a row left → bell/clock/trash icons appear correctly. y/n
-- [ ] Screenshot the grid, Quick Setup rows, and the item editor's reminder rows if
-      anything still looks off.
+**Notification permission is one-shot per install** — items 1/4/5 below need a
+genuinely fresh install to be meaningful. Deleting the app on a second device won't
+work: CloudKit restores the data (and `hasCompletedOnboarding` is local, so the
+data-exists check silently marks onboarding complete). To truly retest: delete the
+app *and* use Debug → Delete All Data first, or test on a device signed out of
+iCloud.
 
-**Design decision pending:** three grid tile-style options were shown (squircle+label /
-circular avatar+label / icon-only-no-label) — the current build uses squircle+label
-(Option A). Reply with which one you want if a different style is preferred.
+- [ ] **1.** Fresh install → the "Expired would like to send you notifications"
+      system prompt does **not** appear until the Reminders page, and appears there
+      when you tap Enable Notifications. y/n
+- [ ] **2.** Grid shows ~50 tiles, 4 across, bigger icons than before, all real app
+      logos (no letter placeholders). y/n
+- [ ] **3.** The new entries are there and look right: Peacock, YouTube Music, Claude
+      Pro, Google Gemini, WHOOP, Calm, Oura, Peloton, Runna, 1Password, NordVPN,
+      Todoist, Hinge, Bumble, LinkedIn Premium, Nintendo Switch Online, Discord
+      Nitro, Twitch, NYTimes, WSJ, MasterClass, Substack. y/n
+- [ ] **4.** Region AU → Stan/Binge/Kayo appear with real logos. Region GB →
+      NOW/Sky/BritBox/DAZN appear with real logos. y/n
+- [ ] **5.** Reminders page: the "How far ahead?" control shows four chips
+      (1/3/5/7 days) with **no truncated text**, and the selected one is clearly
+      highlighted. y/n
+- [ ] **6.** Pick 2–3 services → Quick Setup → commit → set 5 days on the Reminders
+      page → each created item's editor shows a single "5 days before" rule. y/n
+- [ ] **7.** Quick Setup row: cost field is a proper filled box on the left; billing
+      cycle and renewal day sit **together on the right**. y/n
+- [ ] **8.** Change billing cycle to "One-time" → the label does **not** flash
+      clipped/cut-off before settling, and the renewal-day chip disappears. y/n
+- [ ] **9.** Item editor reminders: swipe one row open, then swipe a *different* row
+      → the first closes automatically; only ever one row open. y/n
+- [ ] **10.** Swipe a row open from the right, then swipe back left → it just closes;
+      it does **not** flip open the other side's buttons. y/n
+- [ ] **11.** At rest, no bell/clock/trash icon ghosts through behind the reminder
+      row text. y/n
+- [ ] **12.** Settings → reveal Debug (4s long-press version footer / ⌥-click) →
+      Debug section stays visible across navigation until "Hide Debug". y/n
+- [ ] **13.** With Debug revealed, open the picker grid → a small grid icon appears
+      top-left → it offers 8 layout styles (squircle, squircle large, icon-only 5-up,
+      icon-only large, circular, circular large, honeycomb, compact). Try each and
+      tell me which you want as the shipped default. **← this one needs an answer,
+      not just y/n**
+- [ ] **14.** Free user: pick 8 → all 8 land on Home, no paywall during onboarding;
+      adding a 9th from Home *does* paywall. y/n
+- [ ] Screenshot anything that still looks off.
 
-**Known, not fixed:** `iCloud+`'s App Store link (`appStoreId: 500654020`) is stale/dead
-— there's no standalone "iCloud" App Store listing, this predates R4. Low priority since
-its icon comes from a local file, not the App Store lookup.
+**Deliberate omissions / open questions:**
+- **Midjourney** is not included — it has no iOS app, and midjourney.com hard-blocks
+  icon scraping behind Cloudflare (403 on every path, with and without a browser
+  UA). Say the word if you want it as a letter-placeholder tile anyway.
+- **GitHub Copilot** uses the GitHub app's icon (there's no separate Copilot app).
+- **iCloud+** is the one tile without a fetched icon — there's no App Store listing
+  for it; it falls back to the local `iCloud icon.png` already in the bundle.
+- **Pandora / WoW** skipped: Pandora is US-only and declining, WoW has no iOS app.
 
 ## Launch screen / splash (added 2026-07-27)
 

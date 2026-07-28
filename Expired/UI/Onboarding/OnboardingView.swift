@@ -255,22 +255,52 @@ struct OnboardingView: View {
         .padding(.horizontal, 32)
     }
 
-    /// Sets the default lead time used both by the copy above and by every item R4's
-    /// picker grid seeds (`QuickSetupPage` reads this directly) — one control instead
-    /// of a separate "reminder defaults" setting.
+    /// Sets the default lead time applied to every item R4's picker grid seeded.
+    ///
+    /// Deliberately *not* a `.segmented` Picker: four "N days before" labels don't fit
+    /// a phone-width segmented control, and it truncates mid-word ("3 days befo…")
+    /// rather than shrinking — segmented controls size every segment to the widest
+    /// and then clip. Glass chips wrap and breathe instead, and match the presets row
+    /// in `RemindersEditorView`.
     private var reminderOffsetPicker: some View {
-        VStack(spacing: 6) {
-            Text("Remind me")
-                .font(.system(size: 12, weight: .semibold))
+        VStack(spacing: 10) {
+            Text("How far ahead?")
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
-            Picker("Remind me", selection: $reminderOffsetDays) {
-                Text("1 day before").tag(1)
-                Text("3 days before").tag(3)
-                Text("5 days before").tag(5)
-                Text("7 days before").tag(7)
+
+            HStack(spacing: 8) {
+                ForEach([1, 3, 5, 7], id: \.self) { days in
+                    let isSelected = reminderOffsetDays == days
+                    Button {
+                        Haptics.fire(.selectionChanged)
+                        withAnimation(.spring(duration: 0.25)) { reminderOffsetDays = days }
+                    } label: {
+                        VStack(spacing: 1) {
+                            Text("\(days)")
+                                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                            Text(days == 1 ? "day" : "days")
+                                .font(.system(size: 11))
+                                .foregroundStyle(isSelected ? .primary : .secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(isSelected ? Color.orange.opacity(0.18) : Color.secondary.opacity(0.10))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .strokeBorder(isSelected ? Color.orange : Color.clear, lineWidth: 1.5)
+                        )
+                        .foregroundStyle(isSelected ? Color.orange : Color.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+
+            Text("before anything renews or expires")
+                .font(.system(size: 12))
+                .foregroundStyle(.tertiary)
         }
         .padding(.top, 4)
     }

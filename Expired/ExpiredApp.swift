@@ -441,8 +441,21 @@ struct ExpiredApp: App {
                 .environment(PurchaseManager.shared)
                 .preferredColorScheme(preferredColorScheme)
                 .task {
-                    await NotificationManager.shared.requestAuthorization()
-                    await NotificationManager.shared.refreshAll(context: container.mainContext)
+                    // Never prompt on a first launch — onboarding's reminders page owns
+                    // that moment and explains it first. Once onboarding is done (or the
+                    // user is a returning/reinstalled user who never sees it), asking at
+                    // launch is the right fallback so notifications can't be permanently
+                    // unreachable. See `_shared/onboarding-conventions.md`.
+                    let onboardingDone = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+                    if onboardingDone {
+                        await NotificationManager.shared.requestAuthorization()
+                    } else {
+                        NotificationManager.shared.registerCategoriesOnly()
+                    }
+                    await NotificationManager.shared.refreshAll(
+                        context: container.mainContext,
+                        requestingAuthorization: false
+                    )
                 }
                 .task {
                     // Resolve the anonymous Supabase identity, then hand that same UUID to

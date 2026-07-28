@@ -54,6 +54,10 @@ struct RemindersEditorView: View {
     var itemHour: Int? = nil
     var itemMinute: Int? = nil
 
+    /// Which row currently has its swipe panel open — owned here, not per-row, so
+    /// only one row can be open at a time (see `SwipeActionsContainer`).
+    @State private var openRowID: UUID?
+
     var body: some View {
         VStack(spacing: 0) {
             rulesList
@@ -76,6 +80,7 @@ struct RemindersEditorView: View {
                     baseDate: baseDate,
                     itemHour: itemHour,
                     itemMinute: itemMinute,
+                    openRowID: $openRowID,
                     onDelete: {
                         withAnimation { notifications.removeAll { $0.id == rule.id } }
                     },
@@ -166,6 +171,7 @@ struct ReminderRuleRow: View {
     let baseDate: Date
     let itemHour: Int?
     let itemMinute: Int?
+    @Binding var openRowID: UUID?
     let onDelete: () -> Void
     let onUpdate: (NotificationRuleDraft) -> Void
 
@@ -181,12 +187,14 @@ struct ReminderRuleRow: View {
          baseDate: Date,
          itemHour: Int?,
          itemMinute: Int?,
+         openRowID: Binding<UUID?>,
          onDelete: @escaping () -> Void,
          onUpdate: @escaping (NotificationRuleDraft) -> Void) {
         self.rule = rule
         self.baseDate = baseDate
         self.itemHour = itemHour
         self.itemMinute = itemMinute
+        self._openRowID = openRowID
         self.onDelete = onDelete
         self.onUpdate = onUpdate
         _offsetType = State(initialValue: rule.offsetType)
@@ -201,7 +209,7 @@ struct ReminderRuleRow: View {
     }
 
     var body: some View {
-        SwipeActionsContainer {
+        SwipeActionsContainer(rowID: rule.id, openRowID: $openRowID) {
             [
                 SwipeAction(icon: isCritical ? "bell.badge.fill" : "bell", tint: isCritical ? .orange : .secondary) {
                     Haptics.fire(.selectionChanged)
@@ -397,25 +405,47 @@ struct SwipeAction: Identifiable {
     let handler: () -> Void
 }
 
+/// Hand-rolled swipe-to-reveal actions.
+///
+/// **Why this isn't `List`'s native `.swipeActions`:** those only exist inside a
+/// `List`, and this editor lives inside the Add/Edit form's `ScrollView` + glass
+/// `FormCard` layout. A `List` nested in a `ScrollView` collapses to zero height
+/// (see `CLAUDE.md` "Anti-Patterns", #9), so going native here would mean
+/// restructuring the whole item editor away from its card design.
+///
+/// Because it's hand-rolled it must reimplement the parts of the native behaviour
+/// people expect, which earlier revisions didn't:
+/// - **Only one row open at a time** — the open row's identity lives in the parent
+///   (`openRowID`), not in each row's own `@State`, so opening row B closes row A.
+/// - **An open row can only be dragged closed, never flipped straight through to
+///   the opposite side's panel** — the clamp below is asymmetric based on the
+///   settled position. Without that, swiping back on an open row sailed past 0 and
+///   opened the other panel, which read as "a left swipe triggered itself".
+/// *(Both reported by Deon, 2026-07-28.)*
 struct SwipeActionsContainer<Content: View>: View {
+    let rowID: UUID
+    @Binding var openRowID: UUID?
     let actions: () -> [SwipeAction]
     @ViewBuilder let content: () -> Content
 
-    @State private var offset: CGFloat = 0
+    /// In-flight drag only. The settled position is derived from `openRowID`, so a
+    /// row can't disagree with the parent about whether it's open.
+    @State private var dragTranslation: CGFloat = 0
+    @State private var settledOffset: CGFloat = 0
     private let actionWidth: CGFloat = 52
+
+    private var isOpen: Bool { openRowID == rowID }
 
     var body: some View {
         let list = actions()
         let panelWidth = CGFloat(list.count) * actionWidth
+        let offset = currentOffset(panelWidth: panelWidth)
 
         ZStack {
-            // Both panels are laid out at all times (left-aligned + right-aligned),
-            // but must be explicitly hidden at rest — relying on `content()` being
-            // fully opaque to occlude them doesn't hold whenever content has any
-            // transparent gap (a Spacer, horizontal padding), which let a panel's
-            // solid-tint icon "ghost" through behind the row text (Deon, 2026-07-27
-            // R4 test feedback — this had regressed since the earlier
-            // "ghost/overlapping delete button" fix).
+            // Panels are always laid out but must be explicitly hidden at rest —
+            // relying on `content()` to occlude them fails wherever the row has a
+            // transparent gap (a Spacer, padding), which let a panel's solid tint
+            // "ghost" through behind the row text.
             HStack(spacing: 0) {
                 panel(list)
                 Spacer(minLength: 0)
@@ -426,32 +456,78 @@ struct SwipeActionsContainer<Content: View>: View {
                 panel(list)
             }
             .opacity(offset < 0 ? 1 : 0)
+
             content()
                 .contentShape(Rectangle())
                 .offset(x: offset)
                 .gesture(
                     DragGesture(minimumDistance: 12)
                         .onChanged { value in
-                            offset = max(min(value.translation.width, panelWidth), -panelWidth)
+                            // Claim the "open row" slot as soon as a real drag starts,
+                            // so any other open row closes before this one moves.
+                            if !isOpen && openRowID != nil {
+                                openRowID = nil
+                                settledOffset = 0
+                            }
+                            dragTranslation = value.translation.width
                         }
                         .onEnded { value in
+                            let proposed = clamped(settledOffset + value.translation.width,
+                                                   panelWidth: panelWidth)
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                                if value.translation.width > panelWidth / 3 {
-                                    offset = panelWidth
-                                } else if value.translation.width < -panelWidth / 3 {
-                                    offset = -panelWidth
+                                if proposed > panelWidth / 2 {
+                                    settledOffset = panelWidth
+                                    openRowID = rowID
+                                } else if proposed < -panelWidth / 2 {
+                                    settledOffset = -panelWidth
+                                    openRowID = rowID
                                 } else {
-                                    offset = 0
+                                    settledOffset = 0
+                                    if isOpen { openRowID = nil }
                                 }
+                                dragTranslation = 0
                             }
                         }
                 )
                 .onTapGesture {
-                    guard offset != 0 else { return }
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { offset = 0 }
+                    guard settledOffset != 0 else { return }
+                    close()
                 }
         }
         .clipped()
+        .onChange(of: openRowID) { _, newValue in
+            // Another row took the slot — collapse without waiting for a gesture.
+            if newValue != rowID && settledOffset != 0 {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                    settledOffset = 0
+                    dragTranslation = 0
+                }
+            }
+        }
+    }
+
+    private func currentOffset(panelWidth: CGFloat) -> CGFloat {
+        clamped(settledOffset + dragTranslation, panelWidth: panelWidth)
+    }
+
+    /// Asymmetric on purpose: from closed you may open either side, but from an open
+    /// side you may only travel back toward 0 — never through it into the opposite
+    /// panel.
+    private func clamped(_ value: CGFloat, panelWidth: CGFloat) -> CGFloat {
+        if settledOffset > 0 {
+            return min(max(value, 0), panelWidth)
+        } else if settledOffset < 0 {
+            return max(min(value, 0), -panelWidth)
+        }
+        return max(min(value, panelWidth), -panelWidth)
+    }
+
+    private func close() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            settledOffset = 0
+            dragTranslation = 0
+            if isOpen { openRowID = nil }
+        }
     }
 
     private func panel(_ list: [SwipeAction]) -> some View {
@@ -459,7 +535,7 @@ struct SwipeActionsContainer<Content: View>: View {
             ForEach(list) { action in
                 Button {
                     action.handler()
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { offset = 0 }
+                    close()
                 } label: {
                     Image(systemName: action.icon)
                         .font(.system(size: 16, weight: .semibold))

@@ -630,16 +630,27 @@ If you've made 2+ attempts at the same bug without a fix, stop and:
   plain tap/click (no modifier) copies the version string to the pasteboard instead.
   No visible affordance either way. (Relocated 2026-07-27 from a long-press on the
   Screenshot Import "Analyzer" row — that trigger no longer exists.)
+- **It stays revealed until "Hide Debug".** The gesture sets
+  `@AppStorage("debugSectionRevealed")` (device-local, never synced) and the debug
+  content renders as inline `Section`s in the Settings list — not a sheet — so it
+  survives navigating away and back. Re-triggering the gesture every time you need
+  debug was the old behaviour and Deon rejected it (2026-07-28). Matches the other
+  apps and `_shared/settings-conventions.md`.
 - **Contents** (`UI/DebugAIFailureSimulatorView.swift`): Diagnostics (Copy Diagnostic
   Report — app/device/RevenueCat/Supabase/CloudKit state in one pasteable block),
   Testing tools (Replay Onboarding, Mascot Gallery), Reset Data, CloudKit Debug
-  (account/store/transcript + copy), Force AI Failure simulator, Identity Repair.
+  (account/store/transcript + copy), Force AI Failure simulator, Identity Repair,
+  Hide Debug.
+- **`debugSectionRevealed` also gates the onboarding grid-style switcher** — the
+  small grid-icon menu at the top-left of `ServicePickerPage` that cycles
+  `ServiceGridStyle`'s 8 layouts. It is invisible until debug is revealed, so it
+  ships safely; remove it (or the whole enum) once the final grid style is chosen.
 - **Safe for TestFlight** (no visible control, testers won't stumble into it); must
   be stripped or hard-gated before public App Store release since it includes
   destructive data-reset actions. Simplest removal path when the time comes: delete
   the version-footer gesture modifiers in `ContentView.swift` (`versionFooterRow`)
-  and the `DebugAIFailureSimulatorView` sheet presentations — the view itself can
-  stay in the target unused.
+  and the two `if debugSectionRevealed { DebugAIFailureSimulatorView(...) }` blocks —
+  the view itself can stay in the target unused.
 - **RevenueCat key mode is surfaced here on purpose.** `BackendConfig.revenueCatAPIKey`
   is currently a Test Store key (`test_...`) — the Diagnostics section shows a red
   warning row whenever it detects that prefix, so it can't be silently forgotten
