@@ -1280,6 +1280,9 @@ struct InsightsView: View {
     }
     @State private var forecastHorizon: ForecastHorizon = .thirtyDays
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var entrance = InsightsEntrance()
+
     private var activeItems: [SubscriptionItem] {
         allItems.filter(\.isActiveSubscription)
     }
@@ -1392,8 +1395,12 @@ struct InsightsView: View {
                         }
                     }
 
-                    forecastSection
+                    // Stat tiles sit directly under the period picker so the control that
+                    // drives them is next to what it changes — with the forecast card on
+                    // top (its previous position), switching Monthly→Annual left the whole
+                    // visible top of the screen unchanged and read as "nothing happened".
                     compactStatsGrid
+                    forecastSection
                     if !costBreakdownItems.isEmpty { costBreakdown }
                     Spacer(minLength: 40)
                 }
@@ -1405,6 +1412,8 @@ struct InsightsView: View {
             .navigationTitle("Insights")
             .largeNavigationTitle()
             .expiredPaywallSheet(isPresented: $showPaywall)
+            .onAppear { entrance.enter(reduceMotion: reduceMotion) }
+            .onDisappear { entrance.leave() }
         }
     }
 
@@ -1424,9 +1433,24 @@ struct InsightsView: View {
         )
     }
 
-    private var forecastMonthlyBuckets: [ForecastEngine.MonthBucket] {
-        ForecastEngine.monthlyBuckets(
-            for: allItems, monthsAhead: 12,
+    /// Granularity + buckets are both derived from the selected horizon. Before 2026-07-28
+    /// this was `monthlyBuckets(monthsAhead: 12)` — hardcoded, so 30/90/365 moved the
+    /// headline total and the hits list but redrew an identical chart every time.
+    private var forecastGranularity: ForecastEngine.Granularity {
+        .forHorizon(days: forecastHorizon.rawValue)
+    }
+
+    private var forecastBuckets: [ForecastEngine.Bucket] {
+        ForecastEngine.buckets(
+            for: allItems, horizonDays: forecastHorizon.rawValue,
+            granularity: forecastGranularity,
+            targetCurrency: preferredCurrency, convert: CurrencyInfo.convert
+        )
+    }
+
+    private var forecastCumulative: [ForecastEngine.CumulativePoint] {
+        ForecastEngine.cumulative(
+            for: allItems, horizonDays: forecastHorizon.rawValue,
             targetCurrency: preferredCurrency, convert: CurrencyInfo.convert
         )
     }
@@ -1462,23 +1486,46 @@ struct InsightsView: View {
                 }
 
                 VStack(spacing: 2) {
-                    Text(CurrencyInfo.format(forecastTotal, code: preferredCurrency))
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                    // Counts up from 0 on entrance and tweens between totals when the
+                    // horizon changes — the cumulative curve below lands on this figure.
+                    AnimatedCurrencyText(
+                        value: forecastTotal * entrance.progress,
+                        currencyCode: preferredCurrency
+                    )
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .animation(.smooth(duration: 0.45), value: forecastTotal)
                     Text("projected over next \(forecastHorizon.rawValue) days")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                        .animation(.smooth(duration: 0.3), value: forecastHorizon)
                 }
                 .frame(maxWidth: .infinity)
 
+                // Cumulative curve is free (it's the 30-day horizon that's already free);
+                // the granular bucket breakdown is Pro.
+                ForecastCumulativeChart(
+                    points: forecastCumulative,
+                    currencyCode: preferredCurrency,
+                    progress: entrance.progress
+                )
+                .animation(.smooth(duration: 0.45), value: forecastHorizon)
+
                 if purchaseManager.isPremium {
-                    ForecastMonthlyChart(buckets: forecastMonthlyBuckets, currencyCode: preferredCurrency)
+                    ForecastBucketChart(
+                        buckets: forecastBuckets,
+                        granularity: forecastGranularity,
+                        currencyCode: preferredCurrency,
+                        progress: entrance.progress
+                    )
+                    .animation(.smooth(duration: 0.45), value: forecastHorizon)
                 } else {
                     Button {
                         showPaywall = true
                     } label: {
                         HStack {
                             Image(systemName: "lock.fill")
-                            Text("Unlock the 12-month forecast chart")
+                            Text("Unlock the renewal breakdown chart")
                             Spacer()
                         }
                         .font(.system(size: 13, weight: .medium))
@@ -1515,18 +1562,31 @@ struct InsightsView: View {
             .glassEffect(in: .rect(cornerRadius: 20))
         }
         .padding(.horizontal)
+        .insightsEntrance(entrance.staggered(index: 6))
+    }
+
+    private var statTiles: [(title: String, value: CompactInsightTile.Value, icon: String, color: Color)] {
+        [
+            (costPeriod.rawValue + " Cost", .currency(displayTotal, code: displayCurrency), costPeriodIcon, .blue),
+            ("Active",        .count(activeCount),    "checkmark.seal.fill", .blue),
+            ("Auto-Renewing", .count(autoRenewCount), "arrow.clockwise",     .green),
+            ("Free Trials",   .count(trialCount),     "gift.fill",           .purple),
+            ("Manual",        .count(manualCount),    "hand.tap.fill",       .indigo),
+            ("Cancelled",     .count(cancelledCount), "xmark.circle",        .red),
+        ]
     }
 
     private var compactStatsGrid: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-            CompactInsightTile(title: costPeriod.rawValue + " Cost", value: CurrencyInfo.format(displayTotal, code: displayCurrency), icon: costPeriodIcon, color: .blue)
-            CompactInsightTile(title: "Active", value: "\(activeCount)", icon: "checkmark.seal.fill", color: .blue)
-            CompactInsightTile(title: "Auto-Renewing", value: "\(autoRenewCount)", icon: "arrow.clockwise", color: .green)
-            CompactInsightTile(title: "Free Trials", value: "\(trialCount)", icon: "gift.fill", color: .purple)
-            CompactInsightTile(title: "Manual", value: "\(manualCount)", icon: "hand.tap.fill", color: .indigo)
-            CompactInsightTile(title: "Cancelled", value: "\(cancelledCount)", icon: "xmark.circle", color: .red)
+            ForEach(Array(statTiles.enumerated()), id: \.offset) { index, tile in
+                CompactInsightTile(
+                    title: tile.title, value: tile.value, icon: tile.icon, color: tile.color,
+                    progress: entrance.staggered(index: index)
+                )
+            }
         }
         .padding(.horizontal)
+        .animation(.smooth(duration: 0.4), value: costPeriod)
     }
 
     /// Multiplier to convert monthly cost to the selected period's cost
@@ -1597,15 +1657,19 @@ struct InsightsView: View {
             .padding(.horizontal, 4)
 
             VStack(spacing: 8) {
-                ForEach(itemsWithCost) { item in
+                ForEach(Array(itemsWithCost.enumerated()), id: \.element.id) { index, item in
                     CostBarRow(
                         item: item,
                         displayCost: periodCost(for: item),
                         displayCurrency: preferredCurrency,
-                        maxCost: maxCost
+                        maxCost: maxCost,
+                        // Clamped: an unbounded index would push later rows past the end
+                        // of the entrance driver and leave them permanently invisible.
+                        progress: entrance.staggered(index: 7 + min(index, 3))
                     )
                 }
             }
+            .animation(.smooth(duration: 0.45), value: costPeriod)
         }
         .padding(.horizontal)
     }
@@ -1614,10 +1678,19 @@ struct InsightsView: View {
 /// Compact AutoSleep-style stat tile: tinted icon chip, big value, small label,
 /// subtle color-tinted background. Sized for a dense 3-column grid.
 struct CompactInsightTile: View {
+    /// Numeric rather than pre-formatted, so the tile can tween between two values when
+    /// the period changes instead of swapping one static string for another.
+    enum Value {
+        case currency(Double, code: String)
+        case count(Int)
+    }
+
     let title: String
-    let value: String
+    let value: Value
     let icon: String
     let color: Color
+    /// 0→1 staggered entrance progress. Also scales the value up from zero.
+    var progress: Double = 1
 
     var body: some View {
         VStack(spacing: 7) {
@@ -1629,7 +1702,14 @@ struct CompactInsightTile: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(color)
             }
-            Text(value)
+            Group {
+                switch value {
+                case .currency(let amount, let code):
+                    AnimatedCurrencyText(value: amount * progress, currencyCode: code)
+                case .count(let count):
+                    AnimatedCountText(value: Double(count) * progress)
+                }
+            }
                 .font(.system(size: 19, weight: .bold, design: .rounded))
                 .foregroundStyle(.primary)
                 .minimumScaleFactor(0.5)
@@ -1648,6 +1728,7 @@ struct CompactInsightTile: View {
             RoundedRectangle(cornerRadius: 18)
                 .strokeBorder(color.opacity(0.10), lineWidth: 1)
         )
+        .insightsEntrance(progress)
     }
 }
 
@@ -1656,6 +1737,8 @@ struct CostBarRow: View {
     let displayCost: Double
     let displayCurrency: String
     let maxCost: Double
+    /// 0→1 staggered entrance progress; also grows the bar out from the left.
+    var progress: Double = 1
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1666,7 +1749,7 @@ struct CostBarRow: View {
                     Text(item.name)
                         .font(.system(size: 14, weight: .medium))
                     Spacer()
-                    Text(CurrencyInfo.format(displayCost, code: displayCurrency))
+                    AnimatedCurrencyText(value: displayCost * progress, currencyCode: displayCurrency)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -1678,7 +1761,7 @@ struct CostBarRow: View {
                         Capsule().fill(
                             LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing)
                         )
-                        .frame(width: geo.size.width * fraction)
+                        .frame(width: geo.size.width * fraction * progress)
                     }
                 }
                 .frame(height: 5)
@@ -1687,33 +1770,8 @@ struct CostBarRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .glassEffect(in: .rect(cornerRadius: 16))
-    }
-}
-
-struct ForecastMonthlyChart: View {
-    let buckets: [ForecastEngine.MonthBucket]
-    let currencyCode: String
-
-    var body: some View {
-        Chart(buckets) { bucket in
-            BarMark(
-                x: .value("Month", bucket.monthStart, unit: .month),
-                y: .value("Cost", bucket.total)
-            )
-            .foregroundStyle(.blue.gradient)
-            .cornerRadius(4)
-        }
-        .chartXAxis {
-            AxisMarks(values: .stride(by: .month, count: 2)) { value in
-                if let date = value.as(Date.self) {
-                    AxisValueLabel(date.formatted(.dateTime.month(.abbreviated)))
-                }
-            }
-        }
-        .chartYAxis {
-            AxisMarks(position: .leading)
-        }
-        .frame(height: 140)
+        .opacity(progress)
+        .offset(y: (1 - progress) * 10)
     }
 }
 

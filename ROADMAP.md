@@ -162,14 +162,23 @@ Supabase `ai-proxy` cascade), App Store search sheet inside `AddEditSubscription
 
 ### R3. Renewal timeline + forward cost forecast 🟠 — no schema change
 
-> **Status (2026-07-12):** `ForecastEngine` built and algorithm-verified (all 4 ACs pass
-> against the real expansion/filter/bucket logic via a standalone script — see log).
-> Forecast UI (segmented 30/90/365 control, headline total, 12-month Swift Charts bar
-> chart, biggest-upcoming-hits list) added to `InsightsView`, builds clean on iOS +
-> macOS. **Outstanding:** no visual/interactive verification (Simulator access wasn't
-> used this session — ask before booting it), no XCTest target exists in the project to
-> house AC5's tests in-tree (`ForecastEngine`'s protocol-based design makes adding one
-> trivial whenever Deon creates the target via Xcode GUI).
+> **Status (2026-07-28):** Built and reworked. `ForecastEngine` algorithm-verified (all
+> 4 ACs pass against the real expansion/filter/bucket logic via a standalone script — see
+> log). Forecast UI (segmented 30/90/365 control, headline total, biggest-upcoming-hits
+> list) in `InsightsView`, builds clean on iOS + macOS.
+>
+> **2026-07-28 rework — the horizon control was decorative.** The chart called
+> `monthlyBuckets(monthsAhead: 12)`, hardcoded, so 30/90/365 moved the headline figure
+> and the hits list but redrew an identical 12-month chart. Replaced with
+> `ForecastEngine.buckets(horizonDays:granularity:)` (daily <45d / weekly <200d /
+> monthly beyond) plus a new `cumulative(horizonDays:)` running-spend curve whose
+> right-hand endpoint *is* the headline total. Added entrance animations, chart
+> scrubbing, and a debug Pro-gate override. See R3b below for what's left.
+>
+> **Outstanding:** no XCTest target exists in the project to house AC5's tests in-tree
+> (`ForecastEngine`'s protocol-based design makes adding one trivial whenever Deon
+> creates the target via Xcode GUI); the two new bucket/cumulative functions are
+> likewise untested in-tree.
 
 Turn Insights into a forward-looking spend forecast: what will I pay in the next
 30/90/365 days, and how does that land month by month.
@@ -200,6 +209,38 @@ with currency conversion; `TimelineView` with 6 view modes; `CurrencyRateService
 3. Trial converting in 10 days contributes from its trial-end date.
 4. Cancelled-but-active and one-off items contribute nothing.
 5. `ForecastEngine` covered by unit tests for all four rules above.
+
+---
+
+### R3b. Insights motion + interactive charts 🟠 — no schema change
+
+Insights had zero animation and two controls that didn't visibly drive anything.
+Shipped 2026-07-28 (see log); the donut is the remaining piece.
+
+**Shipped:**
+- Horizon-driven bar chart (daily/weekly/monthly granularity from the 30/90/365 pick).
+- Cumulative projected-spend curve, step-interpolated, ending exactly on the headline
+  total — the visual that ties the horizon control to the chart.
+- `chartXSelection` scrubbing with a lollipop callout on both charts.
+- Staggered entrance animation (`InsightsEntrance`), replayed on every tab visit after
+  a >2s absence, collapsed to instant under Reduce Motion.
+- Animated count-up / tween on every currency and count figure
+  (`AnimatedCurrencyText` / `AnimatedCountText`, both `Animatable` views since `Text`
+  itself is not).
+- Stat tiles moved above the forecast card so the period picker sits next to what it
+  changes.
+- Debug-only `PurchaseManager.DebugOverride` to force Pro gates on/off.
+
+**Not built (next batch):**
+- 🔴 **Category donut/ring** — spend split by category, animated sweep on appear, tap a
+  segment to filter the By Cost list below. Gating decision: Pro.
+
+**Acceptance criteria:**
+1. Changing 30/90/365 visibly redraws both charts, not just the headline figure. ✅
+2. The cumulative curve's final value equals the headline forecast total. ✅
+3. Entering the Insights tab replays the entrance every time (after >2s away). ✅
+4. Reduce Motion renders everything settled, with no count-up or stagger. ✅
+5. Donut segment tap filters the By Cost list. 🔴
 
 ---
 

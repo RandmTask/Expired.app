@@ -73,3 +73,40 @@ characters baked into every path segment (invisible in `ls`, only visible via `g
 ls-tree`'s raw bytes) — plus a second copy of it accidentally dragged into the app icon
 set. Neither is referenced anywhere in Swift. Documented as a required cleanup step in R4
 rather than silently deleting it mid-spec.
+
+## 2026-07-28 — What's it called when you switch to a page and the graphs animate in?
+
+**A:** An **entrance animation** — or a **staggered entrance** when the elements arrive in
+sequence rather than all at once (also "appear animation" / "reveal animation"
+informally). Swift Charts has no built-in version: the standard technique is a `@State`
+progress value animated 0→1 on appear and multiplied into every mark's `y` value, with a
+per-element delay for the stagger.
+
+The non-obvious part is that inside a `TabView` the view stays alive after its first
+appearance, so a naive `@State` set once in `.onAppear` animates exactly once and every
+later tab switch shows the charts already at rest — which is the exact case being asked
+for. `InsightsEntrance` tracks when the tab was left and only replays after >2s away, so
+a quick tab bounce doesn't stutter.
+
+## 2026-07-28 — Why don't the Insights steppers change the graph?
+
+**A:** Not a binding/state bug — `forecastMonthlyBuckets` called
+`ForecastEngine.monthlyBuckets(monthsAhead: 12)` with the 12 hardcoded and no reference
+to the selected horizon at all. 30/90/365 correctly changed the headline total and the
+biggest-hits list, and redrew a byte-identical chart. Fixed by deriving bucket
+granularity from the horizon (daily/weekly/monthly) and adding a cumulative-spend curve
+whose endpoint *is* the headline figure.
+
+A second candidate cause was ruled out by asking first: for a non-premium user both
+pickers revert to the free option and open the paywall, and the chart isn't rendered
+below the gate — with the Test Store key still in place that was the more likely
+explanation on paper. Deon confirmed the real chart was visible and Pro active.
+
+## 2026-07-28 — What other (animated/interactive) visuals could the Insights page have?
+
+**A:** Shipped this batch: cumulative projected-spend curve, horizon-driven bar
+granularity, `chartXSelection` scrubbing with lollipop callouts on both charts, animated
+count-up on every figure, staggered tile entrance, animated cost bars. Deferred to the
+next batch: a category donut/ring with an animated sweep, tapping a segment to filter
+the By Cost list (Pro-gated). Rejected: sparklines inside the stat tiles — the tiles hold
+counts, not time series, so most would render flat and meaningless.

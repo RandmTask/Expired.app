@@ -193,3 +193,34 @@ plain white/black launch after an update is almost always this, not a broken ass
 - [ ] Confirm `update-exchange-rates` cron is scheduled (`0 5 * * *` UTC) in the Supabase
       dashboard — without it, currency conversion silently falls back to `CurrencyInfo`'s
       hardcoded snapshot.
+
+## R3b — Insights motion + interactive charts (added 2026-07-28)
+
+Both platforms build clean. Debug → Testing → **Pro Gates** now forces every Premium
+gate on/off, so items 6–7 don't need a real purchase or refund.
+
+- [ ] **1.** Insights tab: on entry the tiles fade/rise in sequence, the currency
+      figures count up from 0, and both charts grow from the baseline. y/n
+- [ ] **2.** Switch to another tab, wait ~3s, come back → the entrance replays. Bounce
+      away and straight back (<2s) → it does **not** replay (no stutter). y/n
+- [ ] **3.** Tap 30d / 90d / 365d → **both** charts visibly redraw, and the bar chart's
+      bar count/spacing changes (≈30 daily bars → ≈13 weekly → 12 monthly). y/n
+- [ ] **4.** The cumulative curve's right-hand end lands on the same figure as the big
+      headline total, at every horizon. y/n
+- [ ] **5.** Drag a finger across either chart → a dashed line + callout follows with
+      the date and amount; lift → it clears. y/n
+- [ ] **6.** Tap Monthly / Annual / YTD / Lifetime → the six stat tiles' numbers tween
+      (not snap) and the By Cost bars re-length. y/n
+- [ ] **6b.** On Lifetime (the biggest figures), the "Lifetime Cost" tile's number still
+      fits on one line and sits at the same baseline as the other five tiles — the value
+      is now a scaled-down animated view rather than a plain string. **Screenshot this
+      one.** y/n
+- [ ] **7.** Debug → Pro Gates → Force Free → the bar chart is replaced by "Unlock the
+      renewal breakdown chart"; the cumulative curve **stays** (it's free). Force Pro →
+      the bar chart returns. y/n
+- [ ] **8.** Settings → Accessibility → Reduce Motion ON → Insights renders fully
+      settled, no count-up, no stagger, no jump. y/n
+- [ ] **9.** With many subscriptions (10+), every By Cost row is visible — none stay
+      invisible at the bottom of the list. y/n
+- [ ] **10.** macOS: same checks 1/3/5 — screenshot this one if the charts look off,
+      Swift Charts scrubbing behaves differently under a trackpad. y/n

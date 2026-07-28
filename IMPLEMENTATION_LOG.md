@@ -1,5 +1,97 @@
 # Expired — Implementation Log
 
+## 2026-07-28 (cont. 2) — R3b: Insights motion, horizon-driven charts, scrubbing
+
+Deon's report: the Insights steppers "don't seem to change the graph", the tab needs
+the animation-on-appear that other apps have, and the lone bar chart could be more.
+
+**The horizon control was decorative, and it wasn't a UI bug.** `forecastMonthlyBuckets`
+called `ForecastEngine.monthlyBuckets(monthsAhead: 12)` — a literal, with no reference to
+`forecastHorizon`. So 30/90/365 correctly moved the headline total and the
+biggest-hits list while redrawing a byte-identical chart. Worth recording *why* this
+survived from R3's build: the R3 spec itself said "12-month bar chart", so the chart was
+built to spec and the horizon control was built to spec, and nobody wrote down that the
+two were supposed to be connected. The audit trap here was assuming a control that
+"doesn't work" is a binding/state problem — the data layer was reporting exactly what it
+was asked for.
+
+Fixed by making granularity a function of the horizon:
+`ForecastEngine.buckets(horizonDays:granularity:)` with `Granularity.forHorizon` picking
+daily (<45d), weekly (<200d) or monthly. That keeps the bar count in a readable 12–30
+band at every horizon instead of showing 365 daily bars or 1 monthly one.
+
+**Second cause considered and rejected as the one Deon hit.** Both pickers also revert
+to the free option and open the paywall for a non-premium user, and the chart isn't
+rendered at all below the gate — with the Test Store key still in `BackendConfig`, that
+was the more likely explanation on paper. Asked before writing the audit up; Deon
+confirmed he sees the real bar chart and Pro is active, so the hardcoded literal was
+genuinely it. Cheap question, would have been an expensive wrong diagnosis. Added a
+debug `PurchaseManager.DebugOverride` (none/forcePro/forceFree, persisted) so this is a
+five-second check next time rather than a guess about entitlement state.
+
+**Cumulative curve is the actual answer to "the chart should change when the number
+changes."** `ForecastEngine.cumulative(horizonDays:)` returns a step curve of running
+spend that starts at (today, 0) and *ends at exactly the headline figure*. Chosen over
+prettier options (a radial gauge, a stacked-by-category area) because it's the one shape
+where the connection between the control, the number and the chart is self-evident
+rather than asserted. It reuses `contributions` unchanged — no engine rework.
+
+**Entrance animation — the TabView trap.** Swift Charts has no built-in entrance
+animation; the technique is a 0→1 progress value multiplied into each mark's `y`. The
+part that bites is that `InsightsView` stays alive inside the `TabView`, so the obvious
+`@State progress = 0` set in `.onAppear` animates exactly once and every later tab
+switch shows the charts already at rest — which is precisely the case Deon asked for
+("when you switch to a page"). `InsightsEntrance` therefore tracks `leftAt` in
+`.onDisappear` and only replays after >2s away, so a tab bounce doesn't stutter. The
+driver is `.linear` on purpose: a curved driver squashes the later elements' stagger
+together, since the per-element easing already lives in `staggered(index:)`.
+
+`Text` is not `Animatable`, so counting a currency figure up needs a `View` that
+conforms to `Animatable` and re-renders per frame — `AnimatedCurrencyText` /
+`AnimatedCountText`. This also gets the period-change tween for free.
+
+**Layout change:** stat tiles moved above the forecast card. With the forecast on top
+(R3's "new Forecast section at the top of Insights"), switching Monthly→Annual changed
+nothing in the visible top third of the screen — a second, independent reason the
+controls read as dead. The two controls stay functionally independent (forecast is
+forward-looking, `costPeriod` is a historical rate); only the ordering changed.
+
+**Also:** `chartXSelection` scrubbing with a lollipop callout on both charts;
+`CostBarRow` bars now grow and tween instead of jumping; everything collapses to the
+settled state under `accessibilityReduceMotion`. Removed `ForecastMonthlyChart` and
+`forecastMonthlyBuckets`, orphaned by this change. `ForecastEngine.monthlyBuckets` kept
+— still the general-purpose accessor, and `buckets(granularity: .month)` doesn't
+subsume its `monthsAhead` framing.
+
+**Verified, not assumed:** the week/month bucket lattice was flagged as a possible
+money-dropping bug (a week/month `bucketStart` snaps *backwards*, so the first bar can
+start before `referenceDate` — the worry being that a tail-of-horizon contribution lands
+in a bucket the fill loop never appended). Rather than argue it from the code, ran a
+standalone harness summing `buckets(...)` against `total(...)` and the cumulative
+endpoint across 15 combinations: reference dates that are neither a Monday nor the 1st,
+a DST-crossing date, and renewals at exactly 29/30/44/45/88/89/90/363/364/365 days.
+All three agree in every case — `bucketStart(d)` is always on the same lattice as
+`cursor` and always ≤ `horizonEnd`, so it is always appended. Keeping the note here
+because the concern is a reasonable one to re-raise, and this is the cheap test that
+settles it. (Harness was scratch-only; it belongs in the XCTest target when R3 AC5's
+target finally exists.)
+
+**Known, unfixed — free users still see both pickers silently snap back.** Selecting a
+Pro period or horizon reverts to the free option and opens the paywall; the only
+feedback is the sheet, and after dismissing it the control has moved back on its own.
+That's pre-existing R3 behaviour, not introduced here, but it's the second reason a
+control can read as broken and it's still live. Left as-is pending a decision: either
+keep the revert and disable the Pro segments outright, or let the selection stick and
+show a locked-state chart behind the gate.
+
+**Files:** `Services/ForecastEngine.swift` (+`Granularity`/`Bucket`/`buckets`,
+`CumulativePoint`/`cumulative`), new `UI/InsightsCharts.swift` (`InsightsEntrance`,
+`AnimatedCurrencyText`, `AnimatedCountText`, `ForecastCumulativeChart`,
+`ForecastBucketChart`), `ContentView.swift` (`InsightsView`, `CompactInsightTile`,
+`CostBarRow`), `Services/PurchaseManager.swift`, `UI/DebugAIFailureSimulatorView.swift`.
+
+Builds clean on iOS + macOS. No schema change.
+
 ## 2026-07-28 (cont.) — R4 round 2: catalog curation, permission timing, swipe rewrite
 
 Second round of fixes from Deon's device testing.

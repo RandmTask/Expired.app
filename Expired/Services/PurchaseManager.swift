@@ -9,8 +9,38 @@ import RevenueCat
 final class PurchaseManager: NSObject, PurchasesDelegate {
     static let shared = PurchaseManager()
 
+    /// Forces the Pro gates on or off regardless of the real entitlement, so both sides
+    /// of every gate can be checked on one device without buying/refunding. Exposed only
+    /// through the hidden debug section; persisted so it survives a relaunch.
+    enum DebugOverride: String, CaseIterable {
+        case none, forcePro, forceFree
+
+        var label: String {
+            switch self {
+            case .none:      return "Real entitlement"
+            case .forcePro:  return "Force Pro"
+            case .forceFree: return "Force Free"
+            }
+        }
+    }
+
+    private static let debugOverrideKey = "debugPremiumOverride"
+
+    var debugOverride: DebugOverride {
+        didSet { UserDefaults.standard.set(debugOverride.rawValue, forKey: Self.debugOverrideKey) }
+    }
+
     /// True when the "Expired Pro" entitlement is active. Reactive — gates read this.
-    private(set) var isPremium = false
+    var isPremium: Bool {
+        switch debugOverride {
+        case .none:      return entitlementIsPremium
+        case .forcePro:  return true
+        case .forceFree: return false
+        }
+    }
+
+    /// The unfiltered entitlement state, before any debug override.
+    private(set) var entitlementIsPremium = false
     private(set) var offerings: Offerings?
     private(set) var isConfigured = false
 
@@ -20,7 +50,12 @@ final class PurchaseManager: NSObject, PurchasesDelegate {
     /// log alone, without dashboard access.
     var appUserID: String? { isConfigured ? Purchases.shared.appUserID : nil }
 
-    private override init() { super.init() }
+    private override init() {
+        debugOverride = DebugOverride(
+            rawValue: UserDefaults.standard.string(forKey: Self.debugOverrideKey) ?? ""
+        ) ?? .none
+        super.init()
+    }
 
     /// Call once, after the Supabase anonymous session resolves.
     func configure(appUserID: String?) {
@@ -84,7 +119,7 @@ final class PurchaseManager: NSObject, PurchasesDelegate {
             apply(info)
         } catch {
             print("[PurchaseManager] logOutForTesting: logIn FAILED: \(error)")
-            isPremium = false
+            entitlementIsPremium = false
         }
     }
 
@@ -123,7 +158,7 @@ final class PurchaseManager: NSObject, PurchasesDelegate {
     }
 
     private func apply(_ info: CustomerInfo) {
-        isPremium = info.entitlements[BackendConfig.proEntitlementID]?.isActive == true
+        entitlementIsPremium = info.entitlements[BackendConfig.proEntitlementID]?.isActive == true
     }
 
     // MARK: PurchasesDelegate

@@ -11,6 +11,7 @@ import SwiftData
 /// ship in TestFlight (no visible affordance); strip before public App Store release.
 struct DebugAIFailureSimulatorView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(PurchaseManager.self) private var purchaseManager
     @ObservedObject private var cloudKitDebug = CloudKitDebugStore.shared
 
     /// Re-conceals the section — the caller owns the persisted reveal flag.
@@ -109,6 +110,7 @@ struct DebugAIFailureSimulatorView: View {
         lines.append("RevenueCat configured: \(PurchaseManager.shared.isConfigured)")
         lines.append("RevenueCat appUserID: \(PurchaseManager.shared.appUserID ?? "nil")")
         lines.append("isPremium: \(PurchaseManager.shared.isPremium)")
+        lines.append("  entitlement: \(PurchaseManager.shared.entitlementIsPremium), debug override: \(PurchaseManager.shared.debugOverride.rawValue)")
         lines.append("")
         lines.append("Supabase user ID: \(SupabaseService.shared.currentUserID ?? "nil")")
         lines.append("")
@@ -132,10 +134,17 @@ struct DebugAIFailureSimulatorView: View {
             } label: {
                 Label("Mascot Gallery", systemImage: "face.smiling")
             }
+            Picker(selection: Bindable(purchaseManager).debugOverride) {
+                ForEach(PurchaseManager.DebugOverride.allCases, id: \.self) { option in
+                    Text(option.label).tag(option)
+                }
+            } label: {
+                Label("Pro Gates", systemImage: "crown")
+            }
         } header: {
             Text("Testing")
         } footer: {
-            Text("Replay Onboarding presents the first-run pager without touching the completion flag. Mascot Gallery shows every expression the bear can display.")
+            Text("Replay Onboarding presents the first-run pager without touching the completion flag. Mascot Gallery shows every expression the bear can display. Pro Gates forces every Premium gate on or off without buying or refunding — real entitlement is \(purchaseManager.entitlementIsPremium ? "active" : "inactive").")
         }
     }
 
