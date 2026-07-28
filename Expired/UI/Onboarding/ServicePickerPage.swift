@@ -32,9 +32,19 @@ struct ServicePickerPage: View {
         ServiceGridStyle(rawValue: gridStyleRaw) ?? .squircleLabelled
     }
 
+    /// Measured width of the scroll container. iPhone widths (<500) keep the style's
+    /// authored sizing untouched; wider iPad/Mac windows scale columns and icon size up
+    /// so the grid doesn't sit as a cramped iPhone layout in a lot of empty space
+    /// (Deon, 2026-07-28: "imagine an 11 or 13 inch iPad or a 16in MBP").
+    @State private var containerWidth: CGFloat = 0
+
+    private var metrics: AdaptiveGridMetrics {
+        AdaptiveGridMetrics(style: style, width: containerWidth)
+    }
+
     private var columns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: style.interItemSpacing),
-              count: style.columnCount)
+        Array(repeating: GridItem(.flexible(), spacing: metrics.interItemSpacing),
+              count: metrics.columnCount)
     }
 
     private var tiles: [AppCatalog.OnboardingTile] { AppCatalog.onboardingTiles() }
@@ -70,7 +80,7 @@ struct ServicePickerPage: View {
                         .padding(.horizontal, 16)
                         .padding(.bottom, 12)
                 } else {
-                    LazyVGrid(columns: columns, spacing: style.rowSpacing) {
+                    LazyVGrid(columns: columns, spacing: metrics.rowSpacing) {
                         ForEach(tiles) { tile in
                             tileView(tile)
                         }
@@ -80,6 +90,7 @@ struct ServicePickerPage: View {
                     .padding(.bottom, 12)
                 }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { containerWidth = $0 }
 
             footer
         }
@@ -112,27 +123,28 @@ struct ServicePickerPage: View {
     /// Offset alternating rows by half a tile so tiles interlock. Uses a manual row
     /// split rather than `LazyVGrid`, which can't stagger.
     private var honeycombGrid: some View {
-        let perRow = style.columnCount
+        let metrics = metrics
+        let perRow = metrics.columnCount
         let all = tiles
         let rows = stride(from: 0, to: all.count, by: perRow).map { start in
             Array(all[start..<min(start + perRow, all.count)])
         }
-        return VStack(spacing: style.rowSpacing) {
+        return VStack(spacing: metrics.rowSpacing) {
             ForEach(Array(rows.enumerated()), id: \.offset) { index, rowTiles in
-                HStack(spacing: style.interItemSpacing) {
+                HStack(spacing: metrics.interItemSpacing) {
                     ForEach(rowTiles) { tile in
                         tileView(tile)
                     }
                     if rowTiles.count < perRow {
                         ForEach(0..<(perRow - rowTiles.count), id: \.self) { _ in
-                            Color.clear.frame(width: style.iconSize, height: style.iconSize)
+                            Color.clear.frame(width: metrics.iconSize, height: metrics.iconSize)
                         }
                     }
                 }
-                .offset(x: index.isMultiple(of: 2) ? 0 : (style.iconSize + style.interItemSpacing) / 2)
+                .offset(x: index.isMultiple(of: 2) ? 0 : (metrics.iconSize + metrics.interItemSpacing) / 2)
             }
             addYourOwnTile
-                .padding(.top, style.rowSpacing)
+                .padding(.top, metrics.rowSpacing)
         }
     }
 
@@ -140,6 +152,7 @@ struct ServicePickerPage: View {
     private func tileView(_ tile: AppCatalog.OnboardingTile) -> some View {
         let isTracked = existingNames.contains(AppCatalog.canonicalName(tile.name))
         let isSelected = isTracked || selectedTileIDs.contains(tile.id)
+        let metrics = metrics
 
         Button {
             guard !isTracked else { return }
@@ -147,11 +160,11 @@ struct ServicePickerPage: View {
         } label: {
             VStack(spacing: 6) {
                 ZStack(alignment: .topTrailing) {
-                    tileIcon(tile)
-                        .frame(width: style.iconSize, height: style.iconSize)
-                        .background(Color.secondary.opacity(0.08), in: style.iconShape)
+                    tileIcon(tile, metrics: metrics)
+                        .frame(width: metrics.iconSize, height: metrics.iconSize)
+                        .background(Color.secondary.opacity(0.08), in: metrics.iconShape)
                         .overlay(
-                            style.iconShape
+                            metrics.iconShape
                                 .strokeBorder(isSelected ? Color.blue : Color.clear, lineWidth: 2)
                         )
 
@@ -164,9 +177,9 @@ struct ServicePickerPage: View {
                     }
                 }
 
-                if style.showsLabel {
+                if metrics.showsLabel {
                     Text(tile.name)
-                        .font(.system(size: style.labelSize, weight: .medium))
+                        .font(.system(size: metrics.labelSize, weight: .medium))
                         .foregroundStyle(isTracked ? .tertiary : .primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -180,38 +193,39 @@ struct ServicePickerPage: View {
     }
 
     @ViewBuilder
-    private func tileIcon(_ tile: AppCatalog.OnboardingTile) -> some View {
+    private func tileIcon(_ tile: AppCatalog.OnboardingTile, metrics: AdaptiveGridMetrics) -> some View {
         if let symbolName = tile.symbolName {
             Image(systemName: symbolName)
-                .font(.system(size: style.iconSize * 0.37, weight: .semibold))
+                .font(.system(size: metrics.iconSize * 0.37, weight: .semibold))
                 .foregroundStyle(.blue)
         } else if let iconData = tile.iconData, let image = platformImage(from: iconData) {
             Image(platformImage: image)
                 .resizable()
                 .scaledToFill()
-                .frame(width: style.iconSize, height: style.iconSize)
-                .clipShape(style.iconShape)
+                .frame(width: metrics.iconSize, height: metrics.iconSize)
+                .clipShape(metrics.iconShape)
         } else {
             Text(tile.name.prefix(1).uppercased())
-                .font(.system(size: style.iconSize * 0.33, weight: .semibold))
+                .font(.system(size: metrics.iconSize * 0.33, weight: .semibold))
                 .foregroundStyle(.secondary)
         }
     }
 
     private var addYourOwnTile: some View {
-        Button(action: onAddYourOwn) {
+        let metrics = metrics
+        return Button(action: onAddYourOwn) {
             VStack(spacing: 6) {
                 ZStack {
-                    style.iconShape
+                    metrics.iconShape
                         .strokeBorder(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
-                        .frame(width: style.iconSize, height: style.iconSize)
+                        .frame(width: metrics.iconSize, height: metrics.iconSize)
                     Image(systemName: "plus")
-                        .font(.system(size: style.iconSize * 0.33, weight: .semibold))
+                        .font(.system(size: metrics.iconSize * 0.33, weight: .semibold))
                         .foregroundStyle(.blue)
                 }
-                if style.showsLabel {
+                if metrics.showsLabel {
                     Text("Add your own")
-                        .font(.system(size: style.labelSize, weight: .medium))
+                        .font(.system(size: metrics.labelSize, weight: .medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
