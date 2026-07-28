@@ -359,6 +359,13 @@ enum ServiceGridStyle: String, CaseIterable, Identifiable {
         }
     }
 
+    var isCircular: Bool {
+        switch self {
+        case .circular, .circularLarge: return true
+        default: return false
+        }
+    }
+
     /// `AnyInsettableShape` keeps both `.fill(_:in:)` and `.strokeBorder` available
     /// across the circle/rounded-rect variants without duplicating every call site.
     var iconShape: AnyInsettableShape {
@@ -368,6 +375,42 @@ enum ServiceGridStyle: String, CaseIterable, Identifiable {
         default:
             return AnyInsettableShape(RoundedRectangle(cornerRadius: iconSize * 0.26))
         }
+    }
+}
+
+/// Scales a `ServiceGridStyle`'s authored (iPhone-tuned) sizing up for wider containers —
+/// iPad and Mac windows have real estate an unmodified iPhone layout wastes. iPhone widths
+/// are untouched (scale 1.0); breakpoints roughly track iPad portrait / iPad landscape+Mac
+/// window / large Mac window (16", 13" iPad landscape). Column count grows with width
+/// rather than being pinned to a device idiom, since a resizable Mac window can be any size.
+struct AdaptiveGridMetrics {
+    let columnCount: Int
+    let iconSize: CGFloat
+    let showsLabel: Bool
+    let labelSize: CGFloat
+    let interItemSpacing: CGFloat
+    let rowSpacing: CGFloat
+    let iconShape: AnyInsettableShape
+
+    init(style: ServiceGridStyle, width: CGFloat) {
+        let scale: CGFloat
+        let columnBoost: Int
+        switch width {
+        case ..<500:   scale = 1.0;  columnBoost = 0
+        case ..<900:   scale = 1.15; columnBoost = 1
+        case ..<1300:  scale = 1.3;  columnBoost = 2
+        default:       scale = 1.45; columnBoost = 3
+        }
+
+        columnCount = style.columnCount + columnBoost
+        iconSize = (style.iconSize * scale).rounded()
+        showsLabel = style.showsLabel
+        labelSize = (style.labelSize * min(scale, 1.2)).rounded()
+        interItemSpacing = (style.interItemSpacing * scale).rounded()
+        rowSpacing = (style.rowSpacing * scale).rounded()
+        iconShape = style.isCircular
+            ? AnyInsettableShape(Circle())
+            : AnyInsettableShape(RoundedRectangle(cornerRadius: iconSize * 0.26))
     }
 }
 
