@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import SwiftUI
 
 // MARK: - Enums
 
@@ -81,6 +82,28 @@ enum SubscriptionCategory: String, Codable, CaseIterable {
 
     /// Human-readable display name (same as rawValue for these categories)
     var displayName: String { rawValue }
+
+    /// Fixed categorical identity color for charts (Insights donut, etc). Reuses the same
+    /// named system colors already in use across the app (stat tiles, filters) rather than
+    /// inventing a new palette — assigned in enum declaration order so it never reflows when
+    /// a category's spend rank changes.
+    var chartColor: Color {
+        switch self {
+        case .streaming:    return .blue
+        case .ai:           return .purple
+        case .cloud:        return .cyan
+        case .productivity: return .indigo
+        case .gaming:       return .pink
+        case .shopping:     return .orange
+        case .health:       return .green
+        case .apps:         return .teal
+        case .professional: return .brown
+        case .financial:    return .mint
+        case .lifestyle:    return .yellow
+        case .utilities:    return .red
+        case .other:        return .gray
+        }
+    }
 
     /// Example services shown in Categories settings view only
     var examples: String {

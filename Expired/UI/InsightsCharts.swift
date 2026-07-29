@@ -221,6 +221,94 @@ struct ForecastCumulativeChart: View {
     }
 }
 
+// MARK: - Category spend donut
+
+/// One category's total spend for the currently selected cost period. Built by the caller
+/// from `periodCost(for:)` grouped by `item.category ?? .other`.
+struct CategorySpendSlice: Identifiable {
+    var id: String { category.rawValue }
+    let category: SubscriptionCategory
+    let amount: Double
+}
+
+/// Category spend ring. Sweeps in from zero on the shared `InsightsEntrance` driver; tapping
+/// a segment (or its legend swatch) selects it — pops out slightly and dims the rest — and
+/// tapping the same one again clears the selection. `chartAngleSelection` is the standard
+/// Swift Charts technique for pie/donut tap targets, so selection is angle-based: a tap
+/// resolves to whichever slice's cumulative amount range contains the tapped angle value.
+struct CategoryDonutChart: View {
+    let slices: [CategorySpendSlice]
+    let currencyCode: String
+    /// 0→1 entrance driver; scales the sweep up from empty.
+    let progress: Double
+    @Binding var selectedCategory: SubscriptionCategory?
+
+    @State private var angleSelection: Double?
+
+    private var total: Double { slices.reduce(0) { $0 + $1.amount } }
+
+    private var centerAmount: Double {
+        guard let selectedCategory else { return total }
+        return slices.first { $0.category == selectedCategory }?.amount ?? 0
+    }
+
+    private var centerTitle: String {
+        selectedCategory?.displayName ?? "Total"
+    }
+
+    /// Maps a tapped angle (in the same value domain as the mark's `angle`, i.e. cumulative
+    /// spend) to the slice whose cumulative range contains it.
+    private func category(atCumulative value: Double) -> SubscriptionCategory? {
+        var running = 0.0
+        for slice in slices {
+            running += slice.amount * progress
+            if value <= running { return slice.category }
+        }
+        return slices.last?.category
+    }
+
+    var body: some View {
+        Chart(slices) { slice in
+            SectorMark(
+                angle: .value("Spend", slice.amount * progress),
+                innerRadius: .ratio(0.62),
+                outerRadius: .ratio(selectedCategory == nil || selectedCategory == slice.category ? 0.98 : 0.88),
+                angularInset: 1.5
+            )
+            .foregroundStyle(by: .value("Category", slice.category.displayName))
+            .opacity(selectedCategory == nil || selectedCategory == slice.category ? 1 : 0.35)
+            .cornerRadius(4)
+        }
+        .chartForegroundStyleScale(
+            domain: slices.map(\.category.displayName),
+            range: slices.map(\.category.chartColor)
+        )
+        .chartLegend(position: .bottom, spacing: 8)
+        .chartAngleSelection(value: $angleSelection)
+        .chartBackground { _ in
+            VStack(spacing: 2) {
+                Text(centerTitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                AnimatedCurrencyText(value: centerAmount, currencyCode: currencyCode)
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
+            .padding(.horizontal, 24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(height: 220)
+        .onChange(of: angleSelection) { _, newValue in
+            guard let newValue, let tapped = category(atCumulative: newValue) else { return }
+            selectedCategory = (selectedCategory == tapped) ? nil : tapped
+            angleSelection = nil
+        }
+    }
+}
+
 // MARK: - Horizon bucket bar chart
 
 /// "When do the hits land" companion to the cumulative curve. Granularity is derived from
