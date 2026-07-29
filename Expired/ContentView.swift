@@ -1280,6 +1280,10 @@ struct InsightsView: View {
     }
     @State private var forecastHorizon: ForecastHorizon = .thirtyDays
 
+    /// Tapped donut segment; filters `costBreakdown` below it. Tapping the same segment
+    /// again clears it (toggled inside `CategoryDonutChart`).
+    @State private var selectedCategory: SubscriptionCategory?
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var entrance = InsightsEntrance()
 
@@ -1400,6 +1404,7 @@ struct InsightsView: View {
                     // top (its previous position), switching Monthly→Annual left the whole
                     // visible top of the screen unchanged and read as "nothing happened".
                     compactStatsGrid
+                    categoryDonutSection
                     forecastSection
                     if !costBreakdownItems.isEmpty { costBreakdown }
                     Spacer(minLength: 40)
@@ -1562,6 +1567,78 @@ struct InsightsView: View {
             .glassEffect(in: .rect(cornerRadius: 20))
         }
         .padding(.horizontal)
+        .insightsEntrance(entrance.staggered(index: 7))
+    }
+
+    // MARK: - Category donut (R3b)
+
+    /// Grouped from the same period-based base list `costBreakdown` uses, so the donut and
+    /// the "By Cost" list underneath always agree — before any tap-to-filter is applied.
+    /// Items with no custom user category (or a category name that isn't a built-in enum
+    /// case) collapse into `.other`, matching `item.category`'s existing nil-fallback
+    /// behaviour elsewhere in the app.
+    private var categorySpend: [CategorySpendSlice] {
+        var totals: [SubscriptionCategory: Double] = [:]
+        for item in costBreakdownBaseItems {
+            guard item.monthlyCostConverted(to: preferredCurrency) != nil else { continue }
+            totals[item.category ?? .other, default: 0] += periodCost(for: item)
+        }
+        return totals.compactMap { category, amount in
+            amount > 0 ? CategorySpendSlice(category: category, amount: amount) : nil
+        }
+        .sorted { $0.amount > $1.amount }
+    }
+
+    private var categoryDonutSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 5) {
+                Image(systemName: "chart.pie.fill")
+                    .font(.system(size: 11, weight: .bold))
+                Text("BY CATEGORY")
+                    .font(.system(size: 11, weight: .bold))
+                    .tracking(0.6)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
+
+            if purchaseManager.isPremium {
+                Group {
+                    if categorySpend.isEmpty {
+                        Text("No spend to break down yet")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 100)
+                    } else {
+                        CategoryDonutChart(
+                            slices: categorySpend,
+                            currencyCode: preferredCurrency,
+                            progress: entrance.progress,
+                            selectedCategory: $selectedCategory
+                        )
+                    }
+                }
+                .padding(16)
+                .glassEffect(in: .rect(cornerRadius: 20))
+                .animation(.smooth(duration: 0.45), value: costPeriod)
+            } else {
+                Button {
+                    showPaywall = true
+                } label: {
+                    HStack {
+                        Image(systemName: "lock.fill")
+                        Text("Unlock the category spend breakdown")
+                        Spacer()
+                    }
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 12)
+                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal)
         .insightsEntrance(entrance.staggered(index: 6))
     }
 
@@ -1630,13 +1707,20 @@ struct InsightsView: View {
         }
     }
 
-    private var costBreakdownItems: [SubscriptionItem] {
+    /// Period-based list, before any donut-segment filter — this is what the donut itself
+    /// sums, so a tapped segment's amount always matches what filtering reveals below it.
+    private var costBreakdownBaseItems: [SubscriptionItem] {
         switch costPeriod {
         case .monthly, .annual:
             return activeItems.filter(\.contributesToCurrentRecurringSpend)
         case .ytd, .lifetime:
             return allItems.filter { $0.itemType == .subscription }
         }
+    }
+
+    private var costBreakdownItems: [SubscriptionItem] {
+        guard let selectedCategory else { return costBreakdownBaseItems }
+        return costBreakdownBaseItems.filter { ($0.category ?? .other) == selectedCategory }
     }
 
     private var costBreakdown: some View {
@@ -1652,6 +1736,20 @@ struct InsightsView: View {
                 Text("BY COST")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(0.6)
+                if let selectedCategory {
+                    Spacer()
+                    Button {
+                        self.selectedCategory = nil
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(selectedCategory.displayName)
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(selectedCategory.chartColor)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .foregroundStyle(.secondary)
             .padding(.horizontal, 4)
@@ -1665,7 +1763,7 @@ struct InsightsView: View {
                         maxCost: maxCost,
                         // Clamped: an unbounded index would push later rows past the end
                         // of the entrance driver and leave them permanently invisible.
-                        progress: entrance.staggered(index: 7 + min(index, 3))
+                        progress: entrance.staggered(index: 8 + min(index, 2))
                     )
                 }
             }

@@ -224,3 +224,33 @@ gate on/off, so items 6–7 don't need a real purchase or refund.
       invisible at the bottom of the list. y/n
 - [ ] **10.** macOS: same checks 1/3/5 — screenshot this one if the charts look off,
       Swift Charts scrubbing behaves differently under a trackpad. y/n
+
+## R3b — Category donut (added 2026-07-29, completes R3b AC5)
+
+New "BY CATEGORY" card sits between the stat tiles and the Forecast card. Debug →
+Testing → **Pro Gates** forces Premium on/off without a real purchase.
+
+- [ ] **1.** Insights tab entry: the donut sweeps in from empty along with the rest of
+      the staggered entrance (after the stat tiles, before the Forecast card). y/n
+- [ ] **2.** Tap a segment → it pops out slightly, the rest dim, the center label
+      switches from "Total" to that category's name + amount, and the **By Cost** list
+      below filters to only that category's items. y/n
+- [ ] **3.** Tap the **same** segment again → selection clears: all segments return to
+      full size/opacity, center label goes back to "Total", By Cost shows everything
+      again. y/n
+- [ ] **4.** Tap a **different** segment while one is already selected → selection
+      switches directly to the new one (no need to clear first). y/n
+- [ ] **5.** While a segment is selected, the "BY COST" header shows the category name
+      with a ✕ — tapping it clears the filter the same as re-tapping the donut. y/n
+- [ ] **6.** Switch Monthly/Annual/YTD/Lifetime while a category is selected → the
+      donut and the filtered By Cost list both update to the new period's amounts,
+      still filtered to the same category. y/n
+- [ ] **7.** Debug → Pro Gates → Force Free → the donut is replaced by "Unlock the
+      category spend breakdown". Force Pro → the donut returns. y/n
+- [ ] **8.** Settings → Accessibility → Reduce Motion ON → the donut renders fully
+      swept in, no growth animation on tab entry. y/n
+- [ ] **9.** Each category's slice color is distinct and stays the same color every
+      time you revisit Insights (colors are fixed per category, not re-assigned by
+      spend rank). y/n
+- [ ] **10.** macOS: repeat checks 1/2/3/7 — screenshot this one if the legend wraps
+      oddly or the tap target feels off under a trackpad/mouse click. y/n

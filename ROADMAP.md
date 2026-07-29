@@ -212,10 +212,10 @@ with currency conversion; `TimelineView` with 6 view modes; `CurrencyRateService
 
 ---
 
-### R3b. Insights motion + interactive charts 🟠 — no schema change
+### R3b. Insights motion + interactive charts 🟢 — no schema change
 
 Insights had zero animation and two controls that didn't visibly drive anything.
-Shipped 2026-07-28 (see log); the donut is the remaining piece.
+Shipped 2026-07-28 (see log); the donut shipped 2026-07-29, closing out this item.
 
 **Shipped:**
 - Horizon-driven bar chart (daily/weekly/monthly granularity from the 30/90/365 pick).
@@ -231,16 +231,22 @@ Shipped 2026-07-28 (see log); the donut is the remaining piece.
   changes.
 - Debug-only `PurchaseManager.DebugOverride` to force Pro gates on/off.
 
-**Not built (next batch):**
-- 🔴 **Category donut/ring** — spend split by category, animated sweep on appear, tap a
-  segment to filter the By Cost list below. Gating decision: Pro.
+**Shipped 2026-07-29:**
+- 🟢 **Category donut/ring** — `CategoryDonutChart` (`UI/InsightsCharts.swift`), spend
+  split by `SubscriptionCategory` (nil/custom category names collapse into `.other`),
+  sweeps in on the shared `InsightsEntrance` driver, `chartAngleSelection`-based tap to
+  select/deselect a segment which filters the "By Cost" list below (with a clear chip
+  on that list's header). Fixed per-category colors (`SubscriptionCategory.chartColor`)
+  reusing existing system-color conventions, not a new invented palette. Pro-gated,
+  matching the existing "Unlock the renewal breakdown chart" locked-placeholder style.
 
 **Acceptance criteria:**
 1. Changing 30/90/365 visibly redraws both charts, not just the headline figure. ✅
 2. The cumulative curve's final value equals the headline forecast total. ✅
 3. Entering the Insights tab replays the entrance every time (after >2s away). ✅
 4. Reduce Motion renders everything settled, with no count-up or stagger. ✅
-5. Donut segment tap filters the By Cost list. 🔴
+5. Donut segment tap filters the By Cost list. ✅ (built; see `TEST.md` for manual
+   verification — Deon has not yet confirmed on-device)
 
 ---
 

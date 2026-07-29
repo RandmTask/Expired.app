@@ -1,5 +1,52 @@
 # Expired — Implementation Log
 
+## 2026-07-29 — R3b: category spend donut (closes R3b)
+
+Last piece of R3b (AC5). New "BY CATEGORY" card in `InsightsView`, sitting between the
+stat tiles and the Forecast card.
+
+1. `SubscriptionCategory.chartColor` (`Models/SubscriptionItem.swift`) — fixed per-case
+   color, assigned in enum declaration order so a slice's color never reflows when its
+   spend rank changes. Reuses the same named system colors already used throughout the
+   app (blue/purple/green/indigo/red/etc) rather than inventing a hex palette — the task
+   brief was explicit that Expired's colour conventions win over the dataviz skill's
+   default palette.
+2. `CategorySpendSlice` + `CategoryDonutChart` (`UI/InsightsCharts.swift`) — `SectorMark`
+   donut, entrance sweep driven by the existing `InsightsEntrance.progress` (same raw
+   driver `ForecastCumulativeChart`/`ForecastBucketChart` already use), automatic
+   Charts legend via `chartForegroundStyleScale`, center label showing the selected
+   category (or "Total") and its amount.
+3. Tap-to-select uses `chartAngleSelection` — the standard Swift Charts technique for
+   pie/donut tap targets — mapped back to a category by walking the slices' cumulative
+   amounts. Tapping the selected slice again clears it (toggle, not a separate "clear"
+   gesture the user has to find).
+4. `InsightsView.costBreakdownItems` split into `costBreakdownBaseItems` (period-only,
+   what the donut sums) and the category-filtered view the "By Cost" list renders — so
+   the donut and the list can never disagree on totals. Added a small "category name + ✕"
+   chip to the By Cost header as a second way to clear the filter, since the only other
+   way is finding the same wedge again.
+5. Entrance stagger reindexed: donut → 6, Forecast card 6→7, By Cost rows
+   `7 + min(index,3)` → `8 + min(index,2)` (kept the 0.5 stagger-window headroom the
+   driver requires — see `InsightsEntrance.staggered`'s doc comment on why unbounded
+   indices go invisible).
+6. Pro-gated: free users see a locked placeholder in the same style as the existing
+   "Unlock the renewal breakdown chart" row ("Unlock the category spend breakdown").
+
+**Scoping call:** items with a custom (non-enum) category name, or no category at all,
+group into `.other` on the donut — matching `SubscriptionItem.category`'s existing
+nil-fallback behaviour, and consistent with the task brief specifying "spend split by
+`SubscriptionCategory`" (the fixed enum), not the arbitrary per-user `UserCategoryStore`
+names HomeView's category grouping also supports. If per-custom-category donut slices
+are wanted later, that needs its own color-assignment story (custom categories have no
+color today) and is a separate, larger piece of work.
+
+Builds clean on iOS and macOS (`DEVELOPER_DIR=/Applications/Xcode-beta.app`). No schema
+change. Not yet confirmed on-device by Deon — see `TEST.md`'s new "R3b — Category donut"
+section.
+
+Model: Opus (chart interaction + Pro-gating judgment, per the task's explicit
+no-delegation instruction).
+
 ## 2026-07-28 (cont. 2) — R3b: Insights motion, horizon-driven charts, scrubbing
 
 Deon's report: the Insights steppers "don't seem to change the graph", the tab needs
