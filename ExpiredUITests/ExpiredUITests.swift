@@ -88,7 +88,7 @@ final class ExpiredUITests: XCTestCase {
         let contributions = ForecastEngine.contributions(for: [item], horizonDays: 30, referenceDate: reference, targetCurrency: "AUD", convert: identityConvert)
 
         XCTAssertEqual(contributions.count, 1)
-        XCTAssertEqual(contributions.first?.amount, 15, accuracy: 0.01)
+        XCTAssertEqual(contributions.first?.amount ?? -1, 15, accuracy: 0.01)
         XCTAssertEqual(
             calendar.dateComponents([.day], from: reference, to: contributions.first?.date ?? .distantPast).day, 10,
             "Contribution date must be the trial-end date, not today or the eventual renewal date"
