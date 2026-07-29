@@ -16,11 +16,22 @@
 		7EEA5B7F2F752B8800DF89FC /* CloudKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7EEA5B7E2F752B8800DF89FC /* CloudKit.framework */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		7EEF24D83019E5F7002D8E1B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7EEA5B512F7395E200DF89FC /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7EEA5B582F7395E200DF89FC;
+			remoteInfo = Expired;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		7E1C305E2F7C17E10086563F /* AppCatalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = AppCatalog.json; sourceTree = "<group>"; };
 		7E1C30622F7D00010086563F /* iCloud icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "iCloud icon.png"; sourceTree = "<group>"; };
 		7EEA5B592F7395E200DF89FC /* Expired.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Expired.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7EEA5B7E2F752B8800DF89FC /* CloudKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CloudKit.framework; path = System/Library/Frameworks/CloudKit.framework; sourceTree = SDKROOT; };
+		7EEF24D43019E5F6002D8E1B /* ExpiredUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ExpiredUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -42,6 +53,11 @@
 			path = Expired;
 			sourceTree = "<group>";
 		};
+		7EEF24D53019E5F7002D8E1B /* ExpiredUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ExpiredUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -54,6 +70,13 @@
 				7ED538012FF3A95E004321A5 /* ReceiptParser in Frameworks */,
 				7EEA5B7F2F752B8800DF89FC /* CloudKit.framework in Frameworks */,
 				7ED538032FF3A95E004321A5 /* RevenueCat in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7EEF24D13019E5F6002D8E1B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -80,6 +103,7 @@
 			isa = PBXGroup;
 			children = (
 				7EEA5B5B2F7395E200DF89FC /* Expired */,
+				7EEF24D53019E5F7002D8E1B /* ExpiredUITests */,
 				7EEA5B7D2F752B8700DF89FC /* Frameworks */,
 				7EEA5B5A2F7395E200DF89FC /* Products */,
 				7E1C305D2F7C17B40086563F /* Resources */,
@@ -91,6 +115,7 @@
 			isa = PBXGroup;
 			children = (
 				7EEA5B592F7395E200DF89FC /* Expired.app */,
+				7EEF24D43019E5F6002D8E1B /* ExpiredUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -132,6 +157,29 @@
 			productReference = 7EEA5B592F7395E200DF89FC /* Expired.app */;
 			productType = "com.apple.product-type.application";
 		};
+		7EEF24D33019E5F6002D8E1B /* ExpiredUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7EEF24DC3019E5F7002D8E1B /* Build configuration list for PBXNativeTarget "ExpiredUITests" */;
+			buildPhases = (
+				7EEF24D03019E5F6002D8E1B /* Sources */,
+				7EEF24D13019E5F6002D8E1B /* Frameworks */,
+				7EEF24D23019E5F6002D8E1B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7EEF24D93019E5F7002D8E1B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				7EEF24D53019E5F7002D8E1B /* ExpiredUITests */,
+			);
+			name = ExpiredUITests;
+			packageProductDependencies = (
+			);
+			productName = ExpiredUITests;
+			productReference = 7EEF24D43019E5F6002D8E1B /* ExpiredUITests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -139,11 +187,15 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2630;
+				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2630;
 				TargetAttributes = {
 					7EEA5B582F7395E200DF89FC = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					7EEF24D33019E5F6002D8E1B = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 7EEA5B582F7395E200DF89FC;
 					};
 				};
 			};
@@ -166,6 +218,7 @@
 			projectRoot = "";
 			targets = (
 				7EEA5B582F7395E200DF89FC /* Expired */,
+				7EEF24D33019E5F6002D8E1B /* ExpiredUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -180,6 +233,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7EEF24D23019E5F6002D8E1B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -190,7 +250,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7EEF24D03019E5F6002D8E1B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		7EEF24D93019E5F7002D8E1B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7EEA5B582F7395E200DF89FC /* Expired */;
+			targetProxy = 7EEF24D83019E5F7002D8E1B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		7EEA5B622F7395E300DF89FC /* Debug */ = {
@@ -316,7 +391,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Expired/Expired.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = NWB3XNKTN6;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -368,7 +443,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Expired/Expired.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = NWB3XNKTN6;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -413,6 +488,56 @@
 			};
 			name = Release;
 		};
+		7EEF24DA3019E5F7002D8E1B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swiftstudio.ExpiredUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Expired.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Expired";
+				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Debug;
+		};
+		7EEF24DB3019E5F7002D8E1B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swiftstudio.ExpiredUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Expired.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Expired";
+				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -430,6 +555,15 @@
 			buildConfigurations = (
 				7EEA5B652F7395E300DF89FC /* Debug */,
 				7EEA5B662F7395E300DF89FC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7EEF24DC3019E5F7002D8E1B /* Build configuration list for PBXNativeTarget "ExpiredUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7EEF24DA3019E5F7002D8E1B /* Debug */,
+				7EEF24DB3019E5F7002D8E1B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
