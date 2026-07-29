@@ -1,5 +1,67 @@
 # Expired — Implementation Log
 
+## 2026-07-29 (cont.) — R3: verification pass + XCTest target (closes R3 pending Deon confirm)
+
+Task was to actually run R3's forecast UI (never opened in a live app before this) and
+close its one remaining gap: an in-tree XCTest target for `ForecastEngine`'s AC5.
+
+**Repo moved under me mid-session.** Another session landed R3b's full build (horizon
+charts, then the category donut) via `auto-wip` commits while this session was still
+reading the old pre-R3b `ContentView.swift`. Caught it by noticing a `SessionStart` hook
+re-fired with different git history than the conversation's initial snapshot — re-synced
+to current `HEAD` and rebuilt before doing anything further. Lesson: on a repo with
+autosave/parallel-session commits, don't trust a single git-log read at task start as
+frozen; re-check `HEAD` before any build/verify step that follows exploration.
+
+**Verification, live.** Built Debug for iOS Simulator (26.5) and macOS against current
+`main`, installed on `iPhone 17 Pro` (booted via `simctl`, viewed through Xcode-beta's
+`DeviceHub.app` — Xcode 27 replaced `Simulator.app`), and drove the running app with the
+existing seeded data (23–30 real-looking items already on the simulator, synced via
+CloudKit) rather than fabricating synthetic PreviewData items — the on-screen keyboard in
+Device Hub only accepted single characters via the automation tool (repeatedly typed "a"
+for "ZZTestTrial"), so a from-scratch test item wasn't reliable to create; used the
+existing data's natural variety instead (a $50/mo Hulu, a ~7-month-out $141.76 yearly, 4
+cancelled-but-active items including a $100/yr one, and — on the macOS local store, which
+has different seed data than the iOS Simulator's CloudKit-synced store — a real trial
+item ~56 days from converting). This caught all 4 forecast rules with real numbers:
+Hulu appears 1×/3×/12× across 30/90/365d and lines up with each horizon's headline total;
+the $141.76 yearly is invisible at 30d/90d and only appears at 365d; all 4 cancelled
+items (including the $100 one, which would visibly rank in "Biggest upcoming hits" if it
+weren't excluded) never appear in any list at any horizon.
+
+**Debug Pro-gate override earns its keep.** R3b's `PurchaseManager.DebugOverride` (added
+for its own Pro-gating tests) let this session unlock the bar chart / 90–365d horizons on
+a free-tier test account without a real purchase — used it on both platforms to see the
+gated chart states, not just the free 30-day view.
+
+**XCTest target creation — the click-tier ceiling.** Created `ExpiredUITests` via
+Xcode's File > New > Target > Unit Testing Bundle (GUI, no `project.pbxproj` editing, per
+the task's explicit instruction). Xcode is only ever grantable at "click" tier for
+computer-use in this environment — no typing, ever, even on a fresh consent re-prompt —
+so the target-name field, pre-filled with a stale "ExpiredUITests" from an earlier
+wrong-template click (picked the UI Testing Bundle icon by mistake first, had to go back),
+couldn't be corrected to "ExpiredTests". Finished target creation anyway rather than
+leaving R3 blocked on a cosmetic name; flagged as a `TEST.md` item for Deon to rename in
+ten seconds next time he's in Xcode. The target itself is a genuine XCTest unit bundle —
+confirmed via `xcodebuild -list` and a passing test run, not just by template choice.
+
+**Tests.** `ExpiredUITests/ExpiredUITests.swift`: a `MockItem: ForecastContributing` test
+double (full control over `occurrences`, sidestepping any dependency on
+`SubscriptionItem`'s own date-stepping logic, which is a separate concern from
+`ForecastEngine`'s filtering/bucketing) backing 7 tests — the 4 AC rules plus
+document-item and missing-cost edge cases. One compile error on first run
+(`XCTAssertEqual` with `accuracy:` needs a non-optional `Double`, `contributions.first?.amount`
+is `Double?`) fixed with a `?? -1` fallback (any real amount is non-negative, so `-1`
+fails loudly on a real mismatch instead of silently passing). All 7 pass on both iOS
+Simulator and macOS (`xcodebuild test`, ~0.02s total).
+
+Not flipping R3 to 🟢 — that's Deon's call per house rule, not a verification-completeness
+one. See `TEST.md`'s new R3 checklist and `ROADMAP.md`'s updated status note.
+
+Model: Sonnet, high effort (as instructed) throughout; no Opus escalation needed — the
+target-creation hurdle was a tooling/permission ceiling, not an Xcode-project-structure
+judgment call.
+
 ## 2026-07-29 — R3b: category spend donut (closes R3b)
 
 Last piece of R3b (AC5). New "BY CATEGORY" card in `InsightsView`, sitting between the

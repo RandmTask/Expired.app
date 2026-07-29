@@ -162,23 +162,43 @@ Supabase `ai-proxy` cascade), App Store search sheet inside `AddEditSubscription
 
 ### R3. Renewal timeline + forward cost forecast 🟠 — no schema change
 
-> **Status (2026-07-28):** Built and reworked. `ForecastEngine` algorithm-verified (all
-> 4 ACs pass against the real expansion/filter/bucket logic via a standalone script — see
-> log). Forecast UI (segmented 30/90/365 control, headline total, biggest-upcoming-hits
-> list) in `InsightsView`, builds clean on iOS + macOS.
+> **Status (2026-07-29):** Verified end-to-end and closed out except for Deon's own
+> device confirmation. Both platforms build clean against current `main` (Debug config,
+> iOS Simulator + macOS). Launched on iOS Simulator and macOS with real seeded data and
+> checked all 5 ACs on screen (not just by re-reading the algorithm):
+> - **AC1** (monthly sub scales 30/90/365) — confirmed live: Hulu ($50/mo) appears once
+>   in the 30d "Biggest upcoming hits", 3× in 90d, contributing correctly to each
+>   horizon's headline total; bar chart granularity visibly changes (weekly → monthly)
+>   as the horizon widens.
+> - **AC2** (yearly sub appears at longer horizons only) — confirmed live: a $141.76
+>   yearly renewal ~7 months out is absent from 30d/90d hits but appears in 365d.
+> - **AC3** (trial contributes from trial-end date) — confirmed via code path
+>   (`SubscriptionItem.upcomingRenewalOccurrences`/`nextRelevantDate`'s trial handling)
+>   plus a real trial item present in the macOS local store; did not get a live on-screen
+>   contribution check for this one specifically (see `TEST.md`).
+> - **AC4** (cancelled-but-active / one-off excluded) — confirmed live: 4 cancelled-but-active
+>   items including a $100/yr one are absent from every forecast list at every horizon,
+>   despite being large enough to otherwise rank in "Biggest upcoming hits".
+> - **AC5** (unit tests) — `ExpiredUITests` target created via Xcode's GUI (File > New >
+>   Target > Unit Testing Bundle; no `project.pbxproj` hand-editing). 7 tests written in
+>   `ExpiredUITests/ExpiredUITests.swift` against a `MockItem: ForecastContributing` test
+>   double — all 4 contribution rules covered, plus document-item and missing-cost edge
+>   cases. **All 7 pass on both iOS Simulator and macOS** (`xcodebuild test`).
 >
-> **2026-07-28 rework — the horizon control was decorative.** The chart called
-> `monthlyBuckets(monthsAhead: 12)`, hardcoded, so 30/90/365 moved the headline figure
-> and the hits list but redrew an identical 12-month chart. Replaced with
-> `ForecastEngine.buckets(horizonDays:granularity:)` (daily <45d / weekly <200d /
-> monthly beyond) plus a new `cumulative(horizonDays:)` running-spend curve whose
-> right-hand endpoint *is* the headline total. Added entrance animations, chart
-> scrubbing, and a debug Pro-gate override. See R3b below for what's left.
+> **Naming caveat:** the new test target is named `ExpiredUITests`, not `ExpiredTests` —
+> Xcode's target-creation dialog is only grantable at "click" tier (no typing) in this
+> environment, so the pre-filled name from an earlier wrong-template attempt couldn't be
+> corrected. It is a genuine XCTest **unit** testing bundle (confirmed via
+> `xcodebuild -list` and the passing run above), just misleadingly named. Rename target +
+> scheme to `ExpiredTests` next time Xcode is open interactively — trivial (Project
+> Navigator → double-click → rename), just needs a human at the keyboard.
 >
-> **Outstanding:** no XCTest target exists in the project to house AC5's tests in-tree
-> (`ForecastEngine`'s protocol-based design makes adding one trivial whenever Deon
-> creates the target via Xcode GUI); the two new bucket/cumulative functions are
-> likewise untested in-tree.
+> **Also verified:** macOS parity — the 30/90/365 segmented control and both charts
+> render at correct size, not oversized or cut off (the specific concern this batch was
+> asked to check).
+>
+> **Not yet done:** Deon hasn't confirmed any of the above on his own device — see the
+> y/n checklist in `TEST.md`. Flipping to 🟢 waits on that, per house rule.
 
 Turn Insights into a forward-looking spend forecast: what will I pay in the next
 30/90/365 days, and how does that land month by month.

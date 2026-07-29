@@ -110,9 +110,22 @@ plain white/black launch after an update is almost always this, not a broken ass
          confirm name/icon/category-guess prefilled and **no** `ai-proxy` network
          call fires (check console/Charles).
       4. `+` → Manual → reaches the current Add form in one tap.
-- [ ] **R3 (renewal forecast) — visual/interactive verification** — Forecast UI
-      (segmented control, chart, biggest-upcoming-hits list) in `InsightsView` builds
-      clean but was never opened in a running app.
+- [ ] **R3 (renewal forecast) — visual/interactive verification (added 2026-07-29)**
+      Both platforms rebuilt clean against current `main`. Claude opened the app on iOS
+      Simulator and macOS with real data and confirmed ACs 1/2/4 on screen and AC5 via 7
+      passing unit tests (iOS + macOS) — see `ROADMAP.md`'s R3 status note for detail.
+      These are Deon-confirmation checks, not "does it work" checks:
+      1. Insights → Forecast card: tap 30d/90d/365d → headline total and both the chart
+         and "Biggest upcoming hits" visibly change at each tap (not just the number).
+         y/n
+      2. A subscription that renews well outside 30 days but inside 90/365 (e.g. a
+         yearly renewal) shows up in the 90d/365d hits list but not the 30d one. y/n
+      3. Any item marked "Cancelled" (cancelled-but-active) never appears anywhere in
+         the Forecast card, at any horizon, even if its cost is large. y/n
+      4. If you have (or add) a free-trial item: it appears in the forecast dated on its
+         **trial-end date**, not today and not its eventual post-trial renewal date. y/n
+      5. macOS: the 30/90/365 segmented control and both charts look correctly sized —
+         not oversized, not cut off. Screenshot this one if anything looks off. y/n
 
 ## Supabase (state-changing infra — needs Deon's go-ahead)
 
@@ -130,10 +143,15 @@ plain white/black launch after an update is almost always this, not a broken ass
 
 ## Xcode project (GUI-only, can't be done by Claude via CLI)
 
-- [ ] **Create an XCTest target** — needed to house R3's AC5 unit tests in-tree.
-      `ForecastEngine`'s protocol-based design makes adding the tests trivial once
-      the target exists; algorithm was verified via a standalone script in the
-      meantime (see `IMPLEMENTATION_LOG.md`, 2026-07-12).
+- [ ] **Rename the `ExpiredUITests` target to `ExpiredTests`** — created 2026-07-29 via
+      Xcode's File > New > Target > Unit Testing Bundle (it's a real XCTest unit test
+      bundle, not a UI test bundle — confirmed via `xcodebuild -list` and a passing
+      `xcodebuild test` run). Xcode's target-creation dialog only grants "click" tier
+      (no typing) to Claude in this environment, so the name pre-filled from an earlier
+      wrong-template attempt (`ExpiredUITests`) couldn't be corrected. Project Navigator
+      → double-click the target → rename; same for the "ExpiredUITests.xctest" product
+      and the file `ExpiredUITests/ExpiredUITests.swift` if desired. Cosmetic only, not
+      blocking — the 7 `ForecastEngine` tests inside it pass either way.
 
 ## CloudKit
 
