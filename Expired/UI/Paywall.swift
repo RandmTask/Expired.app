@@ -115,7 +115,8 @@ private struct PaywallUnavailableView: View {
             Button {
                 isRestoring = true
                 Task {
-                    _ = await PurchaseManager.shared.restore()
+                    let restored = await PurchaseManager.shared.restore()
+                    Haptics.fire(restored ? .success : .warning)
                     isRestoring = false
                 }
             } label: {

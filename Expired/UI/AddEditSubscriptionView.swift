@@ -993,18 +993,23 @@ struct AddEditSubscriptionView: View {
                         // Quick-pick + button: bump the renewal date forward
                         Menu {
                             Button("+1 Week") {
+                                Haptics.fire(.selectionChanged)
                                 statusDate = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: statusDate) ?? statusDate
                             }
                             Button("+1 Month") {
+                                Haptics.fire(.selectionChanged)
                                 statusDate = Calendar.current.date(byAdding: .month, value: 1, to: statusDate) ?? statusDate
                             }
                             Button("+3 Months") {
+                                Haptics.fire(.selectionChanged)
                                 statusDate = Calendar.current.date(byAdding: .month, value: 3, to: statusDate) ?? statusDate
                             }
                             Button("+6 Months") {
+                                Haptics.fire(.selectionChanged)
                                 statusDate = Calendar.current.date(byAdding: .month, value: 6, to: statusDate) ?? statusDate
                             }
                             Button("+1 Year") {
+                                Haptics.fire(.selectionChanged)
                                 statusDate = Calendar.current.date(byAdding: .year, value: 1, to: statusDate) ?? statusDate
                             }
                         } label: {
@@ -2085,6 +2090,7 @@ struct AddAccountValueSheet: View {
                                     .font(.system(size: 14))
                             }
                             .onDelete { indices in
+                                Haptics.fire(.light)
                                 editableValues.remove(atOffsets: indices)
                                 onUpdateSuggestions?(editableValues)
                             }
@@ -2105,6 +2111,7 @@ struct AddAccountValueSheet: View {
                                     Spacer()
                                     if isEditingOptions {
                                         Button {
+                                            Haptics.fire(.light)
                                             editableValues.remove(at: index)
                                             onUpdateSuggestions?(editableValues)
                                         } label: {

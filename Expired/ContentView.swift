@@ -2879,6 +2879,7 @@ struct SettingsView: View {
     }
 
     private func setQuietHoursEnabled(_ on: Bool) {
+        Haptics.fire(.selectionChanged)
         quietHoursEnabled = on
         NotificationTimeSettings.writeBool(on, forKey: NotificationTimeSettings.quietEnabledKey)
         Task { await NotificationManager.shared.refreshAll(context: modelContext) }
@@ -3489,6 +3490,9 @@ struct SettingsView: View {
                             .labelsHidden()
                             .toggleStyle(.switch)
                             .tint(.green)
+                            .onChange(of: shareServicePopularity) { _, _ in
+                                Haptics.fire(.selectionChanged)
+                            }
                     }
                 }
 
@@ -4041,6 +4045,9 @@ struct SettingsView: View {
                     Toggle("", isOn: $shareServicePopularity)
                         .labelsHidden()
                         .tint(.green)
+                        .onChange(of: shareServicePopularity) { _, _ in
+                            Haptics.fire(.selectionChanged)
+                        }
                 }
             } header: {
                 sectionHeader("PRIVACY")
