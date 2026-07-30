@@ -213,7 +213,10 @@ struct ServicePickerPage: View {
 
     private var addYourOwnTile: some View {
         let metrics = metrics
-        return Button(action: onAddYourOwn) {
+        return Button {
+            Haptics.fire(.light)
+            onAddYourOwn()
+        } label: {
             VStack(spacing: 6) {
                 ZStack {
                     metrics.iconShape
@@ -263,6 +266,7 @@ struct ServicePickerPage: View {
 
     private func toggle(_ tile: AppCatalog.OnboardingTile) {
         if let index = selectedTileIDs.firstIndex(of: tile.id) {
+            Haptics.fire(.light)
             selectedTileIDs.remove(at: index)
             showCapWarning = false
         } else if selectedTileIDs.count >= Self.maxSelection {

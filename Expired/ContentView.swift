@@ -308,6 +308,7 @@ struct CalendarGridView: View {
                 // Month header
                 HStack {
                     Button {
+                        Haptics.fire(.light)
                         withAnimation(.spring(duration: 0.3)) {
                             displayedMonth = cal.date(byAdding: .month, value: -1, to: displayedMonth) ?? displayedMonth
                         }
@@ -342,6 +343,7 @@ struct CalendarGridView: View {
                     Spacer()
 
                     Button {
+                        Haptics.fire(.light)
                         withAnimation(.spring(duration: 0.3)) {
                             displayedMonth = cal.date(byAdding: .month, value: 1, to: displayedMonth) ?? displayedMonth
                         }
@@ -570,6 +572,7 @@ struct HeatmapView: View {
                         )
                         .frame(width: cellSize, height: cellSize)
                         .onTapGesture {
+                            Haptics.fire(.selectionChanged)
                             withAnimation(.spring(duration: 0.2)) {
                                 selectedDayID = selectedDayID == day.id ? nil : day.id
                             }
@@ -940,6 +943,7 @@ struct SpendSpikeView: View {
                                     .frame(width: barW)
                             }
                             .onTapGesture {
+                                Haptics.fire(.selectionChanged)
                                 withAnimation(.spring(duration: 0.2)) {
                                     selectedWeek = selectedWeek?.id == week.id ? nil : week
                                 }
@@ -1044,6 +1048,7 @@ struct MonthStripView: View {
                                     width: cardWidth
                                 )
                                 .onTapGesture {
+                                    Haptics.fire(.selectionChanged)
                                     withAnimation(.spring(duration: 0.2)) {
                                         selectedDay = selectedDay?.id == day.id ? nil : day
                                     }
@@ -1394,8 +1399,11 @@ struct InsightsView: View {
                         // Pro periods are selectable in the segmented control but revert
                         // immediately and surface the paywall for a free user.
                         if newValue.isPro && !purchaseManager.isPremium {
+                            Haptics.fire(.warning)
                             costPeriod = .monthly
                             showPaywall = true
+                        } else {
+                            Haptics.fire(.selectionChanged)
                         }
                     }
 
@@ -1485,8 +1493,11 @@ struct InsightsView: View {
                 .pickerStyle(.segmented)
                 .onChange(of: forecastHorizon) { _, newValue in
                     if newValue.isPro && !purchaseManager.isPremium {
+                        Haptics.fire(.warning)
                         forecastHorizon = .thirtyDays
                         showPaywall = true
+                    } else {
+                        Haptics.fire(.selectionChanged)
                     }
                 }
 
@@ -2424,6 +2435,7 @@ struct CategoriesView: View {
             }
             // Visibility toggle
             Button {
+                Haptics.fire(.light)
                 withAnimation {
                     if isHidden {
                         hiddenBuiltIn.remove(cat.rawValue)
@@ -2471,6 +2483,7 @@ struct CategoriesView: View {
             VStack(spacing: 2) {
                 Button {
                     guard index > 0 else { return }
+                    Haptics.fire(.light)
                     // Find this item's index in the unified list and move up
                     if let uIdx = unifiedCategories.firstIndex(where: {
                         if case .builtIn(let c) = $0 { return c.rawValue == cat.rawValue }
@@ -2489,6 +2502,7 @@ struct CategoriesView: View {
 
                 Button {
                     guard index < total - 1 else { return }
+                    Haptics.fire(.light)
                     if let uIdx = unifiedCategories.firstIndex(where: {
                         if case .builtIn(let c) = $0 { return c.rawValue == cat.rawValue }
                         return false
@@ -2508,6 +2522,7 @@ struct CategoriesView: View {
 
             // Visibility toggle
             Button {
+                Haptics.fire(.light)
                 withAnimation {
                     let isHidden = hiddenBuiltIn.contains(cat.rawValue)
                     if isHidden {
@@ -2608,6 +2623,7 @@ struct CategoriesView: View {
                     .foregroundStyle(.secondary)
             }
             Button {
+                Haptics.fire(.light)
                 newCategoryName = cat.name
                 newCategoryIcon = cat.icon
                 newCategoryDescription = cat.description ?? ""
@@ -2620,6 +2636,7 @@ struct CategoriesView: View {
             .buttonStyle(.plain)
             .padding(.leading, 8)
             Button {
+                Haptics.fire(.light)
                 withAnimation {
                     reassignItems(named: cat.name, to: nil)
                     unifiedCategories.removeAll {
@@ -2717,6 +2734,7 @@ struct CategoryEditSheet: View {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 16) {
                         ForEach(iconOptions, id: \.0) { iconName, _ in
                             Button {
+                                Haptics.fire(.selectionChanged)
                                 icon = iconName
                             } label: {
                                 Image(systemName: iconName)
@@ -2738,10 +2756,14 @@ struct CategoryEditSheet: View {
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        Haptics.fire(.light)
+                        dismiss()
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
+                        Haptics.fire(.success)
                         onSave()
                         dismiss()
                     }

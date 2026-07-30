@@ -82,6 +82,7 @@ struct RemindersEditorView: View {
                     itemMinute: itemMinute,
                     openRowID: $openRowID,
                     onDelete: {
+                        Haptics.fire(.light)
                         withAnimation { notifications.removeAll { $0.id == rule.id } }
                     },
                     onUpdate: { updated in
@@ -120,13 +121,18 @@ struct RemindersEditorView: View {
     }
 
     private func addRule(_ type: NotificationOffsetType, _ value: Int) {
-        guard !notifications.contains(where: { $0.offsetType == type && $0.value == value && $0.customDate == nil }) else { return }
+        guard !notifications.contains(where: { $0.offsetType == type && $0.value == value && $0.customDate == nil }) else {
+            Haptics.fire(.warning)
+            return
+        }
+        Haptics.fire(.light)
         withAnimation {
             notifications.append(NotificationRuleDraft(offsetType: type, value: value))
         }
     }
 
     private func addExactDateRule() {
+        Haptics.fire(.light)
         var candidate = baseDate
         let existingDates = notifications.compactMap { rule -> Date? in
             guard rule.offsetType == .exactDate else { return nil }
@@ -267,6 +273,7 @@ struct ReminderRuleRow: View {
                 }
             if timeOverrideOn {
                 Button("Use default time", role: .destructive) {
+                    Haptics.fire(.light)
                     timeOverrideOn = false
                     propagate()
                     showTimePopover = false
@@ -476,9 +483,11 @@ struct SwipeActionsContainer<Content: View>: View {
                                                    panelWidth: panelWidth)
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                                 if proposed > panelWidth / 2 {
+                                    if !isOpen { Haptics.fire(.light) }
                                     settledOffset = panelWidth
                                     openRowID = rowID
                                 } else if proposed < -panelWidth / 2 {
+                                    if !isOpen { Haptics.fire(.light) }
                                     settledOffset = -panelWidth
                                     openRowID = rowID
                                 } else {

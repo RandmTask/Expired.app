@@ -456,6 +456,7 @@ struct AddEditSubscriptionView: View {
                                     switch item {
                                     case .builtIn(let cat):
                                         Button {
+                                            Haptics.fire(.selectionChanged)
                                             hideKeyboard()
                                             selectedCategoryRaw = cat.rawValue
                                         } label: {
@@ -463,6 +464,7 @@ struct AddEditSubscriptionView: View {
                                         }
                                     case .custom(let cat):
                                         Button {
+                                            Haptics.fire(.selectionChanged)
                                             hideKeyboard()
                                             selectedCategoryRaw = cat.name
                                         } label: {
@@ -493,6 +495,7 @@ struct AddEditSubscriptionView: View {
                             // Trailing action: x clears when filled, + opens menu when empty
                             if selectedCategoryRaw != nil {
                                 Button {
+                                    Haptics.fire(.light)
                                     withAnimation { selectedCategoryRaw = nil }
                                 } label: {
                                     Image(systemName: "xmark.circle.fill")
@@ -508,6 +511,7 @@ struct AddEditSubscriptionView: View {
                                         switch item {
                                         case .builtIn(let cat):
                                             Button {
+                                                Haptics.fire(.selectionChanged)
                                                 hideKeyboard()
                                                 selectedCategoryRaw = cat.rawValue
                                             } label: {
@@ -515,6 +519,7 @@ struct AddEditSubscriptionView: View {
                                             }
                                         case .custom(let cat):
                                             Button {
+                                                Haptics.fire(.selectionChanged)
                                                 hideKeyboard()
                                                 selectedCategoryRaw = cat.name
                                             } label: {
@@ -1139,6 +1144,9 @@ struct AddEditSubscriptionView: View {
                             ForEach(BillingCycle.allCases, id: \.self) { Text($0.rawValue) }
                         }
                         .pickerStyle(.menu)
+                        .onChange(of: billingCycle) { _, _ in
+                            Haptics.fire(.selectionChanged)
+                        }
                     }
                 }
                 .animation(.spring(duration: 0.25), value: isCancelled)
@@ -2634,6 +2642,7 @@ struct CurrencyPickerSheet: View {
             List {
                 ForEach(filtered, id: \.code) { entry in
                     Button {
+                        Haptics.fire(.selectionChanged)
                         selectedCode = entry.code
                         dismiss()
                     } label: {
@@ -2662,6 +2671,7 @@ struct CurrencyPickerSheet: View {
                     .swipeActions(edge: .trailing) {
                         if customList.contains(entry.code) {
                             Button(role: .destructive) {
+                                Haptics.fire(.light)
                                 customList.removeAll { $0 == entry.code }
                                 persistCustomList()
                                 if selectedCode == entry.code { selectedCode = "AUD" }

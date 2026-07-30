@@ -1034,6 +1034,7 @@ struct HomeView: View {
 
 #if os(iOS)
     private func deleteImportedScreenshots() {
+        Haptics.fire(.warning)
         let identifiers = pendingScreenshotDeletionIdentifiers
         pendingScreenshotDeletionIdentifiers = []
         guard !identifiers.isEmpty else { return }
@@ -1971,6 +1972,7 @@ struct ImportFailureSheet: View {
             Spacer()
 
             Button {
+                Haptics.fire(.light)
                 dismiss()
             } label: {
                 Text("OK")
@@ -2115,7 +2117,10 @@ struct ScreenshotImportReviewSheet: View {
                             .font(.system(size: 15, weight: .medium))
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Button("Done") { onApply() }
+                        Button("Done") {
+                            Haptics.fire(.success)
+                            onApply()
+                        }
                             .font(.system(size: 17, weight: .semibold))
                             .buttonStyle(.borderedProminent)
                             .tint(.blue.opacity(isComplete && selectedCount > 0 ? 1 : 0.35))
@@ -2141,7 +2146,10 @@ struct ScreenshotImportReviewSheet: View {
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        Haptics.fire(.light)
+                        dismiss()
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Undo") { undoLast() }

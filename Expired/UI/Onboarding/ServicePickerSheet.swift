@@ -35,6 +35,7 @@ struct ServicePickerSheet: View {
                 if showQuickSetup {
                     ToolbarItem(placement: .cancellationAction) {
                         Button {
+                            Haptics.fire(.light)
                             withAnimation { showQuickSetup = false }
                         } label: {
                             Image(systemName: "chevron.left")
@@ -42,7 +43,10 @@ struct ServicePickerSheet: View {
                     }
                 } else {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { dismiss() }
+                        Button("Cancel") {
+                            Haptics.fire(.light)
+                            dismiss()
+                        }
                     }
                 }
             }

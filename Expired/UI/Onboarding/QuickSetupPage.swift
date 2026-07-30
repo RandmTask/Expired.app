@@ -122,7 +122,10 @@ struct QuickSetupPage: View {
                     HStack(spacing: 6) {
                         menuChip(label: row.billingCycle.rawValue) {
                             ForEach(BillingCycle.allCases.filter { $0 != .custom }, id: \.self) { cycle in
-                                Button(cycle.rawValue) { rowBinding.wrappedValue.billingCycle = cycle }
+                                Button(cycle.rawValue) {
+                                    Haptics.fire(.selectionChanged)
+                                    rowBinding.wrappedValue.billingCycle = cycle
+                                }
                             }
                         }
 
@@ -130,6 +133,7 @@ struct QuickSetupPage: View {
                             menuChip(label: Calendar.current.shortMonthSymbols[row.yearlyMonth - 1]) {
                                 ForEach(1...12, id: \.self) { month in
                                     Button(Calendar.current.monthSymbols[month - 1]) {
+                                        Haptics.fire(.selectionChanged)
                                         rowBinding.wrappedValue.yearlyMonth = month
                                     }
                                 }
@@ -139,7 +143,10 @@ struct QuickSetupPage: View {
                         if row.billingCycle != .oneOff {
                             menuChip(label: ordinal(row.dayOfMonth)) {
                                 ForEach(1...31, id: \.self) { day in
-                                    Button(ordinal(day)) { rowBinding.wrappedValue.dayOfMonth = day }
+                                    Button(ordinal(day)) {
+                                        Haptics.fire(.selectionChanged)
+                                        rowBinding.wrappedValue.dayOfMonth = day
+                                    }
                                 }
                             }
                         }
