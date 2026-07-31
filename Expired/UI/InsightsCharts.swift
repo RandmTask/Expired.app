@@ -232,8 +232,8 @@ struct CategorySpendSlice: Identifiable {
 }
 
 /// Category spend ring. Sweeps in from zero on the shared `InsightsEntrance` driver; tapping
-/// a segment (or its legend swatch) selects it — pops out slightly and dims the rest — and
-/// tapping the same one again clears the selection. `chartAngleSelection` is the standard
+/// a segment (or its legend swatch) selects it and dims the rest — and tapping the same one
+/// again clears the selection. `chartAngleSelection` is the standard
 /// Swift Charts technique for pie/donut tap targets, so selection is angle-based: a tap
 /// resolves to whichever slice's cumulative amount range contains the tapped angle value.
 struct CategoryDonutChart: View {
@@ -267,44 +267,85 @@ struct CategoryDonutChart: View {
         return slices.last?.category
     }
 
+    private func toggleSelection(for category: SubscriptionCategory) {
+        selectedCategory = selectedCategory == category ? nil : category
+    }
+
     var body: some View {
-        Chart(slices) { slice in
-            SectorMark(
-                angle: .value("Spend", slice.amount * progress),
-                innerRadius: .ratio(0.62),
-                outerRadius: .ratio(selectedCategory == nil || selectedCategory == slice.category ? 0.98 : 0.88),
-                angularInset: 1.5
-            )
-            .foregroundStyle(by: .value("Category", slice.category.displayName))
-            .opacity(selectedCategory == nil || selectedCategory == slice.category ? 1 : 0.35)
-            .cornerRadius(4)
-        }
-        .chartForegroundStyleScale(
-            domain: slices.map(\.category.displayName),
-            range: slices.map(\.category.chartColor)
-        )
-        .chartLegend(position: .bottom, spacing: 8)
-        .chartAngleSelection(value: $angleSelection)
-        .chartBackground { _ in
-            VStack(spacing: 2) {
-                Text(centerTitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                AnimatedCurrencyText(value: centerAmount, currencyCode: currencyCode)
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
+        VStack(spacing: 12) {
+            // Keep the plot separate from the legend. Swift Charts otherwise gives the
+            // legend part of this frame, so both the ring and its background label move
+            // and shrink as the number of categories changes.
+            ZStack {
+                Chart(slices) { slice in
+                    SectorMark(
+                        angle: .value("Spend", slice.amount * progress),
+                        innerRadius: .ratio(0.62),
+                        outerRadius: .ratio(0.92),
+                        angularInset: 1.5
+                    )
+                    .foregroundStyle(by: .value("Category", slice.category.displayName))
+                    .opacity(selectedCategory == nil || selectedCategory == slice.category ? 1 : 0.35)
+                    .cornerRadius(4)
+                }
+                .chartForegroundStyleScale(
+                    domain: slices.map(\.category.displayName),
+                    range: slices.map(\.category.chartColor)
+                )
+                .chartLegend(.hidden)
+                .chartAngleSelection(value: $angleSelection)
+
+                VStack(spacing: 2) {
+                    Text(centerTitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    AnimatedCurrencyText(value: centerAmount, currencyCode: currencyCode)
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+                .frame(width: 128, height: 54)
+                .allowsHitTesting(false)
             }
-            .padding(.horizontal, 24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(height: 220)
+
+            categoryLegend
         }
-        .frame(height: 220)
         .onChange(of: angleSelection) { _, newValue in
             guard let newValue, let tapped = category(atCumulative: newValue) else { return }
-            selectedCategory = (selectedCategory == tapped) ? nil : tapped
+            toggleSelection(for: tapped)
             angleSelection = nil
+        }
+    }
+
+    private var categoryLegend: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 126), spacing: 10, alignment: .leading)],
+            alignment: .leading,
+            spacing: 8
+        ) {
+            ForEach(slices) { slice in
+                Button {
+                    toggleSelection(for: slice.category)
+                } label: {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(slice.category.chartColor)
+                            .frame(width: 9, height: 9)
+                        Text(slice.category.displayName)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .opacity(selectedCategory == nil || selectedCategory == slice.category ? 1 : 0.45)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Filter by \(slice.category.displayName)")
+                .accessibilityAddTraits(selectedCategory == slice.category ? .isSelected : [])
+            }
         }
     }
 }
