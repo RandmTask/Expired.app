@@ -1362,6 +1362,17 @@ struct InsightsView: View {
         }
     }
 
+    /// Swiping the donut cycles the same `costPeriod` state the segmented picker drives, so
+    /// the existing `.onChange(of: costPeriod)` (Pro-gate revert + haptic) applies unchanged
+    /// regardless of which control made the change.
+    private func cyclePeriod(forward: Bool) {
+        let cases = CostPeriod.allCases
+        guard let index = cases.firstIndex(of: costPeriod) else { return }
+        let count = cases.count
+        let newIndex = forward ? (index + 1) % count : (index - 1 + count) % count
+        withAnimation(.smooth(duration: 0.3)) { costPeriod = cases[newIndex] }
+    }
+
     private var costPeriodIcon: String {
         switch costPeriod {
         case .monthly:  return "calendar"
@@ -1523,6 +1534,7 @@ struct InsightsView: View {
                 ForecastCumulativeChart(
                     points: forecastCumulative,
                     currencyCode: preferredCurrency,
+                    granularity: forecastGranularity,
                     progress: entrance.progress
                 )
                 .animation(.smooth(duration: 0.45), value: forecastHorizon)
@@ -1624,7 +1636,8 @@ struct InsightsView: View {
                             slices: categorySpend,
                             currencyCode: preferredCurrency,
                             progress: entrance.progress,
-                            selectedCategory: $selectedCategory
+                            selectedCategory: $selectedCategory,
+                            onSwipe: { direction in cyclePeriod(forward: direction == .forward) }
                         )
                     }
                 }

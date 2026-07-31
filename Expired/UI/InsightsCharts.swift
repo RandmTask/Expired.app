@@ -113,6 +113,38 @@ enum InsightsChartFormat {
         case .month: return date.formatted(.dateTime.month(.wide).year())
         }
     }
+
+    /// Shared x-axis for both forecast charts, keyed by the same `granularity` that already
+    /// drives their bucketing — previously each chart picked its own stride *and* format, so
+    /// they visibly disagreed. At month granularity (90d/365d) ticks land on the 1st of each
+    /// month; at day/week granularity (30d) they stay daily so the default free view keeps a
+    /// readable axis instead of collapsing to a single tick.
+    @AxisContentBuilder
+    static func forecastAxis(granularity: ForecastEngine.Granularity) -> some AxisContent {
+        switch granularity {
+        case .day:
+            AxisMarks(values: .stride(by: .day, count: 7)) { value in
+                AxisGridLine()
+                if let date = value.as(Date.self) {
+                    AxisValueLabel(date.formatted(.dateTime.day().month(.abbreviated)))
+                }
+            }
+        case .week:
+            AxisMarks(values: .stride(by: .weekOfYear, count: 2)) { value in
+                AxisGridLine()
+                if let date = value.as(Date.self) {
+                    AxisValueLabel(date.formatted(.dateTime.day().month(.abbreviated)))
+                }
+            }
+        case .month:
+            AxisMarks(values: .stride(by: .month, count: 1)) { value in
+                AxisGridLine()
+                if let date = value.as(Date.self) {
+                    AxisValueLabel(date.formatted(.dateTime.month(.abbreviated)))
+                }
+            }
+        }
+    }
 }
 
 /// Lollipop callout shown above a scrubbed mark.
@@ -147,6 +179,8 @@ private struct ScrubCallout: View {
 struct ForecastCumulativeChart: View {
     let points: [ForecastEngine.CumulativePoint]
     let currencyCode: String
+    /// Drives the shared x-axis so this chart's ticks always match `ForecastBucketChart`'s.
+    let granularity: ForecastEngine.Granularity
     /// 0→1 entrance driver; scales the curve up from the baseline.
     let progress: Double
 
@@ -159,62 +193,64 @@ struct ForecastCumulativeChart: View {
     }
 
     var body: some View {
-        Chart {
-            ForEach(points) { point in
-                AreaMark(
-                    x: .value("Date", point.date),
-                    y: .value("Spend", point.runningTotal * progress)
-                )
-                .interpolationMethod(.stepEnd)
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [.blue.opacity(0.35), .blue.opacity(0.02)],
-                        startPoint: .top, endPoint: .bottom
+        GeometryReader { geo in
+            Chart {
+                ForEach(points) { point in
+                    AreaMark(
+                        x: .value("Date", point.date),
+                        y: .value("Spend", point.runningTotal)
                     )
-                )
-
-                LineMark(
-                    x: .value("Date", point.date),
-                    y: .value("Spend", point.runningTotal * progress)
-                )
-                .interpolationMethod(.stepEnd)
-                .foregroundStyle(.blue)
-                .lineStyle(StrokeStyle(lineWidth: 2, lineJoin: .round))
-            }
-
-            if let scrubbed {
-                RuleMark(x: .value("Date", scrubbed.date))
-                    .foregroundStyle(Color.secondary.opacity(0.35))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit, y: .disabled)) {
-                        ScrubCallout(
-                            title: scrubbed.date.formatted(.dateTime.day().month(.abbreviated)),
-                            amount: CurrencyInfo.format(scrubbed.runningTotal, code: currencyCode)
+                    .interpolationMethod(.stepEnd)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [.blue.opacity(0.35), .blue.opacity(0.02)],
+                            startPoint: .top, endPoint: .bottom
                         )
-                    }
+                    )
 
-                PointMark(
-                    x: .value("Date", scrubbed.date),
-                    y: .value("Spend", scrubbed.runningTotal * progress)
-                )
-                .foregroundStyle(.blue)
-                .symbolSize(60)
-            }
-        }
-        .chartXSelection(value: $scrubDate)
-        .chartYAxis {
-            AxisMarks(position: .leading) { value in
-                AxisGridLine()
-                if let amount = value.as(Double.self) {
-                    AxisValueLabel(InsightsChartFormat.axisAmount(amount, code: currencyCode))
+                    LineMark(
+                        x: .value("Date", point.date),
+                        y: .value("Spend", point.runningTotal)
+                    )
+                    .interpolationMethod(.stepEnd)
+                    .foregroundStyle(.blue)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineJoin: .round))
+                }
+
+                if let scrubbed {
+                    RuleMark(x: .value("Date", scrubbed.date))
+                        .foregroundStyle(Color.secondary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                        .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit, y: .disabled)) {
+                            ScrubCallout(
+                                title: scrubbed.date.formatted(.dateTime.day().month(.abbreviated)),
+                                amount: CurrencyInfo.format(scrubbed.runningTotal, code: currencyCode)
+                            )
+                        }
+
+                    PointMark(
+                        x: .value("Date", scrubbed.date),
+                        y: .value("Spend", scrubbed.runningTotal)
+                    )
+                    .foregroundStyle(.blue)
+                    .symbolSize(60)
                 }
             }
-        }
-        .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 4)) { value in
-                if let date = value.as(Date.self) {
-                    AxisValueLabel(date.formatted(.dateTime.day().month(.abbreviated)))
+            .chartXSelection(value: $scrubDate)
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine()
+                    if let amount = value.as(Double.self) {
+                        AxisValueLabel(InsightsChartFormat.axisAmount(amount, code: currencyCode))
+                    }
                 }
+            }
+            .chartXAxis { InsightsChartFormat.forecastAxis(granularity: granularity) }
+            // "Draws" the line left-to-right on entrance instead of inflating it vertically
+            // from zero — a wipe reveal reads as the line being traced, matching the growing
+            // bar chart beneath it instead of looking like an unrelated scale-up.
+            .mask(alignment: .leading) {
+                Rectangle().frame(width: max(0, geo.size.width * progress))
             }
         }
         .frame(height: 150)
@@ -231,19 +267,28 @@ struct CategorySpendSlice: Identifiable {
     let amount: Double
 }
 
+/// Direction of a horizontal swipe across the donut, used to cycle the cost-period picker
+/// without requiring the user to reach up to the segmented control.
+enum DonutSwipeDirection {
+    case forward, backward
+}
+
 /// Category spend ring. Sweeps in from zero on the shared `InsightsEntrance` driver; tapping
 /// a segment (or its legend swatch) selects it and dims the rest — and tapping the same one
-/// again clears the selection. `chartAngleSelection` is the standard
-/// Swift Charts technique for pie/donut tap targets, so selection is angle-based: a tap
-/// resolves to whichever slice's cumulative amount range contains the tapped angle value.
+/// again clears the selection.
+///
+/// Tap resolution is done manually (angle math against the tap location) rather than via
+/// `chartAngleSelection`: the framework's built-in selection repeatedly failed to register
+/// taps on some segments (had to be tapped several times, and a few never registered at
+/// all) — resolving the angle ourselves from the raw tap point is simpler and reliable.
 struct CategoryDonutChart: View {
     let slices: [CategorySpendSlice]
     let currencyCode: String
     /// 0→1 entrance driver; scales the sweep up from empty.
     let progress: Double
     @Binding var selectedCategory: SubscriptionCategory?
-
-    @State private var angleSelection: Double?
+    /// Called on a horizontal swipe across the ring so the caller can cycle the cost period.
+    var onSwipe: ((DonutSwipeDirection) -> Void)?
 
     private var total: Double { slices.reduce(0) { $0 + $1.amount } }
 
@@ -256,19 +301,39 @@ struct CategoryDonutChart: View {
         selectedCategory?.displayName ?? "Total"
     }
 
-    /// Maps a tapped angle (in the same value domain as the mark's `angle`, i.e. cumulative
-    /// spend) to the slice whose cumulative range contains it.
-    private func category(atCumulative value: Double) -> SubscriptionCategory? {
+    /// Angle (degrees, 0 = 12 o'clock, clockwise) of a point relative to `rect`'s center —
+    /// `nil` if the point falls outside the ring's radial band (with a little tap slop).
+    private func angleDegrees(at point: CGPoint, in rect: CGRect) -> Double? {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let dx = point.x - center.x
+        let dy = point.y - center.y
+        let radius = (dx * dx + dy * dy).squareRoot()
+        let outer = min(rect.width, rect.height) / 2
+        // Matches the mark's actual innerRadius(.ratio(0.62))/outerRadius(.ratio(0.92)) band,
+        // with a little slop either side for a finger's imprecision — but not so much that a
+        // tap near the center label (which sits inside the hole) misfires onto a slice.
+        guard radius >= outer * 0.56, radius <= outer * 1.0 else { return nil }
+        var degrees = atan2(dy, dx) * 180 / .pi + 90
+        if degrees < 0 { degrees += 360 }
+        return degrees
+    }
+
+    /// Maps an angle (0–360, 0 = 12 o'clock, clockwise — matching `SectorMark`'s default
+    /// start point and direction) to whichever slice's cumulative share contains it.
+    private func category(atDegrees degrees: Double) -> SubscriptionCategory? {
+        guard total > 0 else { return nil }
         var running = 0.0
         for slice in slices {
-            running += slice.amount * progress
-            if value <= running { return slice.category }
+            running += slice.amount
+            if degrees <= running / total * 360 { return slice.category }
         }
         return slices.last?.category
     }
 
     private func toggleSelection(for category: SubscriptionCategory) {
-        selectedCategory = selectedCategory == category ? nil : category
+        withAnimation(.smooth(duration: 0.25)) {
+            selectedCategory = selectedCategory == category ? nil : category
+        }
     }
 
     var body: some View {
@@ -293,30 +358,54 @@ struct CategoryDonutChart: View {
                     range: slices.map(\.category.chartColor)
                 )
                 .chartLegend(.hidden)
-                .chartAngleSelection(value: $angleSelection)
+                .chartOverlay { proxy in
+                    GeometryReader { geo in
+                        Rectangle()
+                            .fill(.clear)
+                            .contentShape(Rectangle())
+                            // Plain tap gesture, not a zero-distance DragGesture — this is the
+                            // form that composes cleanly with the enclosing ScrollView's own
+                            // pan recognizer instead of fighting it for every touch.
+                            .onTapGesture { location in
+                                guard let plotFrame = proxy.plotFrame else { return }
+                                let rect = geo[plotFrame]
+                                guard let degrees = angleDegrees(at: location, in: rect),
+                                      let tapped = category(atDegrees: degrees) else { return }
+                                toggleSelection(for: tapped)
+                            }
+                            // Separate, higher-threshold drag purely for the swipe-to-cycle
+                            // gesture, so a vertical scroll started on the ring isn't
+                            // intercepted before the ScrollView's own recognizer claims it.
+                            .gesture(
+                                DragGesture(minimumDistance: 24)
+                                    .onEnded { value in
+                                        let dx = value.translation.width
+                                        let dy = value.translation.height
+                                        guard abs(dx) > 32, abs(dx) > abs(dy) * 1.5 else { return }
+                                        onSwipe?(dx < 0 ? .forward : .backward)
+                                    }
+                            )
+                    }
+                }
 
                 VStack(spacing: 2) {
                     Text(centerTitle)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .minimumScaleFactor(0.75)
                     AnimatedCurrencyText(value: centerAmount, currencyCode: currencyCode)
                         .font(.system(size: 17, weight: .bold, design: .rounded))
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                 }
-                .frame(width: 128, height: 54)
+                .frame(width: 104, height: 62)
                 .allowsHitTesting(false)
             }
             .frame(height: 220)
 
             categoryLegend
-        }
-        .onChange(of: angleSelection) { _, newValue in
-            guard let newValue, let tapped = category(atCumulative: newValue) else { return }
-            toggleSelection(for: tapped)
-            angleSelection = nil
         }
     }
 
@@ -367,59 +456,48 @@ struct ForecastBucketChart: View {
         return buckets.last { $0.start <= scrubDate } ?? buckets.first
     }
 
-    private var axisStride: (component: Calendar.Component, count: Int) {
-        switch granularity {
-        case .day:   return (.day, 7)
-        case .week:  return (.weekOfYear, 2)
-        case .month: return (.month, 2)
-        }
-    }
-
     var body: some View {
-        Chart {
-            ForEach(buckets) { bucket in
-                BarMark(
-                    x: .value("Date", bucket.start, unit: granularity.component),
-                    y: .value("Cost", bucket.total * progress)
-                )
-                .foregroundStyle(
-                    scrubbed?.id == bucket.id
-                        ? AnyShapeStyle(Color.cyan.gradient)
-                        : AnyShapeStyle(Color.blue.gradient)
-                )
-                .cornerRadius(3)
-            }
+        GeometryReader { geo in
+            Chart {
+                ForEach(buckets) { bucket in
+                    BarMark(
+                        x: .value("Date", bucket.start, unit: granularity.component),
+                        y: .value("Cost", bucket.total)
+                    )
+                    .foregroundStyle(
+                        scrubbed?.id == bucket.id
+                            ? AnyShapeStyle(Color.cyan.gradient)
+                            : AnyShapeStyle(Color.blue.gradient)
+                    )
+                    .cornerRadius(3)
+                }
 
-            if let scrubbed, scrubbed.total > 0 {
-                RuleMark(x: .value("Date", scrubbed.start, unit: granularity.component))
-                    .foregroundStyle(.clear)
-                    .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit, y: .disabled)) {
-                        ScrubCallout(
-                            title: InsightsChartFormat.scrubLabel(scrubbed.start, granularity: granularity),
-                            amount: CurrencyInfo.format(scrubbed.total, code: currencyCode)
-                        )
-                    }
+                if let scrubbed, scrubbed.total > 0 {
+                    RuleMark(x: .value("Date", scrubbed.start, unit: granularity.component))
+                        .foregroundStyle(.clear)
+                        .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit, y: .disabled)) {
+                            ScrubCallout(
+                                title: InsightsChartFormat.scrubLabel(scrubbed.start, granularity: granularity),
+                                amount: CurrencyInfo.format(scrubbed.total, code: currencyCode)
+                            )
+                        }
+                }
             }
-        }
-        .chartXSelection(value: $scrubDate)
-        .chartXAxis {
-            AxisMarks(values: .stride(by: axisStride.component, count: axisStride.count)) { value in
-                if let date = value.as(Date.self) {
-                    switch granularity {
-                    case .day, .week:
-                        AxisValueLabel(date.formatted(.dateTime.day().month(.abbreviated)))
-                    case .month:
-                        AxisValueLabel(date.formatted(.dateTime.month(.abbreviated)))
+            .chartXSelection(value: $scrubDate)
+            .chartXAxis { InsightsChartFormat.forecastAxis(granularity: granularity) }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine()
+                    if let amount = value.as(Double.self) {
+                        AxisValueLabel(InsightsChartFormat.axisAmount(amount, code: currencyCode))
                     }
                 }
             }
-        }
-        .chartYAxis {
-            AxisMarks(position: .leading) { value in
-                AxisGridLine()
-                if let amount = value.as(Double.self) {
-                    AxisValueLabel(InsightsChartFormat.axisAmount(amount, code: currencyCode))
-                }
+            // Same left-to-right wipe reveal as the cumulative chart above it, so both
+            // charts animate in together instead of the bars looking static beneath a
+            // moving line.
+            .mask(alignment: .leading) {
+                Rectangle().frame(width: max(0, geo.size.width * progress))
             }
         }
         .frame(height: 120)

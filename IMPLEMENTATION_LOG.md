@@ -1,5 +1,42 @@
 # Expired — Implementation Log
 
+## 🔧 IN PROGRESS — Insights donut/forecast follow-up fixes (started 2026-07-31)
+
+Deon's live feedback on the shipped R3b donut + forecast (on-device, not just in
+Xcode): (1) center label ("Professional & Business") visually overlapped the ring,
+(2) some donut segments needed several taps to select, a few never registered at all,
+(3) wanted a swipe gesture on the donut to cycle Monthly/Annual/YTD/Lifetime, (4) the
+forecast's cumulative curve and bucket bar chart used different x-axis strides/formats
+so they visibly disagreed, and wanted a left-to-right "draw" animation instead of the
+existing vertical scale-up entrance.
+
+**Built so far** (`Expired/UI/InsightsCharts.swift`, `Expired/ContentView.swift`):
+- Center label: `lineLimit(2)` + `multilineTextAlignment(.center)`, frame narrowed to
+  104×62 so long category names wrap instead of overflowing past the ring's hole.
+- Donut tap: replaced `chartAngleSelection` (the actual cause of the flaky/missed
+  taps) with manual angle math off the raw tap point via `.chartOverlay` +
+  `.onTapGesture`, radial band matched to the mark's real inner/outer radius ratios.
+- Swipe: separate `DragGesture(minimumDistance: 24)` (not the same zero-distance
+  gesture used for taps — that would fight the enclosing `ScrollView`'s vertical pan)
+  cycles `costPeriod` through `CostPeriod.allCases`; reuses the existing
+  `.onChange(of: costPeriod)` Pro-gate/haptic logic since it just mutates the same
+  `@State`.
+- Forecast charts: both wrapped in `GeometryReader` + `.mask(alignment: .leading)`
+  sized to `progress * width` — a left-to-right reveal instead of scaling y-values,
+  which is what "draw the line" actually looked like. X-axis unified into
+  `InsightsChartFormat.forecastAxis(granularity:)`, shared by both charts so they
+  always show the same stride/format (day-of-week ticks at 30d, month-aligned ticks
+  at 90d/365d — a fixed month-only stride was considered and rejected because it
+  collapses the free-tier 30d view to a single tick).
+
+**Not yet done:** on-device verification that (a) the manual tap math actually
+resolves to the *correct* segment (not just *a* segment), (b) the new swipe
+`DragGesture` doesn't break scrolling the Insights list when a drag starts on the
+ring, (c) the radial tap band tolerance is right in practice, not just in arithmetic.
+iOS + macOS builds running. **Next step:** attach the iOS Simulator once the build
+lands and manually verify tap-per-segment, scroll, and swipe before claiming any of
+this fixed.
+
 ## 2026-07-29 (cont.) — R3: verification pass + XCTest target (closes R3 pending Deon confirm)
 
 Task was to actually run R3's forecast UI (never opened in a live app before this) and

@@ -5,6 +5,39 @@ decision, or an interactive Simulator session he hasn't greenlit yet. Check item
 as they're done; delete a whole entry once verified (its detail lives in
 `ROADMAP.md`/`IMPLEMENTATION_LOG.md` already — this file is just the punch list).
 
+## Insights donut/forecast follow-up (added 2026-07-31)
+
+Follow-up to R3b's donut based on Deon's live on-device feedback (not the R3b items
+below, which are the ones that were actually failing — they stay open until these
+pass too). Debug → Testing → Pro Gates to force Premium for the gated charts.
+
+- [ ] **1.** Scroll the Insights list with your finger starting **on the donut ring**
+      → the page scrolls normally, same as before. y/n
+- [ ] **2.** Tap each category segment in turn (including the thinnest ones) → the
+      center label names **the segment you actually touched**, on the first tap,
+      every time. y/n
+- [ ] **3.** Tap the same segment again → selection clears, center label returns to
+      "Total". y/n
+- [ ] **4.** Tap the empty hole in the middle of the ring → nothing selects. y/n
+- [ ] **5.** Tap right at the very outer edge of a wide segment → it still selects
+      (not a dead zone). y/n
+- [ ] **6.** Swipe left across the ring → cost period advances
+      Monthly→Annual→YTD→Lifetime; swipe right goes back; wraps at both ends
+      (Lifetime→Monthly and vice versa). y/n
+- [ ] **7.** 30-day horizon: the forecast x-axis shows several dated ticks (not
+      collapsed to one), and the cumulative curve's ticks line up with the bar chart
+      beneath it. y/n
+- [ ] **8.** 365-day horizon: both forecast charts' x-axis ticks land on month names,
+      and line up with each other. y/n
+- [ ] **9.** Entering the Insights tab: both forecast charts sweep in left-to-right
+      (not a vertical grow) — neither chart looks shifted or shrunk in width
+      afterward. y/n
+- [ ] **10.** macOS: clicking a donut segment selects the right one. Swipe-to-cycle
+      is **not** expected to work with a trackpad/mouse — the segmented picker still
+      covers switching periods there. y/n
+- [ ] **11.** Settings → Accessibility → Reduce Motion ON → donut and both forecast
+      charts render fully settled on tab entry, no wipe/sweep. y/n
+
 ## R4 — Onboarding service picker (added 2026-07-27, revised 2026-07-28 round 2)
 
 Both platforms build clean. This round: catalog expanded 32 → 57 tiles (50 global +
