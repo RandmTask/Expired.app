@@ -138,7 +138,9 @@ struct TimelineView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        // TEMP DEBUG (remove once diagnosed):
+        let _ = print("🟠 TimelineView.body eval — isSelected=\(isSelected) entranceID=\(ObjectIdentifier(entrance)) allItems.count=\(allItems.count) effectiveViewMode=\(effectiveViewMode)")
+        return NavigationStack {
             Group {
                 if allItems.isEmpty {
                     ContentUnavailableView(
@@ -169,7 +171,9 @@ struct TimelineView: View {
             // `true`, no *change* is ever seen and `entrance.enter()` never fires, leaving every
             // row permanently at `progress == 0` (invisible — the "black screen but for the
             // title" bug). This Group's identity never depends on that data, so it can't happen.
-            .onChange(of: isSelected) { _, nowSelected in
+            .onChange(of: isSelected) { oldValue, nowSelected in
+                // TEMP DEBUG (remove once diagnosed):
+                print("🟠 onChange(isSelected) fired — \(oldValue) → \(nowSelected) entranceID=\(ObjectIdentifier(entrance))")
                 if nowSelected {
                     entrance.enter(reduceMotion: reduceMotion, duration: Self.timelineEntranceDuration)
                 } else {
@@ -178,19 +182,32 @@ struct TimelineView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
+                    // A custom Button-per-row Menu can only show ONE leading glyph per row —
+                    // UIKit's underlying menu-item conversion keeps a single image from the
+                    // label and drops the rest, so a manual checkmark-or-icon toggle always
+                    // ends up replacing the icon instead of sitting beside it. A real `Picker`
+                    // embedded in the Menu's content uses the platform's native selection
+                    // rendering instead, which shows the icon AND a trailing checkmark together
+                    // for the selected row — the standard iOS pattern for exactly this case.
                     Menu {
-                        ForEach(ViewMode.allCases, id: \.self) { mode in
-                            let locked = mode.isPro && !purchaseManager.isPremium
-                            Button {
-                                if locked {
-                                    Haptics.fire(.warning)
-                                    showPaywall = true
-                                } else {
-                                    Haptics.fire(.selectionChanged)
-                                    withAnimation(.spring(duration: 0.3)) { viewModeRaw = mode.rawValue }
-                                }
-                            } label: {
-                                viewModeMenuRow(mode: mode, isSelected: viewMode == mode, isLocked: locked)
+                        Picker("View Mode", selection: $viewModeRaw) {
+                            ForEach(ViewMode.allCases, id: \.self) { mode in
+                                let locked = mode.isPro && !purchaseManager.isPremium
+                                Label(mode.rawValue, systemImage: locked ? "lock.fill" : mode.icon)
+                                    .tag(mode.rawValue)
+                            }
+                        }
+                        .onChange(of: viewModeRaw) { _, newValue in
+                            guard let newMode = ViewMode(rawValue: newValue) else { return }
+                            // Pro modes are selectable in the menu but revert immediately and
+                            // surface the paywall for a free user — same convention as the
+                            // Insights cost-period picker.
+                            if newMode.isPro && !purchaseManager.isPremium {
+                                Haptics.fire(.warning)
+                                viewModeRaw = ViewMode.timeline.rawValue
+                                showPaywall = true
+                            } else {
+                                Haptics.fire(.selectionChanged)
                             }
                         }
                     } label: {
@@ -203,27 +220,7 @@ struct TimelineView: View {
                 }
             }
             .expiredPaywallSheet(isPresented: $showPaywall)
-        }
-    }
-
-    private func viewModeMenuRow(mode: ViewMode, isSelected: Bool, isLocked: Bool) -> some View {
-        HStack(spacing: 12) {
-            // Conditionally *included*, not just hidden via `.opacity(0)` — a checkmark image
-            // present (even invisible) in every row's label appears to make the Menu treat all
-            // of them as a "checked" selection list and show its own checkmark for every row,
-            // ignoring our opacity toggle. Omitting the view entirely for unselected rows avoids
-            // that.
-            Group {
-                if isSelected {
-                    Image(systemName: "checkmark")
-                } else {
-                    Color.clear
-                }
-            }
-            .frame(width: 16, alignment: .center)
-            Image(systemName: isLocked ? "lock.fill" : mode.icon)
-                .frame(width: 22, alignment: .center)
-            Text(mode.rawValue)
+            .animation(.spring(duration: 0.3), value: viewModeRaw)
         }
     }
 
