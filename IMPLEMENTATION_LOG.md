@@ -1,6 +1,6 @@
 # Expired — Implementation Log
 
-## 🔧 IN PROGRESS — Insights donut/forecast follow-up fixes (started 2026-07-31)
+## 2026-08-01 — Insights donut/forecast follow-up fixes (on-device verified)
 
 Deon's live feedback on the shipped R3b donut + forecast (on-device, not just in
 Xcode): (1) center label ("Professional & Business") visually overlapped the ring,
@@ -10,17 +10,19 @@ forecast's cumulative curve and bucket bar chart used different x-axis strides/f
 so they visibly disagreed, and wanted a left-to-right "draw" animation instead of the
 existing vertical scale-up entrance.
 
-**Built so far** (`Expired/UI/InsightsCharts.swift`, `Expired/ContentView.swift`):
+**Changed** (`Expired/UI/InsightsCharts.swift`, `Expired/ContentView.swift`):
 - Center label: `lineLimit(2)` + `multilineTextAlignment(.center)`, frame narrowed to
   104×62 so long category names wrap instead of overflowing past the ring's hole.
-- Donut tap: replaced `chartAngleSelection` (the actual cause of the flaky/missed
-  taps) with manual angle math off the raw tap point via `.chartOverlay` +
-  `.onTapGesture`, radial band matched to the mark's real inner/outer radius ratios.
-- Swipe: separate `DragGesture(minimumDistance: 24)` (not the same zero-distance
-  gesture used for taps — that would fight the enclosing `ScrollView`'s vertical pan)
-  cycles `costPeriod` through `CostPeriod.allCases`; reuses the existing
-  `.onChange(of: costPeriod)` Pro-gate/haptic logic since it just mutates the same
-  `@State`.
+- Donut tap: replaced `chartAngleSelection` with manual angle math off the raw tap
+  point via `.chartOverlay` + `.onTapGesture`, radial band matched to the mark's real
+  inner/outer radius ratios (0.56–1.0× of the plot's half-dimension). Kept as a plain
+  `.onTapGesture`, not a zero-distance `DragGesture` — the latter would compete with
+  the enclosing `ScrollView`'s pan gesture for every touch.
+- Swipe: `DragGesture(minimumDistance: 24)` attached as `.simultaneousGesture` (not
+  `.gesture`) so it never exclusively claims a touch before the ScrollView's own pan
+  recognizer gets a look — cycles `costPeriod` through `CostPeriod.allCases`, wrapping
+  at both ends; reuses the existing `.onChange(of: costPeriod)` Pro-gate/haptic logic
+  since it just mutates the same `@State`.
 - Forecast charts: both wrapped in `GeometryReader` + `.mask(alignment: .leading)`
   sized to `progress * width` — a left-to-right reveal instead of scaling y-values,
   which is what "draw the line" actually looked like. X-axis unified into
@@ -29,13 +31,32 @@ existing vertical scale-up entrance.
   at 90d/365d — a fixed month-only stride was considered and rejected because it
   collapses the free-tier 30d view to a single tick).
 
-**Not yet done:** on-device verification that (a) the manual tap math actually
-resolves to the *correct* segment (not just *a* segment), (b) the new swipe
-`DragGesture` doesn't break scrolling the Insights list when a drag starts on the
-ring, (c) the radial tap band tolerance is right in practice, not just in arithmetic.
-iOS + macOS builds running. **Next step:** attach the iOS Simulator once the build
-lands and manually verify tap-per-segment, scroll, and swipe before claiming any of
-this fixed.
+**Verification pitfall worth keeping: a coarse synthetic drag reads as a broken
+gesture when nothing is actually broken.** Mid-session, a vertical drag synthesized
+as four ~50pt jumps (via computer-use on the Simulator) failed to scroll the Insights
+list when it started on the donut — looked exactly like the swipe `DragGesture`
+exclusively claiming the touch, so `.gesture` was changed to `.simultaneousGesture`
+to "fix" it. A matched control (same drag, same y, started just outside the chart's
+hit-testable area) *also* failed to scroll — proving the touch synthesis itself
+wasn't producing enough intermediate samples to latch `UIScrollView`'s pan
+recognizer, not that the gesture code was blocking anything. A second control with
+10pt steps instead of 50pt scrolled correctly at the exact same start point. Lesson:
+before concluding a gesture change broke something, run the identical drag at a
+matched position outside the changed view's hit area — if that also fails, the input
+method is the problem, not the code. (Kept `.simultaneousGesture` anyway as cheap,
+harmless insurance for real multi-sample touches; reverted an unnecessary
+`SpatialTapGesture` swap that had been made under the same false premise.)
+
+**Verified on-device** (Release build, iOS Simulator, driven via computer-use since
+Xcode 27's relocated `SimulatorKit.framework` broke the dedicated simulator tool):
+tap-per-segment correctness confirmed non-circularly (tapped point → correct color →
+correct legend match) on two well-separated segments including the actual
+"Professional & Business" case from the bug report (wraps cleanly, no overlap);
+toggle-off; hole-tap no-ops; scroll starting on the ring; full swipe cycle
+Monthly→Annual→YTD→Lifetime→Monthly with correct wraparound; 30d axis shows several
+daily ticks aligned between both charts; 365d axis shows month-name ticks aligned
+between both charts. **Not verified** (needs a real device/finger): entrance wipe
+animation and Reduce Motion collapse — a static screenshot can't confirm either.
 
 ## 2026-07-29 (cont.) — R3: verification pass + XCTest target (closes R3 pending Deon confirm)
 
