@@ -160,6 +160,22 @@ struct TimelineView: View {
             .navigationTitle("Timeline")
             .largeNavigationTitle()
             .background(groupedBackground.ignoresSafeArea())
+            // Attached HERE (the always-mounted outer Group), not on `classicTimelineView`'s
+            // ScrollView: that view sits behind `if allItems.isEmpty {...} else { switch ... }`,
+            // and CloudKit's initial merge can flip that branch shortly after launch (empty →
+            // populated). Each flip tears down and recreates the ScrollView as a brand-new
+            // identity, resetting `.onChange`'s "previous value" baseline to whatever
+            // `isSelected` already was — so if that churn happens while `isSelected` is already
+            // `true`, no *change* is ever seen and `entrance.enter()` never fires, leaving every
+            // row permanently at `progress == 0` (invisible — the "black screen but for the
+            // title" bug). This Group's identity never depends on that data, so it can't happen.
+            .onChange(of: isSelected) { _, nowSelected in
+                if nowSelected {
+                    entrance.enter(reduceMotion: reduceMotion, duration: Self.timelineEntranceDuration)
+                } else {
+                    entrance.leave()
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
@@ -192,9 +208,19 @@ struct TimelineView: View {
 
     private func viewModeMenuRow(mode: ViewMode, isSelected: Bool, isLocked: Bool) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "checkmark")
-                .opacity(isSelected ? 1 : 0)
-                .frame(width: 16, alignment: .center)
+            // Conditionally *included*, not just hidden via `.opacity(0)` — a checkmark image
+            // present (even invisible) in every row's label appears to make the Menu treat all
+            // of them as a "checked" selection list and show its own checkmark for every row,
+            // ignoring our opacity toggle. Omitting the view entirely for unselected rows avoids
+            // that.
+            Group {
+                if isSelected {
+                    Image(systemName: "checkmark")
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: 16, alignment: .center)
             Image(systemName: isLocked ? "lock.fill" : mode.icon)
                 .frame(width: 22, alignment: .center)
             Text(mode.rawValue)
@@ -227,17 +253,6 @@ struct TimelineView: View {
             .padding(.bottom, 100)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
-        // No `initial: true` — Timeline isn't the default tab, so `isSelected` always starts
-        // `false`; firing on the initial evaluation would call `leave()` before the entrance
-        // ever ran, stamping `leftAt` as "just now" and wrongly skipping the real first entrance
-        // if the user taps over within the 2s replay-threshold window.
-        .onChange(of: isSelected) { _, nowSelected in
-            if nowSelected {
-                entrance.enter(reduceMotion: reduceMotion, duration: Self.timelineEntranceDuration)
-            } else {
-                entrance.leave()
-            }
-        }
     }
 }
 
