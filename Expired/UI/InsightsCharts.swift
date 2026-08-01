@@ -353,9 +353,15 @@ struct CategoryDonutChart: View {
                     .opacity(selectedCategory == nil || selectedCategory == slice.category ? 1 : 0.35)
                     .cornerRadius(4)
                 }
+                // Domain/range span the fixed, declaration-order category list — not the
+                // current (amount-sorted) `slices` order. `slices` reorders every time
+                // `costPeriod` changes the amounts, and building the scale from that
+                // reordered array made Swift Charts momentarily interpolate colors by index
+                // instead of by category identity, flashing the wrong color into each
+                // segment for a frame before settling on the correct one.
                 .chartForegroundStyleScale(
-                    domain: slices.map(\.category.displayName),
-                    range: slices.map(\.category.chartColor)
+                    domain: SubscriptionCategory.allCases.map(\.displayName),
+                    range: SubscriptionCategory.allCases.map(\.chartColor)
                 )
                 .chartLegend(.hidden)
                 .chartOverlay { proxy in
