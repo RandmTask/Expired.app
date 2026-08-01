@@ -203,14 +203,23 @@ struct TimelineView: View {
 
     // MARK: - Classic timeline (original spine list)
 
+    /// Non-overlapping row slots (stride == window) so rows reveal strictly one at a time —
+    /// row `i+1` only starts once row `i`'s own window finishes — instead of the cascading
+    /// overlap `InsightsEntrance`'s default stride/window ratio produces.
+    private static let rowStride = 0.1
+    /// Longer than Insights' default 0.85s: at 10 non-overlapping slots, 0.85s would give each
+    /// row ~85ms, too fast to read as "one at a time." ~1.4s gives each row ~140ms.
+    private static let timelineEntranceDuration: TimeInterval = 1.4
+
     private var classicTimelineView: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
                 ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, item in
-                    // Clamp the index so long lists still finish their stagger inside the
-                    // driver's 0→1 run (see `staggered(index:)` doc comment).
-                    TimelineRow(item: item, isLast: index == upcoming.count - 1,
-                                progress: entrance.staggered(index: min(index, 10)))
+                    // Clamp the index so long lists still finish inside the driver's 0→1 run.
+                    TimelineRow(item: item, isFirst: index == 0,
+                                progress: entrance.staggered(index: min(index, 9),
+                                                              stride: Self.rowStride,
+                                                              window: Self.rowStride))
                 }
             }
             .padding(.horizontal)
@@ -224,7 +233,7 @@ struct TimelineView: View {
         // if the user taps over within the 2s replay-threshold window.
         .onChange(of: isSelected) { _, nowSelected in
             if nowSelected {
-                entrance.enter(reduceMotion: reduceMotion)
+                entrance.enter(reduceMotion: reduceMotion, duration: Self.timelineEntranceDuration)
             } else {
                 entrance.leave()
             }
@@ -236,25 +245,31 @@ struct TimelineView: View {
 
 struct TimelineRow: View {
     let item: SubscriptionItem
-    let isLast: Bool
-    /// 0→1 staggered entrance progress (see `TimelineView.entrance`). Defaults to 1 (fully
-    /// settled, no animation) for any caller that doesn't drive an entrance.
+    /// The dot now sits at the *bottom* of each row (see below), so the leading connector
+    /// line is only omitted for the first row — there's nothing above it to connect to.
+    let isFirst: Bool
+    /// 0→1 local entrance progress for this row alone (see `TimelineView.entrance`); rows
+    /// reveal sequentially, not overlapping. Defaults to 1 (fully settled) for any caller
+    /// that doesn't drive an entrance.
     var progress: Double = 1
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(spacing: 0) {
-                Circle()
-                    .fill(dotColor)
-                    .frame(width: 10, height: 10)
-                    .padding(.top, 4)
-                    .scaleEffect(dotScale)
-                if !isLast {
+                if !isFirst {
                     Rectangle()
                         .fill(dotColor.opacity(0.25))
                         .frame(width: 2)
                         .frame(maxHeight: .infinity)
+                        // Grows down from the top, so it visibly draws toward the dot rather
+                        // than just fading in at full length.
+                        .scaleEffect(x: 1, y: lineProgress, anchor: .top)
                 }
+                Circle()
+                    .fill(dotColor)
+                    .frame(width: 10, height: 10)
+                    .padding(.bottom, 4)
+                    .scaleEffect(dotScale)
             }
             .frame(width: 10)
             SubscriptionRowView(item: item)
@@ -263,12 +278,18 @@ struct TimelineRow: View {
         .insightsEntrance(progress)
     }
 
+    /// Line draws in over the first 60% of this row's local window...
+    private var lineProgress: Double { min(1, progress / 0.6) }
+    /// ...and the dot's pop-in bounce takes the remainder, landing once the line reaches it —
+    /// slight overlap (starts at 45%) so the handoff doesn't read as two disjoint steps.
+    private var dotAppearProgress: Double { max(0, min(1, (progress - 0.45) / 0.55)) }
+
     /// Dot pops in with a small overshoot past 1.0 rather than the row's plain ease-out,
     /// so the spine reads as being "drawn" rather than just fading up with everything else.
     private var dotScale: Double {
         let c1 = 1.70158
         let c3 = c1 + 1
-        let x = progress - 1
+        let x = dotAppearProgress - 1
         return 1 + c3 * x * x * x + c1 * x * x
     }
 
