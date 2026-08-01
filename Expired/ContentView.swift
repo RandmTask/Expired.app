@@ -285,7 +285,7 @@ struct CalendarGridView: View {
         return items.compactMap { item -> Double? in
             let itemComps = cal.dateComponents([.year, .month], from: item.nextRelevantDate)
             guard itemComps.year == comps.year, itemComps.month == comps.month else { return nil }
-            return item.cost
+            return item.cost.map { CurrencyInfo.convert($0, from: item.currency, to: currency) }
         }.reduce(0, +)
     }
 
@@ -530,7 +530,9 @@ struct HeatmapView: View {
         return (0..<days).map { offset in
             let date = cal.date(byAdding: .day, value: offset, to: start) ?? start
             let dayItems = itemsByDay[date] ?? []
-            let spend = dayItems.compactMap(\.cost).reduce(0, +)
+            let spend = dayItems.compactMap { item in
+                item.cost.map { CurrencyInfo.convert($0, from: item.currency, to: currency) }
+            }.reduce(0, +)
             return DayData(id: offset, date: date, spend: spend, items: dayItems)
         }
     }
@@ -881,7 +883,12 @@ struct SpendSpikeView: View {
         let startDate: Date
         let endDate: Date
         let items: [SubscriptionItem]
-        var total: Double { items.compactMap(\.cost).reduce(0, +) }
+        let currency: String
+        var total: Double {
+            items.compactMap { item in
+                item.cost.map { CurrencyInfo.convert($0, from: item.currency, to: currency) }
+            }.reduce(0, +)
+        }
 
         var label: String {
             let df = DateFormatter()
@@ -899,7 +906,7 @@ struct SpendSpikeView: View {
                 let d = cal.startOfDay(for: $0.nextRelevantDate)
                 return d >= start && d <= end
             }
-            return WeekBucket(id: w, startDate: start, endDate: end, items: bucket)
+            return WeekBucket(id: w, startDate: start, endDate: end, items: bucket, currency: currency)
         }
     }
 
@@ -1032,7 +1039,12 @@ struct MonthStripView: View {
         let id: Int
         let date: Date
         let items: [SubscriptionItem]
-        var total: Double { items.compactMap(\.cost).reduce(0, +) }
+        let currency: String
+        var total: Double {
+            items.compactMap { item in
+                item.cost.map { CurrencyInfo.convert($0, from: item.currency, to: currency) }
+            }.reduce(0, +)
+        }
     }
 
     private struct Period: Identifiable {
@@ -1173,7 +1185,7 @@ struct MonthStripView: View {
             let days: [DayCard] = (0..<length).map { offset in
                 let date = cal.date(byAdding: .day, value: offset, to: start) ?? start
                 let dayItems = itemsByDay[date] ?? []
-                return DayCard(id: index * length + offset, date: date, items: dayItems)
+                return DayCard(id: index * length + offset, date: date, items: dayItems, currency: currency)
             }
             return Period(id: index, startDate: start, days: days)
         }
