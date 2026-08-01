@@ -23,27 +23,32 @@ final class InsightsEntrance {
 
     private var leftAt: Date?
     private let replayThreshold: TimeInterval = 2
+    /// Set true as soon as `enter()` actually starts a visit, cleared only by `leave()`. Guards
+    /// against a caller whose trigger fires more than once per real visit (e.g. `.task(id:)`
+    /// restarting because the view remounted for an unrelated reason — a CloudKit-driven data
+    /// refresh, say — not because the user actually left and came back). Without this, each
+    /// spurious re-fire resets `progress` to 0 and restarts the whole animation from scratch,
+    /// which stacks into a fast flicker instead of one clean run.
+    private var isActiveVisit = false
 
     /// Call from `.onAppear`. `reduceMotion` snaps straight to the settled state.
     /// `duration` defaults to the Insights tab's original pacing; the Timeline tab passes a
     /// longer one for its sequential (non-overlapping) row-by-row reveal.
     func enter(reduceMotion: Bool, duration: TimeInterval = 0.85) {
-        // TEMP DEBUG (remove once diagnosed):
-        print("🟣 InsightsEntrance[\(ObjectIdentifier(self))].enter — reduceMotion=\(reduceMotion) leftAt=\(String(describing: leftAt))")
+        guard !isActiveVisit else { return }
+        isActiveVisit = true
         guard !reduceMotion else { progress = 1; return }
         let awayLongEnough = leftAt.map { Date().timeIntervalSince($0) > replayThreshold } ?? true
-        guard awayLongEnough else { print("🟣 bailing — not away long enough"); progress = 1; return }
+        guard awayLongEnough else { progress = 1; return }
         progress = 0
         // Linear driver: the per-element easing lives in `staggered(_:index:)`, so a
         // curved driver here would squash the later elements' stagger together.
         withAnimation(.linear(duration: duration)) { progress = 1 }
-        print("🟣 animating progress 0→1 over \(duration)s")
     }
 
     /// Call from `.onDisappear`.
     func leave() {
-        // TEMP DEBUG (remove once diagnosed):
-        print("🟣 InsightsEntrance[\(ObjectIdentifier(self))].leave")
+        isActiveVisit = false
         leftAt = Date()
     }
 

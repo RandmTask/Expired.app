@@ -143,9 +143,7 @@ struct TimelineView: View {
     }
 
     var body: some View {
-        // TEMP DEBUG (remove once diagnosed):
-        let _ = print("🟠 TimelineView.body eval — isSelected=\(isSelected) entranceID=\(ObjectIdentifier(entrance)) allItems.count=\(allItems.count) effectiveViewMode=\(effectiveViewMode)")
-        return NavigationStack {
+        NavigationStack {
             Group {
                 if allItems.isEmpty {
                     ContentUnavailableView(
@@ -178,8 +176,6 @@ struct TimelineView: View {
             // initial merge can flip that branch (and tear down/recreate the ScrollView) shortly
             // after launch.
             .task(id: isSelected) {
-                // TEMP DEBUG (remove once diagnosed):
-                print("🟠 task(isSelected) fired — isSelected=\(isSelected) hasCheckedSelectionOnce=\(hasCheckedSelectionOnce) entranceID=\(ObjectIdentifier(entrance))")
                 defer { hasCheckedSelectionOnce = true }
                 if isSelected {
                     entrance.enter(reduceMotion: reduceMotion, duration: Self.timelineEntranceDuration)
@@ -283,6 +279,13 @@ struct TimelineRow: View {
                         // Grows down from the top, so it visibly draws toward the dot rather
                         // than just fading in at full length.
                         .scaleEffect(x: 1, y: lineProgress, anchor: .top)
+                } else {
+                    // The first row has no connector to draw, but still needs *something*
+                    // flexible above the dot — otherwise this VStack's only child is the fixed-
+                    // size Circle, which the HStack's `alignment: .center` then centers within
+                    // the whole row's height instead of pinning it to the bottom like every
+                    // other row.
+                    Spacer(minLength: 0)
                 }
                 Circle()
                     .fill(dotColor)

@@ -413,6 +413,7 @@ struct ExpiredApp: App {
         }
     }
 
+    @MainActor
     private func scheduleSwiftDataRefreshPasses(reason: String) {
         for workItem in pendingCloudKitRefreshes {
             workItem.cancel()
@@ -474,10 +475,12 @@ struct ExpiredApp: App {
                     // Falls back to hardcoded rates if the table is empty or unreachable.
                     await CurrencyRateService.shared.refreshIfNeeded()
                 }
-                .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)
+                    .receive(on: DispatchQueue.main)) { _ in
                     scheduleSwiftDataRefreshPasses(reason: "remote store change")
                 }
-                .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)) { note in
+                .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)
+                    .receive(on: DispatchQueue.main)) { note in
                     guard let event = note.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
                             as? NSPersistentCloudKitContainer.Event,
                           event.type == .import,
@@ -487,7 +490,8 @@ struct ExpiredApp: App {
                     // A remote change may add/edit rules on another device — rebuild the schedule.
                     Task { await NotificationManager.shared.refreshAll(context: container.mainContext) }
                 }
-                .onReceive(NotificationCenter.default.publisher(for: .expiredManualSync)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: .expiredManualSync)
+                    .receive(on: DispatchQueue.main)) { _ in
                     CloudKitDebugStore.shared.record("[CloudKit] ── Manual sync triggered ────────────────────")
                     scheduleSwiftDataRefreshPasses(reason: "manual sync")
                     Task {
