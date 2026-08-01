@@ -91,7 +91,10 @@ struct HomeView: View {
                 if lhsExpired != rhsExpired { return !lhsExpired }
                 return lhs.nextRelevantDate < rhs.nextRelevantDate
             }
-        case .price:       return items.sorted { ($0.monthlyCost ?? 0) > ($1.monthlyCost ?? 0) }
+        case .price:
+            return items.sorted {
+                ($0.monthlyCostConverted(to: preferredCurrency) ?? 0) > ($1.monthlyCostConverted(to: preferredCurrency) ?? 0)
+            }
         }
     }
 
