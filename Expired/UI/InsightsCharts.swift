@@ -373,10 +373,12 @@ struct CategoryDonutChart: View {
                                       let tapped = category(atDegrees: degrees) else { return }
                                 toggleSelection(for: tapped)
                             }
-                            // Separate, higher-threshold drag purely for the swipe-to-cycle
-                            // gesture, so a vertical scroll started on the ring isn't
-                            // intercepted before the ScrollView's own recognizer claims it.
-                            .gesture(
+                            // `.simultaneousGesture`, not `.gesture` — a plain `.gesture` here
+                            // exclusively claims the touch the moment its minimumDistance is
+                            // met, in any direction, which blocked the enclosing ScrollView's
+                            // vertical pan entirely (verified: a vertical drag starting on the
+                            // ring didn't scroll until this was switched to simultaneous).
+                            .simultaneousGesture(
                                 DragGesture(minimumDistance: 24)
                                     .onEnded { value in
                                         let dx = value.translation.width
