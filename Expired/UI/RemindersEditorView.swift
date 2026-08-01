@@ -200,8 +200,8 @@ struct ReminderRuleRow: View {
         _customDate = State(initialValue: rule.customDate ?? baseDate)
         _isCritical = State(initialValue: rule.isCritical)
         _timeOverrideOn = State(initialValue: rule.fireHour != nil && rule.fireMinute != nil)
-        let h = rule.fireHour ?? itemHour ?? 9
-        let m = rule.fireMinute ?? itemMinute ?? 0
+        let h = rule.fireHour ?? itemHour ?? NotificationTimeSettings.globalHour
+        let m = rule.fireMinute ?? itemMinute ?? NotificationTimeSettings.globalMinute
         _overrideTime = State(initialValue:
             Calendar.current.date(bySettingHour: h, minute: m, second: 0, of: Date()) ?? Date())
     }
@@ -233,8 +233,14 @@ struct ReminderRuleRow: View {
                 showTimePopover = true
             } label: {
                 Text(overrideTime.formatted(.dateTime.hour().minute()))
-                    .font(.system(size: 16))
-                    .foregroundStyle(timeOverrideOn ? .blue : .secondary)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(timeOverrideOn ? .blue : .primary.opacity(0.75))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        (timeOverrideOn ? Color.blue : Color.secondary).opacity(0.12),
+                        in: Capsule()
+                    )
             }
             .buttonStyle(.plain)
 

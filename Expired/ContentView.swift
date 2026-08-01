@@ -3536,9 +3536,9 @@ struct SettingsView: View {
                 // NOTIFICATIONS
                 settingsSection(title: "Notifications", icon: "bell") {
                     settingsRow {
-                        macSettingsLabel("Reminder", icon: "clock")
+                        macSettingsLabel("Default Reminder", icon: "clock")
                         Spacer()
-                        QuarterHourTimePicker(date: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }))
+                        TimeChip(date: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }))
                     }
 
                     FormDivider()
@@ -4107,9 +4107,9 @@ struct SettingsView: View {
             Section {
                 HStack {
                     rowIcon("clock")
-                    Text("Reminder").foregroundStyle(.primary)
+                    Text("Default Reminder").foregroundStyle(.primary)
                     Spacer()
-                    QuarterHourTimePicker(date: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }))
+                    TimeChip(date: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }))
                 }
                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
 

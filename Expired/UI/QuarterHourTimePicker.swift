@@ -43,6 +43,33 @@ struct QuarterHourTimePicker: View {
     }
 }
 
+/// A pill-shaped time chip that opens a compact popover containing a `QuarterHourTimePicker`.
+/// Use in place of an inline wheel picker wherever the picker would otherwise dominate the row.
+struct TimeChip: View {
+    @Binding var date: Date
+    @State private var showPopover = false
+
+    var body: some View {
+        Button {
+            Haptics.fire(.selectionChanged)
+            showPopover = true
+        } label: {
+            Text(date.formatted(.dateTime.hour().minute()))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.primary.opacity(0.75))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.secondary.opacity(0.12), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showPopover) {
+            QuarterHourTimePicker(date: $date)
+                .padding(16)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
 #if os(iOS)
 private struct QuarterHourTimePickerRepresentable: UIViewRepresentable {
     @Binding var date: Date
