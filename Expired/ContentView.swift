@@ -2368,28 +2368,30 @@ struct CategoriesView: View {
                 description: $newCategoryDescription,
                 title: editingCategory == nil ? "Add Category" : "Edit Category"
             ) {
-                if let editing = editingCategory,
-                   let idx = unifiedCategories.firstIndex(where: {
-                       if case .custom(let c) = $0 { return c.id == editing.id }
-                       return false
-                   }) {
-                    let updated = UserCategory(
-                        id: editing.id,
-                        name: newCategoryName,
-                        icon: newCategoryIcon,
-                        description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
-                    )
-                    // A rename must follow through to items that reference the old name.
-                    if editing.name != newCategoryName {
-                        reassignItems(named: editing.name, to: newCategoryName)
+                withTransaction(Transaction(animation: nil)) {
+                    if let editing = editingCategory,
+                       let idx = unifiedCategories.firstIndex(where: {
+                           if case .custom(let c) = $0 { return c.id == editing.id }
+                           return false
+                       }) {
+                        let updated = UserCategory(
+                            id: editing.id,
+                            name: newCategoryName,
+                            icon: newCategoryIcon,
+                            description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
+                        )
+                        // A rename must follow through to items that reference the old name.
+                        if editing.name != newCategoryName {
+                            reassignItems(named: editing.name, to: newCategoryName)
+                        }
+                        unifiedCategories[idx] = .custom(updated)
+                    } else {
+                        unifiedCategories.append(.custom(UserCategory(
+                            name: newCategoryName,
+                            icon: newCategoryIcon,
+                            description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
+                        )))
                     }
-                    unifiedCategories[idx] = .custom(updated)
-                } else {
-                    unifiedCategories.append(.custom(UserCategory(
-                        name: newCategoryName,
-                        icon: newCategoryIcon,
-                        description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
-                    )))
                 }
                 saveUnified()
             }
@@ -2423,28 +2425,30 @@ struct CategoriesView: View {
                 description: $newCategoryDescription,
                 title: editingCategory == nil ? "Add Category" : "Edit Category"
             ) {
-                if let editing = editingCategory,
-                   let idx = unifiedCategories.firstIndex(where: {
-                       if case .custom(let c) = $0 { return c.id == editing.id }
-                       return false
-                   }) {
-                    let updated = UserCategory(
-                        id: editing.id,
-                        name: newCategoryName,
-                        icon: newCategoryIcon,
-                        description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
-                    )
-                    // A rename must follow through to items that reference the old name.
-                    if editing.name != newCategoryName {
-                        reassignItems(named: editing.name, to: newCategoryName)
+                withTransaction(Transaction(animation: nil)) {
+                    if let editing = editingCategory,
+                       let idx = unifiedCategories.firstIndex(where: {
+                           if case .custom(let c) = $0 { return c.id == editing.id }
+                           return false
+                       }) {
+                        let updated = UserCategory(
+                            id: editing.id,
+                            name: newCategoryName,
+                            icon: newCategoryIcon,
+                            description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
+                        )
+                        // A rename must follow through to items that reference the old name.
+                        if editing.name != newCategoryName {
+                            reassignItems(named: editing.name, to: newCategoryName)
+                        }
+                        unifiedCategories[idx] = .custom(updated)
+                    } else {
+                        unifiedCategories.append(.custom(UserCategory(
+                            name: newCategoryName,
+                            icon: newCategoryIcon,
+                            description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
+                        )))
                     }
-                    unifiedCategories[idx] = .custom(updated)
-                } else {
-                    unifiedCategories.append(.custom(UserCategory(
-                        name: newCategoryName,
-                        icon: newCategoryIcon,
-                        description: newCategoryDescription.isEmpty ? nil : newCategoryDescription
-                    )))
                 }
                 saveUnified()
             }
@@ -3060,7 +3064,9 @@ struct SettingsView: View {
 
     private func setSelectedModel(_ model: String) {
         screenshotAIProvider.setSelectedModelID(model)
-        selectedModels[screenshotAIProvider.rawValue] = screenshotAIProvider.selectedModelID
+        withTransaction(Transaction(animation: nil)) {
+            selectedModels[screenshotAIProvider.rawValue] = screenshotAIProvider.selectedModelID
+        }
     }
 
     private func loadSelectedModels() {
@@ -3205,7 +3211,9 @@ struct SettingsView: View {
             return
         }
         Haptics.fire(.selectionChanged)
-        screenshotAIProviderRaw = provider.rawValue
+        withTransaction(Transaction(animation: nil)) {
+            screenshotAIProviderRaw = provider.rawValue
+        }
     }
 
     // MARK: - Backup (export / import)
@@ -3283,7 +3291,9 @@ struct SettingsView: View {
                             ForEach(Self.appStoreRegions, id: \.code) { region in
                                 Button {
                                     Haptics.fire(.selectionChanged)
-                                    appStoreRegion = region.code
+                                    withTransaction(Transaction(animation: nil)) {
+                                        appStoreRegion = region.code
+                                    }
                                 } label: {
                                     macMenuOptionTitle(region.name, isSelected: appStoreRegion == region.code)
                                 }
@@ -3304,19 +3314,25 @@ struct SettingsView: View {
                         Menu {
                             Button {
                                 Haptics.fire(.selectionChanged)
-                                appearanceMode = 0
+                                withTransaction(Transaction(animation: nil)) {
+                                    appearanceMode = 0
+                                }
                             } label: {
                                 macMenuOptionTitle("System", isSelected: appearanceMode == 0)
                             }
                             Button {
                                 Haptics.fire(.selectionChanged)
-                                appearanceMode = 1
+                                withTransaction(Transaction(animation: nil)) {
+                                    appearanceMode = 1
+                                }
                             } label: {
                                 macMenuOptionTitle("Light", isSelected: appearanceMode == 1)
                             }
                             Button {
                                 Haptics.fire(.selectionChanged)
-                                appearanceMode = 2
+                                withTransaction(Transaction(animation: nil)) {
+                                    appearanceMode = 2
+                                }
                             } label: {
                                 macMenuOptionTitle("Dark", isSelected: appearanceMode == 2)
                             }
@@ -3856,7 +3872,9 @@ struct SettingsView: View {
                         ForEach(Self.appStoreRegions, id: \.code) { region in
                             Button {
                                 Haptics.fire(.selectionChanged)
-                                appStoreRegion = region.code
+                                withTransaction(Transaction(animation: nil)) {
+                                    appStoreRegion = region.code
+                                }
                             } label: {
                                 macMenuOptionTitle(region.name, isSelected: appStoreRegion == region.code)
                             }
@@ -3874,15 +3892,21 @@ struct SettingsView: View {
                     Menu {
                         Button {
                             Haptics.fire(.selectionChanged)
-                            appearanceMode = 0
+                            withTransaction(Transaction(animation: nil)) {
+                                appearanceMode = 0
+                            }
                         } label: { macMenuOptionTitle("System", isSelected: appearanceMode == 0) }
                         Button {
                             Haptics.fire(.selectionChanged)
-                            appearanceMode = 1
+                            withTransaction(Transaction(animation: nil)) {
+                                appearanceMode = 1
+                            }
                         } label: { macMenuOptionTitle("Light", isSelected: appearanceMode == 1) }
                         Button {
                             Haptics.fire(.selectionChanged)
-                            appearanceMode = 2
+                            withTransaction(Transaction(animation: nil)) {
+                                appearanceMode = 2
+                            }
                         } label: { macMenuOptionTitle("Dark", isSelected: appearanceMode == 2) }
                     } label: {
                         macMenuValueLabel(appearanceMode == 0 ? "System" : appearanceMode == 1 ? "Light" : "Dark")
