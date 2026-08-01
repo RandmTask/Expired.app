@@ -108,7 +108,11 @@ struct TimelineView: View {
     }
 
     @Environment(PurchaseManager.self) private var purchaseManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showPaywall = false
+    // Reuses `InsightsEntrance` as-is (it isn't Insights-specific) so the classic timeline
+    // gets the same staggered fade-in + "don't replay if you just glanced away" gating.
+    @State private var entrance = InsightsEntrance()
 
     @AppStorage("timelineViewMode") private var viewModeRaw: String = ViewMode.timeline.rawValue
     private var viewMode: ViewMode { ViewMode(rawValue: viewModeRaw) ?? .timeline }
@@ -196,7 +200,10 @@ struct TimelineView: View {
         ScrollView {
             LazyVStack(spacing: 12) {
                 ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, item in
-                    TimelineRow(item: item, isLast: index == upcoming.count - 1)
+                    // Clamp the index so long lists still finish their stagger inside the
+                    // driver's 0→1 run (see `staggered(index:)` doc comment).
+                    TimelineRow(item: item, isLast: index == upcoming.count - 1,
+                                progress: entrance.staggered(index: min(index, 10)))
                 }
             }
             .padding(.horizontal)
@@ -204,6 +211,8 @@ struct TimelineView: View {
             .padding(.bottom, 100)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
+        .onAppear { entrance.enter(reduceMotion: reduceMotion) }
+        .onDisappear { entrance.leave() }
     }
 }
 
@@ -212,6 +221,9 @@ struct TimelineView: View {
 struct TimelineRow: View {
     let item: SubscriptionItem
     let isLast: Bool
+    /// 0→1 staggered entrance progress (see `TimelineView.entrance`). Defaults to 1 (fully
+    /// settled, no animation) for any caller that doesn't drive an entrance.
+    var progress: Double = 1
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -220,6 +232,7 @@ struct TimelineRow: View {
                     .fill(dotColor)
                     .frame(width: 10, height: 10)
                     .padding(.top, 4)
+                    .scaleEffect(dotScale)
                 if !isLast {
                     Rectangle()
                         .fill(dotColor.opacity(0.25))
@@ -231,6 +244,16 @@ struct TimelineRow: View {
             SubscriptionRowView(item: item)
         }
         .frame(minHeight: 60)
+        .insightsEntrance(progress)
+    }
+
+    /// Dot pops in with a small overshoot past 1.0 rather than the row's plain ease-out,
+    /// so the spine reads as being "drawn" rather than just fading up with everything else.
+    private var dotScale: Double {
+        let c1 = 1.70158
+        let c3 = c1 + 1
+        let x = progress - 1
+        return 1 + c3 * x * x * x + c1 * x * x
     }
 
     private var dotColor: Color {
