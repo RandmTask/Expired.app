@@ -345,6 +345,17 @@ struct CategoryDonutChart: View {
         }
     }
 
+    /// True if `point` falls inside the donut's center hole (below the inner tap-slop radius
+    /// `angleDegrees` already uses) rather than on a ring segment.
+    private func isCenterTap(at point: CGPoint, in rect: CGRect) -> Bool {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let dx = point.x - center.x
+        let dy = point.y - center.y
+        let radius = (dx * dx + dy * dy).squareRoot()
+        let outer = min(rect.width, rect.height) / 2
+        return radius < outer * 0.56
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             // Keep the plot separate from the legend. Swift Charts otherwise gives the
@@ -384,6 +395,11 @@ struct CategoryDonutChart: View {
                             .onTapGesture { location in
                                 guard let plotFrame = proxy.plotFrame else { return }
                                 let rect = geo[plotFrame]
+                                if isCenterTap(at: location, in: rect) {
+                                    guard selectedCategory != nil else { return }
+                                    withAnimation(.smooth(duration: 0.25)) { selectedCategory = nil }
+                                    return
+                                }
                                 guard let degrees = angleDegrees(at: location, in: rect),
                                       let tapped = category(atDegrees: degrees) else { return }
                                 toggleSelection(for: tapped)
