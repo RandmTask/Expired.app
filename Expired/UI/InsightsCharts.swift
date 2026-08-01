@@ -25,14 +25,16 @@ final class InsightsEntrance {
     private let replayThreshold: TimeInterval = 2
 
     /// Call from `.onAppear`. `reduceMotion` snaps straight to the settled state.
-    func enter(reduceMotion: Bool) {
+    /// `duration` defaults to the Insights tab's original pacing; the Timeline tab passes a
+    /// longer one for its sequential (non-overlapping) row-by-row reveal.
+    func enter(reduceMotion: Bool, duration: TimeInterval = 0.85) {
         guard !reduceMotion else { progress = 1; return }
         let awayLongEnough = leftAt.map { Date().timeIntervalSince($0) > replayThreshold } ?? true
         guard awayLongEnough else { progress = 1; return }
         progress = 0
         // Linear driver: the per-element easing lives in `staggered(_:index:)`, so a
         // curved driver here would squash the later elements' stagger together.
-        withAnimation(.linear(duration: 0.85)) { progress = 1 }
+        withAnimation(.linear(duration: duration)) { progress = 1 }
     }
 
     /// Call from `.onDisappear`.
