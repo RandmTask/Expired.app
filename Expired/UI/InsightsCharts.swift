@@ -416,13 +416,20 @@ struct CategoryDonutChart: View {
         }
     }
 
+    /// `slices` now always contains every category (zero-amount ones included, see
+    /// `categorySpend`'s doc comment) so the underlying `Chart`'s mark identities stay
+    /// stable — but the legend itself should still only list categories with real spend.
+    private var nonZeroSlices: [CategorySpendSlice] {
+        slices.filter { $0.amount > 0 }
+    }
+
     private var categoryLegend: some View {
         LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 126), spacing: 10, alignment: .leading)],
             alignment: .leading,
             spacing: 8
         ) {
-            ForEach(slices) { slice in
+            ForEach(nonZeroSlices) { slice in
                 Button {
                     toggleSelection(for: slice.category)
                 } label: {

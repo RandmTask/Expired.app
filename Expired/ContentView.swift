@@ -1651,16 +1651,23 @@ struct InsightsView: View {
     /// Items with no custom user category (or a category name that isn't a built-in enum
     /// case) collapse into `.other`, matching `item.category`'s existing nil-fallback
     /// behaviour elsewhere in the app.
+    /// Every category is always represented (zero-amount ones included) rather than
+    /// filtered out, so `CategoryDonutChart`'s `Chart(slices)` has a fixed, stable set of
+    /// mark identities across every `costPeriod`/currency-rate recompute. When a category
+    /// used to be filtered out entirely, switching periods made Swift Charts add/remove
+    /// SectorMarks instead of just animating their angle — during that add/remove it would
+    /// briefly render an appearing/disappearing slice with the wrong (automatic-palette)
+    /// color before the explicit `chartForegroundStyleScale` mapping caught up, which read
+    /// as the whole ring flashing one wrong dominant color for a frame before settling.
     private var categorySpend: [CategorySpendSlice] {
         var totals: [SubscriptionCategory: Double] = [:]
         for item in costBreakdownBaseItems {
             guard item.monthlyCostConverted(to: preferredCurrency) != nil else { continue }
             totals[item.category ?? .other, default: 0] += periodCost(for: item)
         }
-        return totals.compactMap { category, amount in
-            amount > 0 ? CategorySpendSlice(category: category, amount: amount) : nil
-        }
-        .sorted { $0.amount > $1.amount }
+        return SubscriptionCategory.allCases
+            .map { CategorySpendSlice(category: $0, amount: totals[$0, default: 0]) }
+            .sorted { $0.amount > $1.amount }
     }
 
     private var categoryDonutSection: some View {
@@ -1677,7 +1684,7 @@ struct InsightsView: View {
 
             if purchaseManager.isPremium {
                 Group {
-                    if categorySpend.isEmpty {
+                    if !categorySpend.contains(where: { $0.amount > 0 }) {
                         Text("No spend to break down yet")
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
