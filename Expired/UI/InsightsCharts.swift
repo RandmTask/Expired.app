@@ -26,13 +26,16 @@ final class InsightsEntrance {
 
     /// Call from `.onAppear`. `reduceMotion` snaps straight to the settled state.
     func enter(reduceMotion: Bool) {
-        guard !reduceMotion else { progress = 1; return }
+        // TEMP DEBUG (remove once the Timeline entrance regression is diagnosed):
+        print("🔵 InsightsEntrance.enter called — reduceMotion=\(reduceMotion) leftAt=\(String(describing: leftAt))")
+        guard !reduceMotion else { print("🔵 InsightsEntrance.enter — bailing, reduceMotion is true"); progress = 1; return }
         let awayLongEnough = leftAt.map { Date().timeIntervalSince($0) > replayThreshold } ?? true
-        guard awayLongEnough else { progress = 1; return }
+        guard awayLongEnough else { print("🔵 InsightsEntrance.enter — bailing, not away long enough"); progress = 1; return }
         progress = 0
         // Linear driver: the per-element easing lives in `staggered(_:index:)`, so a
         // curved driver here would squash the later elements' stagger together.
         withAnimation(.linear(duration: 0.85)) { progress = 1 }
+        print("🔵 InsightsEntrance.enter — animating progress 0→1 over 0.85s")
     }
 
     /// Call from `.onDisappear`.
