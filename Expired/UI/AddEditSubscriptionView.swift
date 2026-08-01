@@ -458,7 +458,9 @@ struct AddEditSubscriptionView: View {
                                         Button {
                                             Haptics.fire(.selectionChanged)
                                             hideKeyboard()
-                                            selectedCategoryRaw = cat.rawValue
+                                            withTransaction(Transaction(animation: nil)) {
+                                                selectedCategoryRaw = cat.rawValue
+                                            }
                                         } label: {
                                             Label(cat.displayName, systemImage: cat.icon)
                                         }
@@ -466,7 +468,9 @@ struct AddEditSubscriptionView: View {
                                         Button {
                                             Haptics.fire(.selectionChanged)
                                             hideKeyboard()
-                                            selectedCategoryRaw = cat.name
+                                            withTransaction(Transaction(animation: nil)) {
+                                                selectedCategoryRaw = cat.name
+                                            }
                                         } label: {
                                             Label(cat.name, systemImage: cat.icon)
                                         }
@@ -513,7 +517,9 @@ struct AddEditSubscriptionView: View {
                                             Button {
                                                 Haptics.fire(.selectionChanged)
                                                 hideKeyboard()
-                                                selectedCategoryRaw = cat.rawValue
+                                                withTransaction(Transaction(animation: nil)) {
+                                                    selectedCategoryRaw = cat.rawValue
+                                                }
                                             } label: {
                                                 Label(cat.displayName, systemImage: cat.icon)
                                             }
@@ -521,7 +527,9 @@ struct AddEditSubscriptionView: View {
                                             Button {
                                                 Haptics.fire(.selectionChanged)
                                                 hideKeyboard()
-                                                selectedCategoryRaw = cat.name
+                                                withTransaction(Transaction(animation: nil)) {
+                                                    selectedCategoryRaw = cat.name
+                                                }
                                             } label: {
                                                 Label(cat.name, systemImage: cat.icon)
                                             }
@@ -1873,7 +1881,9 @@ struct AccountField: View {
                         ForEach(suggestions, id: \.self) { suggestion in
                             Button {
                                 Haptics.fire(.selectionChanged)
-                                text = suggestion
+                                withTransaction(Transaction(animation: nil)) {
+                                    text = suggestion
+                                }
                             } label: {
                                 if suggestion == text {
                                     Label(suggestion, systemImage: "checkmark")
@@ -1936,7 +1946,15 @@ struct AccountField: View {
                     onUpdateSuggestions?(updated, fieldType)
                 },
                 onSave: { value, shouldPersist in
-                    text = value
+                    // Assigned without animation: a sheet-dismiss-timed state change
+                    // otherwise inherits the dismiss transaction's implicit animation,
+                    // so scrolling immediately after leaves the text mid-transition,
+                    // animating independently of the row it's in. See CLAUDE.md
+                    // "State changes from sheet/menu dismissal must disable implicit
+                    // animation".
+                    withTransaction(Transaction(animation: nil)) {
+                        text = value
+                    }
                     if shouldPersist {
                         onPersist(value, fieldType)
                     }
@@ -2643,7 +2661,9 @@ struct CurrencyPickerSheet: View {
                 ForEach(filtered, id: \.code) { entry in
                     Button {
                         Haptics.fire(.selectionChanged)
-                        selectedCode = entry.code
+                        withTransaction(Transaction(animation: nil)) {
+                            selectedCode = entry.code
+                        }
                         dismiss()
                     } label: {
                         HStack {

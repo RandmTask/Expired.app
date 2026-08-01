@@ -530,6 +530,34 @@ Before writing any UI for a reorderable list, answer these 3 questions:
 - **Always** test toolbar menus on macOS for unexpected chrome
 - **Always** check Toggle renders as switch, not checkbox, on macOS
 
+### State changes from sheet/Menu dismissal must disable implicit animation
+**Symptom** (reported 2026-08-01): editing a field via a `.sheet` (e.g. `AccountField`'s
+"add new value" sheet) or selecting from an inline `Menu`, then scrolling the form
+immediately afterward, made the changed text visually detach and drift on its own
+trajectory instead of moving with its row.
+
+**Cause**: `dismiss()` and `Menu` selection both run inside an animated transaction.
+Any `@State`/`@Binding` mutation made in that same callback (`text = value`,
+`selectedCategoryRaw = cat.rawValue`, `selectedCode = entry.code`) inherits that
+transaction's implicit animation by default. If the `ScrollView` repositions before
+the inherited animation finishes, the still-animating `Text` and the now-repositioned
+row disagree about where the text should be — it looks like the text is "moving
+separately" from the row.
+
+**Fix**: wrap the state mutation in an explicit no-animation transaction:
+```swift
+withTransaction(Transaction(animation: nil)) {
+    text = value
+}
+```
+**Apply this to every state assignment that fires from a sheet's `onSave`/`onSelect`
+closure or a `Menu` `Button` action**, not just the one that got reported — they all
+share the same failure mode. Fixed at all three sites in `AddEditSubscriptionView.swift`:
+`AccountField`'s suggestion `Menu` and sheet `onSave`, the Category `Menu` (both
+built-in and custom branches, both the filled and empty-state pickers), and
+`CurrencyPickerSheet`'s row selection. Check for this pattern first in any future
+"text/value jumps or drifts when I scroll right after picking something" report.
+
 ### Notifications
 - Request permission before scheduling — never schedule silently
 - Always call `removePendingNotificationRequests` before rescheduling
