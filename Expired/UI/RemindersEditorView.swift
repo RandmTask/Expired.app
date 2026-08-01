@@ -228,29 +228,20 @@ struct ReminderRuleRow: View {
                     .fixedSize()
             }
             Spacer(minLength: 0)
-            if timeOverrideOn {
-                Text(overrideTime.formatted(.dateTime.hour().minute()))
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-            Button {
-                Haptics.fire(.selectionChanged)
-                isCritical.toggle()
-                propagate()
-            } label: {
-                Image(systemName: isCritical ? "bell.badge.fill" : "bell")
-                    .font(.system(size: 16))
-                    .foregroundStyle(isCritical ? .orange : .secondary)
-            }
-            .buttonStyle(.plain)
-
             Button {
                 Haptics.fire(.selectionChanged)
                 showTimePopover = true
             } label: {
-                Image(systemName: timeOverrideOn ? "clock.fill" : "clock")
-                    .font(.system(size: 16))
-                    .foregroundStyle(timeOverrideOn ? .blue : .secondary)
+                HStack(spacing: 4) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(timeOverrideOn ? overrideTime.formatted(.dateTime.hour().minute()) : "Default")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .foregroundStyle(timeOverrideOn ? .blue : .secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.secondary.opacity(0.12), in: Capsule())
             }
             .buttonStyle(.plain)
 

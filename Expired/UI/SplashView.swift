@@ -51,7 +51,7 @@ struct SplashView: View {
             Color("LaunchBackground")
                 .ignoresSafeArea()
 
-            VStack(spacing: 22) {
+            VStack(spacing: 8) {
                 // Fade starts the instant the splash appears — no delay before the logo
                 // begins showing, matching the static launch screen's handover — it just
                 // isn't at full opacity for its first `logoIn` seconds.
