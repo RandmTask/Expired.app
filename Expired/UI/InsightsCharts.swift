@@ -340,6 +340,7 @@ struct CategoryDonutChart: View {
     }
 
     private func toggleSelection(for category: SubscriptionCategory) {
+        Haptics.fire(.selectionChanged)
         withAnimation(.smooth(duration: 0.25)) {
             selectedCategory = selectedCategory == category ? nil : category
         }
@@ -397,6 +398,7 @@ struct CategoryDonutChart: View {
                                 let rect = geo[plotFrame]
                                 if isCenterTap(at: location, in: rect) {
                                     guard selectedCategory != nil else { return }
+                                    Haptics.fire(.selectionChanged)
                                     withAnimation(.smooth(duration: 0.25)) { selectedCategory = nil }
                                     return
                                 }
