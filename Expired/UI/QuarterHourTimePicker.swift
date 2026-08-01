@@ -51,7 +51,7 @@ private struct QuarterHourTimePickerRepresentable: UIViewRepresentable {
         let picker = UIDatePicker()
         picker.datePickerMode = .time
         picker.minuteInterval = 15
-        picker.preferredDatePickerStyle = .compact
+        picker.preferredDatePickerStyle = .wheels
         picker.setContentHuggingPriority(.required, for: .horizontal)
         picker.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
         return picker

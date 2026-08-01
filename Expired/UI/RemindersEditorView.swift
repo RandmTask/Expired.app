@@ -200,8 +200,8 @@ struct ReminderRuleRow: View {
         _customDate = State(initialValue: rule.customDate ?? baseDate)
         _isCritical = State(initialValue: rule.isCritical)
         _timeOverrideOn = State(initialValue: rule.fireHour != nil && rule.fireMinute != nil)
-        let h = rule.fireHour ?? 9
-        let m = rule.fireMinute ?? 0
+        let h = rule.fireHour ?? itemHour ?? 9
+        let m = rule.fireMinute ?? itemMinute ?? 0
         _overrideTime = State(initialValue:
             Calendar.current.date(bySettingHour: h, minute: m, second: 0, of: Date()) ?? Date())
     }
@@ -235,7 +235,7 @@ struct ReminderRuleRow: View {
                 HStack(spacing: 4) {
                     Image(systemName: "clock")
                         .font(.system(size: 11, weight: .semibold))
-                    Text(timeOverrideOn ? overrideTime.formatted(.dateTime.hour().minute()) : "Default")
+                    Text(overrideTime.formatted(.dateTime.hour().minute()))
                         .font(.system(size: 13, weight: .medium))
                 }
                 .foregroundStyle(timeOverrideOn ? .blue : .secondary)
