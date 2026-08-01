@@ -2480,7 +2480,7 @@ enum BuiltInCategoryStore {
 
 // MARK: - Currency Info
 
-enum CurrencyInfo {
+nonisolated enum CurrencyInfo {
     typealias Entry = (code: String, symbol: String, name: String)
 
     /// All supported currencies with symbols and display names.

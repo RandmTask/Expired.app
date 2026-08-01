@@ -49,7 +49,7 @@ struct ContentView: View {
                 HomeView()
             }
             Tab("Timeline", systemImage: "calendar", value: 1) {
-                TimelineView()
+                TimelineView(isSelected: selectedTab == 1)
             }
             Tab("Insights", systemImage: "chart.bar", value: 2) {
                 InsightsView()
@@ -113,6 +113,13 @@ struct TimelineView: View {
     // Reuses `InsightsEntrance` as-is (it isn't Insights-specific) so the classic timeline
     // gets the same staggered fade-in + "don't replay if you just glanced away" gating.
     @State private var entrance = InsightsEntrance()
+    /// Whether the Timeline tab is the one currently selected in `ContentView`'s `TabView`.
+    /// The entrance MUST be driven off this, not `.onAppear`/`.onDisappear` on this view's
+    /// content — iOS 26's `Tab` API eagerly creates every tab's content at launch (all of
+    /// them, regardless of which is selected), so `.onAppear` fires the moment the app
+    /// launches, and the entrance plays out fully off-screen before the user ever taps this
+    /// tab. `isSelected` flipping true is the real "user is now looking at this" signal.
+    let isSelected: Bool
 
     @AppStorage("timelineViewMode") private var viewModeRaw: String = ViewMode.timeline.rawValue
     private var viewMode: ViewMode { ViewMode(rawValue: viewModeRaw) ?? .timeline }
@@ -211,8 +218,17 @@ struct TimelineView: View {
             .padding(.bottom, 100)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
-        .onAppear { entrance.enter(reduceMotion: reduceMotion) }
-        .onDisappear { entrance.leave() }
+        // No `initial: true` — Timeline isn't the default tab, so `isSelected` always starts
+        // `false`; firing on the initial evaluation would call `leave()` before the entrance
+        // ever ran, stamping `leftAt` as "just now" and wrongly skipping the real first entrance
+        // if the user taps over within the 2s replay-threshold window.
+        .onChange(of: isSelected) { _, nowSelected in
+            if nowSelected {
+                entrance.enter(reduceMotion: reduceMotion)
+            } else {
+                entrance.leave()
+            }
+        }
     }
 }
 

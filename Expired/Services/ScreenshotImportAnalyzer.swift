@@ -137,7 +137,7 @@ struct ScreenshotAISettings {
 /// Testing-only: lets Automatic's cascade skip-on-failure path be exercised without a
 /// real provider outage. Reachable only via a hidden long-press in Settings (never a
 /// visible control) — see `DebugAIFailureSimulatorView`.
-enum DebugAIFailureSimulator {
+nonisolated enum DebugAIFailureSimulator {
     /// Cloud providers currently reachable via the Automatic cascade.
     static let cascadeProviders: [ScreenshotAIProvider] = [.gemini, .deepSeek]
 
