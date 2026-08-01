@@ -120,6 +120,11 @@ struct TimelineView: View {
     /// launches, and the entrance plays out fully off-screen before the user ever taps this
     /// tab. `isSelected` flipping true is the real "user is now looking at this" signal.
     let isSelected: Bool
+    /// Guards the very first `.task(id: isSelected)` run: if the view happens to first
+    /// evaluate while `isSelected` is already `false` (the common case), we must NOT call
+    /// `entrance.leave()` on that initial run — that would stamp `leftAt` as "just now" and
+    /// wrongly block the real first entrance if the user taps in within the 2s threshold.
+    @State private var hasCheckedSelectionOnce = false
 
     @AppStorage("timelineViewMode") private var viewModeRaw: String = ViewMode.timeline.rawValue
     private var viewMode: ViewMode { ViewMode(rawValue: viewModeRaw) ?? .timeline }
@@ -162,21 +167,23 @@ struct TimelineView: View {
             .navigationTitle("Timeline")
             .largeNavigationTitle()
             .background(groupedBackground.ignoresSafeArea())
-            // Attached HERE (the always-mounted outer Group), not on `classicTimelineView`'s
-            // ScrollView: that view sits behind `if allItems.isEmpty {...} else { switch ... }`,
-            // and CloudKit's initial merge can flip that branch shortly after launch (empty →
-            // populated). Each flip tears down and recreates the ScrollView as a brand-new
-            // identity, resetting `.onChange`'s "previous value" baseline to whatever
-            // `isSelected` already was — so if that churn happens while `isSelected` is already
-            // `true`, no *change* is ever seen and `entrance.enter()` never fires, leaving every
-            // row permanently at `progress == 0` (invisible — the "black screen but for the
-            // title" bug). This Group's identity never depends on that data, so it can't happen.
-            .onChange(of: isSelected) { oldValue, nowSelected in
+            // `.task(id:)`, not `.onChange(of:)` — confirmed via logging that `onChange` never
+            // fired on the `isSelected` false→true transition in this Tab-API setup (entrance
+            // never ran, every row stuck at `progress == 0`, i.e. permanently invisible — the
+            // black-screen bug). `.task(id:)` gives a stronger guarantee: it runs once on the
+            // view's first evaluation AND again on every subsequent change to `id`, so it can't
+            // silently miss the transition the way `onChange` did here. Attached on this
+            // always-mounted outer Group, not `classicTimelineView`'s ScrollView, since that
+            // view sits behind `if allItems.isEmpty {...} else { switch ... }` and CloudKit's
+            // initial merge can flip that branch (and tear down/recreate the ScrollView) shortly
+            // after launch.
+            .task(id: isSelected) {
                 // TEMP DEBUG (remove once diagnosed):
-                print("🟠 onChange(isSelected) fired — \(oldValue) → \(nowSelected) entranceID=\(ObjectIdentifier(entrance))")
-                if nowSelected {
+                print("🟠 task(isSelected) fired — isSelected=\(isSelected) hasCheckedSelectionOnce=\(hasCheckedSelectionOnce) entranceID=\(ObjectIdentifier(entrance))")
+                defer { hasCheckedSelectionOnce = true }
+                if isSelected {
                     entrance.enter(reduceMotion: reduceMotion, duration: Self.timelineEntranceDuration)
-                } else {
+                } else if hasCheckedSelectionOnce {
                     entrance.leave()
                 }
             }
