@@ -418,11 +418,12 @@ struct CategoryDonutChart: View {
         }
     }
 
-    /// `slices` now always contains every category (zero-amount ones included, see
-    /// `categorySpend`'s doc comment) so the underlying `Chart`'s mark identities stay
-    /// stable — but the legend itself should still only list categories with real spend.
+    /// `slices` is always every category in fixed declaration order (see `categorySpend`'s
+    /// doc comment — the Chart itself must never reorder marks between periods). The legend
+    /// is display-only, so it's free to both drop zero-amount categories and sort by amount
+    /// descending for readability, without touching the order `Chart(slices)` renders from.
     private var nonZeroSlices: [CategorySpendSlice] {
-        slices.filter { $0.amount > 0 }
+        slices.filter { $0.amount > 0 }.sorted { $0.amount > $1.amount }
     }
 
     private var categoryLegend: some View {

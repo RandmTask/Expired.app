@@ -1672,14 +1672,22 @@ struct InsightsView: View {
     /// Items with no custom user category (or a category name that isn't a built-in enum
     /// case) collapse into `.other`, matching `item.category`'s existing nil-fallback
     /// behaviour elsewhere in the app.
-    /// Every category is always represented (zero-amount ones included) rather than
-    /// filtered out, so `CategoryDonutChart`'s `Chart(slices)` has a fixed, stable set of
-    /// mark identities across every `costPeriod`/currency-rate recompute. When a category
-    /// used to be filtered out entirely, switching periods made Swift Charts add/remove
-    /// SectorMarks instead of just animating their angle — during that add/remove it would
-    /// briefly render an appearing/disappearing slice with the wrong (automatic-palette)
-    /// color before the explicit `chartForegroundStyleScale` mapping caught up, which read
-    /// as the whole ring flashing one wrong dominant color for a frame before settling.
+    /// Every category is always represented (zero-amount ones included), in the fixed
+    /// `SubscriptionCategory.allCases` declaration order — **never** re-sorted by amount.
+    /// `CategoryDonutChart`'s `Chart(slices)` feeds this array directly into `SectorMark`s,
+    /// and Swift Charts' pie/donut geometry interpolation ties each mark's continuous
+    /// animation (angle *and* color) to its position in that array, not to `slice.id`.
+    /// Sorting by amount used to put the biggest category at index 0 every time — so when
+    /// the *rank order* changed between periods (e.g. Streaming overtakes Professional &
+    /// Business going from YTD to Lifetime), the mark at index 0 would smoothly morph from
+    /// the old top category's geometry+color into the new one's, instead of each category
+    /// staying anchored to its own slice. That's what read as "the brown wedge grows huge
+    /// and turns into Streaming" — the wedge didn't grow, it inherited a different
+    /// category's identity mid-animation. Keeping this array's order fixed regardless of
+    /// amount means every category always owns the same index, so only its own angle
+    /// interpolates — no more cross-category color/identity swaps. (Amount-sorted display
+    /// order for the legend is a separate, display-only sort — see `nonZeroSlices` in
+    /// `CategoryDonutChart`.)
     private var categorySpend: [CategorySpendSlice] {
         var totals: [SubscriptionCategory: Double] = [:]
         for item in costBreakdownBaseItems {
@@ -1688,7 +1696,6 @@ struct InsightsView: View {
         }
         return SubscriptionCategory.allCases
             .map { CategorySpendSlice(category: $0, amount: totals[$0, default: 0]) }
-            .sorted { $0.amount > $1.amount }
     }
 
     private var categoryDonutSection: some View {
