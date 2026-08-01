@@ -232,16 +232,9 @@ struct ReminderRuleRow: View {
                 Haptics.fire(.selectionChanged)
                 showTimePopover = true
             } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text(overrideTime.formatted(.dateTime.hour().minute()))
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .foregroundStyle(timeOverrideOn ? .blue : .secondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.secondary.opacity(0.12), in: Capsule())
+                Text(overrideTime.formatted(.dateTime.hour().minute()))
+                    .font(.system(size: 16))
+                    .foregroundStyle(timeOverrideOn ? .blue : .secondary)
             }
             .buttonStyle(.plain)
 
