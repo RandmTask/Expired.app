@@ -250,7 +250,7 @@ struct TimelineView: View {
             }
             .padding(.horizontal)
             .padding(.top, 12)
-            .padding(.bottom, 100)
+            .padding(.bottom, 24)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
     }
@@ -1520,10 +1520,9 @@ struct InsightsView: View {
                     categoryDonutSection
                     forecastSection
                     if !costBreakdownItems.isEmpty { costBreakdown }
-                    Spacer(minLength: 40)
                 }
                 .padding(.top, 12)
-                .padding(.bottom, 100)
+                .padding(.bottom, 24)
             }
             .scrollEdgeEffectStyle(.soft, for: .top)
             .background(groupedBackground.ignoresSafeArea())
