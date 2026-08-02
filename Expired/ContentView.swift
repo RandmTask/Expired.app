@@ -144,14 +144,11 @@ struct TimelineView: View {
 
     /// Starts (or skips) a fresh row-by-row reveal. Called when `isSelected` becomes `true`.
     private func triggerRevealIfNeeded() {
-        // TEMP DEBUG (remove once diagnosed):
-        print("🟠 [\(Date().timeIntervalSinceReferenceDate)] triggerRevealIfNeeded — reduceMotion=\(reduceMotion)")
         guard !reduceMotion else { return }
         let awayLongEnough = leftTimelineAt.map { Date().timeIntervalSince($0) > timelineReplayThreshold } ?? true
-        guard awayLongEnough else { print("🟠 bailing — not away long enough"); return }
+        guard awayLongEnough else { return }
         revealGeneration += 1
         revealedItemIDs.removeAll()
-        print("🟠 [\(Date().timeIntervalSinceReferenceDate)] revealGeneration bumped to \(revealGeneration)")
     }
 
     @AppStorage("timelineViewMode") private var viewModeRaw: String = ViewMode.timeline.rawValue
@@ -204,6 +201,16 @@ struct TimelineView: View {
             .task(id: isSelected) {
                 defer { hasCheckedSelectionOnce = true }
                 if isSelected {
+                    // Small deliberate delay before the reveal starts. Diagnostic logging showed
+                    // the reveal mechanism itself firing exactly once per row with correct
+                    // staggered delays — but only when launched with Xcode attached; a standalone
+                    // (no-debugger) cold launch reaches this tap much faster, landing the reveal
+                    // right in CloudKit's heaviest initial sync burst (repeated "remote store
+                    // change" refresh passes, visible firing every ~1s through this exact window
+                    // in the logs). This gives that initial burst a moment to settle before
+                    // starting, rather than racing it. Found 2026-08-02.
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    guard isSelected else { return }
                     triggerRevealIfNeeded()
                 } else if hasCheckedSelectionOnce {
                     leftTimelineAt = Date()
@@ -350,13 +357,10 @@ struct TimelineRow: View {
         // fires once on first mount reflecting whatever the *current* value already is, so a
         // late-mounting row still catches up on a reveal it missed.
         .task(id: revealGeneration) {
-            // TEMP DEBUG (remove once diagnosed):
-            print("🟢 [\(Date().timeIntervalSinceReferenceDate)] row[\(index)] fired — revealGeneration=\(revealGeneration) hasAlreadyPlayed=\(hasAlreadyPlayedThisGeneration) localProgress=\(localProgress)")
             guard revealGeneration > 0 else { return }
-            guard !hasAlreadyPlayedThisGeneration else { print("🟢 row[\(index)] bailing — already played"); return }
+            guard !hasAlreadyPlayedThisGeneration else { return }
             markPlayed()
             localProgress = 0
-            print("🟢 [\(Date().timeIntervalSinceReferenceDate)] row[\(index)] calling withAnimation, delay=\(Double(min(index, Self.maxStaggeredIndex)) * Self.rowStepDuration)")
             withAnimation(
                 .linear(duration: Self.rowStepDuration)
                     .delay(Double(min(index, Self.maxStaggeredIndex)) * Self.rowStepDuration)
