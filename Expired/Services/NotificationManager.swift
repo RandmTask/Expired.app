@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import UserNotifications
+import Combine
 
 // MARK: - Global notification-time settings
 
@@ -86,10 +87,29 @@ struct FireMoment: Identifiable, Hashable {
     let isCritical: Bool
 }
 
+// MARK: - Notification tap routing
+
+/// Single source of truth for "a notification tap wants this subscription open."
+/// `NotificationManager`'s `UNUserNotificationCenterDelegate` callback sets
+/// `pendingItemID`; `ContentView` switches to the Subscriptions tab and `HomeView`
+/// dismisses whatever sheet it currently has open before presenting the target
+/// item, so the notification's destination never stacks on top of another sheet.
 @MainActor
-final class NotificationManager {
-    static let shared = NotificationManager()
+final class SubscriptionNavigationRouter: ObservableObject {
+    static let shared = SubscriptionNavigationRouter()
     private init() {}
+
+    @Published var pendingItemID: UUID?
+
+    func openSubscription(_ id: UUID) {
+        pendingItemID = id
+    }
+}
+
+@MainActor
+final class NotificationManager: NSObject {
+    static let shared = NotificationManager()
+    private override init() { super.init() }
 
     /// Identifier prefix — used to find and clear only this app's scheduled requests.
     static let identifierPrefix = "expired."
@@ -390,5 +410,46 @@ final class NotificationManager {
 
     private func identifier(itemID: UUID, ruleID: UUID, occurrenceIndex: Int) -> String {
         "\(Self.identifierPrefix)\(itemID.uuidString).\(ruleID.uuidString).\(occurrenceIndex)"
+    }
+
+    // MARK: - Delegate registration
+
+    /// Call once at app launch, before any notification could be tapped to launch
+    /// the app cold. Without a delegate, tapping a notification just foregrounds
+    /// the app with no way to know which item it was about.
+    func registerDelegate() {
+        UNUserNotificationCenter.current().delegate = self
+    }
+}
+
+// MARK: - UNUserNotificationCenterDelegate
+
+extension NotificationManager: UNUserNotificationCenterDelegate {
+    /// Notification tapped (or its "View" action chosen) — route to the subscription.
+    /// "Dismiss" and swipe-to-clear both report `UNNotificationDismissActionIdentifier`
+    /// and should not navigate anywhere.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        defer { completionHandler() }
+        guard response.actionIdentifier != UNNotificationDismissActionIdentifier,
+              response.actionIdentifier != "DISMISS" else { return }
+        guard let idString = response.notification.request.content.userInfo["itemID"] as? String,
+              let itemID = UUID(uuidString: idString) else { return }
+        Task { @MainActor in
+            SubscriptionNavigationRouter.shared.openSubscription(itemID)
+        }
+    }
+
+    /// Lets a reminder that fires while the app is already open still show as a banner —
+    /// otherwise it would be silently swallowed and there'd be nothing to tap.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .badge])
     }
 }

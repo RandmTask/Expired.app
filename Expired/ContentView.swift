@@ -29,6 +29,7 @@ private func leadingWeekdaySlots(for date: Date, calendar: Calendar = .current) 
 struct ContentView: View {
     @State private var selectedTab = 0
     @State private var settingsNavID = UUID()
+    @ObservedObject private var navigationRouter = SubscriptionNavigationRouter.shared
 
     var body: some View {
         TabView(selection: Binding(
@@ -63,6 +64,11 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .expiredShowSettings)) { _ in
             Haptics.fire(.selectionChanged)
             selectedTab = 3
+        }
+        .onChange(of: navigationRouter.pendingItemID) { _, newValue in
+            guard newValue != nil else { return }
+            if selectedTab == 3 { settingsNavID = UUID() }
+            selectedTab = 0
         }
 #if os(iOS)
         .tabBarMinimizeBehavior(.onScrollDown)

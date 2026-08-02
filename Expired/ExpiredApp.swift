@@ -544,6 +544,7 @@ final class ExpiredAppDelegate: NSObject, UIApplicationDelegate {
     ) -> Bool {
         application.registerForRemoteNotifications()
         print("[CloudKit] Registered for remote notifications")
+        Task { @MainActor in NotificationManager.shared.registerDelegate() }
         return true
     }
 
@@ -566,6 +567,7 @@ final class ExpiredAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.registerForRemoteNotifications(matching: [])
         print("[CloudKit] Registered for remote notifications")
+        Task { @MainActor in NotificationManager.shared.registerDelegate() }
     }
 
     func application(

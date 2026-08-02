@@ -20,6 +20,7 @@ struct HomeView: View {
         allItems.filter { $0.itemType == .subscription }
     }
 
+    @ObservedObject private var navigationRouter = SubscriptionNavigationRouter.shared
     @State private var showingAdd = false
     @State private var showingAddHub = false
     @State private var showingServicePicker = false
@@ -359,6 +360,31 @@ struct HomeView: View {
             )) {
                 ImportFailureSheet(message: importError ?? "")
             }
+            .onChange(of: navigationRouter.pendingItemID) { _, newValue in
+                guard let newValue else { return }
+                openFromNotification(itemID: newValue)
+            }
+        }
+    }
+
+    /// A notification was tapped for `itemID`. Close whatever sheet this view
+    /// already has open — never present the target on top of it — then open the
+    /// subscription once the dismiss has had a beat to finish.
+    private func openFromNotification(itemID: UUID) {
+        navigationRouter.pendingItemID = nil
+        guard let item = allItems.first(where: { $0.id == itemID }) else { return }
+
+        showingAddHub = false
+        showingAdd = false
+        addHubPrefill = nil
+        showingServicePicker = false
+        showingImportReview = false
+        showPaywall = false
+        importError = nil
+        editingItem = nil
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            editingItem = item
         }
     }
 
