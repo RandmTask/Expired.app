@@ -297,14 +297,24 @@ struct TimelineRow: View {
     let hasAlreadyPlayedThisGeneration: Bool
     let markPlayed: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// Real per-row animatable state — SwiftUI natively interpolates this frame-by-frame when
     /// mutated inside `withAnimation`. (A shared driver value pushed through a per-row windowing
     /// function does NOT get this: `withAnimation` only interpolates the *rendered* property
     /// between its before/after values, so every row's window collapsed to the same 0→1 span —
-    /// "the whole list fades in at once" instead of row-by-row. Found 2026-08-02.) Defaults to
-    /// settled (`1`) so a row that mounts after the reveal already ran (lazily, via scrolling)
-    /// just renders normally instead of replaying a stale entrance.
-    @State private var localProgress: Double = 1
+    /// "the whole list fades in at once" instead of row-by-row. Found 2026-08-02.)
+    ///
+    /// Defaults to **hidden** (`0`) — matching `InsightsEntrance.progress`'s own default, which
+    /// is why the Insights donut/charts never "populate early" during the eager tab pre-mount:
+    /// nothing is visible until something explicitly reveals it. An earlier version of this row
+    /// defaulted to settled (`1`) so a late-mounting row (e.g. scrolled into view long after a
+    /// reveal finished) wouldn't stay stuck invisible — but that meant every row was fully
+    /// visible during the pre-mount phase, then got reset to hidden right as the tab appeared,
+    /// producing a visible "it's all there, then it disappears" flash. The `.task` below now
+    /// handles the late-mount case explicitly (snapping straight to `1`, no animation) instead of
+    /// relying on the default to paper over it.
+    @State private var localProgress: Double = 0
 
     private static let rowStepDuration: Double = 0.22
     private static let maxStaggeredIndex = 9
@@ -352,15 +362,22 @@ struct TimelineRow: View {
         // fires once on first mount reflecting whatever the *current* value already is, so a
         // late-mounting row still catches up on a reveal it missed.
         .task(id: revealGeneration) {
+            guard !reduceMotion else { localProgress = 1; return }
+            // No reveal has been triggered yet for this visit — during the eager tab pre-mount
+            // (while some other tab is showing) this is expected and correct: just stay hidden,
+            // exactly like Insights' donut/charts sitting at `progress == 0` until you visit that
+            // tab. Nothing to reset later, because nothing was ever shown.
             guard revealGeneration > 0 else { return }
-            guard !hasAlreadyPlayedThisGeneration else { return }
+            guard !hasAlreadyPlayedThisGeneration else {
+                // Mounted after this generation's reveal already ran (e.g. scrolled into view
+                // later) — show immediately, no animation; there was never anything to "undo".
+                localProgress = 1
+                return
+            }
             markPlayed()
-            // Hide FIRST, synchronously, before anything else — this must happen the instant
-            // `revealGeneration` ticks, with nothing awaited before it. A settle delay placed
-            // before this line (as an earlier attempt did) leaves rows sitting at their settled
-            // default for the whole delay, visible to the user the moment the tab appears, then
-            // suddenly resetting — "it's all there, then it disappears." Hiding first and only
-            // THEN waiting means the row is already blank throughout the settle window instead.
+            // Reset in case this row is mid-fade from an earlier, still-completing reveal (a
+            // genuine replay on revisit, not the pre-mount case above) — matches
+            // `InsightsEntrance.enter()`'s own `progress = 0` before re-animating.
             localProgress = 0
             // Brief settle delay before animating in: a standalone (no-debugger) cold launch
             // reaches this reveal fast enough to land in CloudKit's heaviest initial sync burst
