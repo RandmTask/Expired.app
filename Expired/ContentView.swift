@@ -201,16 +201,11 @@ struct TimelineView: View {
             .task(id: isSelected) {
                 defer { hasCheckedSelectionOnce = true }
                 if isSelected {
-                    // Small deliberate delay before the reveal starts. Diagnostic logging showed
-                    // the reveal mechanism itself firing exactly once per row with correct
-                    // staggered delays — but only when launched with Xcode attached; a standalone
-                    // (no-debugger) cold launch reaches this tap much faster, landing the reveal
-                    // right in CloudKit's heaviest initial sync burst (repeated "remote store
-                    // change" refresh passes, visible firing every ~1s through this exact window
-                    // in the logs). This gives that initial burst a moment to settle before
-                    // starting, rather than racing it. Found 2026-08-02.
-                    try? await Task.sleep(nanoseconds: 400_000_000)
-                    guard isSelected else { return }
+                    // No delay here — reverted. A delay before `revealGeneration` bumps means
+                    // rows sit fully visible (their settled default) for that whole window,
+                    // since the tab itself becomes visible to the user immediately on tap. The
+                    // bump must happen as promptly as possible so rows reset to hidden before
+                    // the user has a chance to see them settled. Found 2026-08-02.
                     triggerRevealIfNeeded()
                 } else if hasCheckedSelectionOnce {
                     leftTimelineAt = Date()
@@ -360,7 +355,19 @@ struct TimelineRow: View {
             guard revealGeneration > 0 else { return }
             guard !hasAlreadyPlayedThisGeneration else { return }
             markPlayed()
+            // Hide FIRST, synchronously, before anything else — this must happen the instant
+            // `revealGeneration` ticks, with nothing awaited before it. A settle delay placed
+            // before this line (as an earlier attempt did) leaves rows sitting at their settled
+            // default for the whole delay, visible to the user the moment the tab appears, then
+            // suddenly resetting — "it's all there, then it disappears." Hiding first and only
+            // THEN waiting means the row is already blank throughout the settle window instead.
             localProgress = 0
+            // Brief settle delay before animating in: a standalone (no-debugger) cold launch
+            // reaches this reveal fast enough to land in CloudKit's heaviest initial sync burst
+            // (repeated "remote store change" refresh passes seen firing every ~1s through this
+            // exact window in device logs), which was preventing the animation from ever
+            // visibly running. Found 2026-08-02.
+            try? await Task.sleep(nanoseconds: 400_000_000)
             withAnimation(
                 .linear(duration: Self.rowStepDuration)
                     .delay(Double(min(index, Self.maxStaggeredIndex)) * Self.rowStepDuration)

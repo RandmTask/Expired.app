@@ -59,7 +59,7 @@ struct TimeChip: View {
             date: Binding(get: { date }, set: { date = QuarterHourTimePicker.snap($0) }),
             tintColor: UIColor(tint)
         )
-        .fixedSize()
+        .fixedSize(horizontal: true, vertical: true)
 #else
         DatePicker(
             "",
