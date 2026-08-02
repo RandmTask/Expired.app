@@ -247,7 +247,7 @@ struct TimelineView: View {
             // it — see `TimelineRow` for why.
             LazyVStack(spacing: 0) {
                 ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, item in
-                    TimelineRow(item: item, isFirst: index == 0, isLast: index == upcoming.count - 1,
+                    TimelineRow(item: item, isLast: index == upcoming.count - 1,
                                 index: index, revealGeneration: revealGeneration)
                 }
             }
@@ -263,9 +263,6 @@ struct TimelineView: View {
 
 struct TimelineRow: View {
     let item: SubscriptionItem
-    /// The dot sits at the *bottom* of each row (see below), so the leading connector line is
-    /// only omitted for the first row — there's nothing above it to connect to.
-    let isFirst: Bool
     /// The last row carries no trailing gap-padding — there's no next row to connect to.
     let isLast: Bool
     /// This row's position, for the reveal's per-row delay.
@@ -289,26 +286,25 @@ struct TimelineRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(spacing: 0) {
-                if !isFirst {
-                    Rectangle()
-                        .fill(dotColor.opacity(0.25))
-                        .frame(width: 2)
-                        .frame(maxHeight: .infinity)
-                        // Grows down from the top, so it visibly draws toward the dot rather
-                        // than just fading in at full length.
-                        .scaleEffect(x: 1, y: lineProgress, anchor: .top)
-                } else {
-                    // The first row has no connector to draw, but still needs *something*
-                    // flexible above the dot — otherwise this VStack's only child is the fixed-
-                    // size Circle, which the HStack's `alignment: .center` then centers within
-                    // the whole row's height instead of pinning it to the bottom like every
-                    // other row.
-                    Spacer(minLength: 0)
-                }
+                // Drawn for every row, including the first — a leading stub with nothing to
+                // connect to above it still reads as "this is where the line starts," which
+                // looks more correct than an isolated floating dot.
+                Rectangle()
+                    .fill(dotColor.opacity(0.25))
+                    .frame(width: 2)
+                    .frame(maxHeight: .infinity)
+                    // Grows down from the top so it visibly draws toward the dot. Deliberately
+                    // NOT inside `.insightsEntrance` below — fading opacity *at the same time* as
+                    // the height grows makes the whole thing look like a hazy smudge spreading
+                    // rather than a crisp line being drawn. Full, constant opacity here; the
+                    // reveal is carried entirely by the scale.
+                    .scaleEffect(x: 1, y: lineProgress, anchor: .top)
                 Circle()
                     .fill(dotColor)
                     .frame(width: 10, height: 10)
                     .padding(.bottom, 4)
+                    // Same reasoning: the overshoot bounce already reads clearly as "popping
+                    // in" — it doesn't need a simultaneous opacity fade to sell the reveal.
                     .scaleEffect(dotScale)
             }
             .frame(width: 10)
@@ -317,9 +313,11 @@ struct TimelineRow: View {
             // of stopping at the card's edge and leaving a gap with no line drawn in it.
             SubscriptionRowView(item: item)
                 .padding(.bottom, isLast ? 0 : 12)
+                // Fade/rise/scale applies to the card only — the dot/line column reveals purely
+                // via scale (see above), so it can look "drawn" rather than "faded".
+                .insightsEntrance(localProgress)
         }
         .frame(minHeight: 60)
-        .insightsEntrance(localProgress)
         .onChange(of: revealGeneration) { oldValue, newValue in
             guard newValue > oldValue else { return }
             localProgress = 0
