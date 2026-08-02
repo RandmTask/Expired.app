@@ -379,12 +379,14 @@ struct TimelineRow: View {
             // genuine replay on revisit, not the pre-mount case above) — matches
             // `InsightsEntrance.enter()`'s own `progress = 0` before re-animating.
             localProgress = 0
-            // Brief settle delay before animating in: a standalone (no-debugger) cold launch
-            // reaches this reveal fast enough to land in CloudKit's heaviest initial sync burst
-            // (repeated "remote store change" refresh passes seen firing every ~1s through this
-            // exact window in device logs), which was preventing the animation from ever
-            // visibly running. Found 2026-08-02.
-            try? await Task.sleep(nanoseconds: 400_000_000)
+            // No settle delay before animating — a prior attempt added one (to dodge a suspected
+            // CloudKit-collision race on standalone cold launches), but with up to 9 staggered
+            // rows at rowStepDuration each, that pushed the LAST row's finish to ~2.4s after the
+            // tap. A blank screen for that long reads as broken, not slow — testers reasonably
+            // swiped away before row 0 ever appeared, then found it silently "already played" (no
+            // animation) on the very next visit. Starting immediately means row 0 appears within
+            // one `rowStepDuration`, which is what actually fixes the perceived-broken problem.
+            // Found 2026-08-02.
             withAnimation(
                 .linear(duration: Self.rowStepDuration)
                     .delay(Double(min(index, Self.maxStaggeredIndex)) * Self.rowStepDuration)
