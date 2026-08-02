@@ -34,16 +34,39 @@ final class InsightsEntrance {
     /// Call from `.onAppear`. `reduceMotion` snaps straight to the settled state.
     /// `duration` defaults to the Insights tab's original pacing; the Timeline tab passes a
     /// longer one for its sequential (non-overlapping) row-by-row reveal.
-    func enter(reduceMotion: Bool, duration: TimeInterval = 0.85) {
+    ///
+    /// `manualDrive` picks how `progress` gets from 0 to 1:
+    /// - `false` (default, Insights): a single `withAnimation` transaction. SwiftUI/Core Animation
+    ///   interpolates the *rendered property* (opacity, scale, offset) between its before/after
+    ///   values — it never re-samples `staggered(index:)` at points in between.
+    /// - `true` (Timeline): manual per-frame ticks. Required for genuinely sequential,
+    ///   non-overlapping windows — with `withAnimation`, every row's window starts at
+    ///   `progress == 0` and ends at `progress == 1`, so the interpolation collapses to "every
+    ///   row fades 0→1 over the whole duration" regardless of each row's intended start/window,
+    ///   i.e. the whole list appears to fade in at once instead of row by row. Found via
+    ///   Timeline's "everything fades in at the same time" report, 2026-08-02.
+    func enter(reduceMotion: Bool, duration: TimeInterval = 0.85, manualDrive: Bool = false) {
         guard !isActiveVisit else { return }
         isActiveVisit = true
         guard !reduceMotion else { progress = 1; return }
         let awayLongEnough = leftAt.map { Date().timeIntervalSince($0) > replayThreshold } ?? true
         guard awayLongEnough else { progress = 1; return }
         progress = 0
-        // Linear driver: the per-element easing lives in `staggered(_:index:)`, so a
-        // curved driver here would squash the later elements' stagger together.
-        withAnimation(.linear(duration: duration)) { progress = 1 }
+        guard manualDrive else {
+            // Linear driver: the per-element easing lives in `staggered(_:index:)`, so a
+            // curved driver here would squash the later elements' stagger together.
+            withAnimation(.linear(duration: duration)) { progress = 1 }
+            return
+        }
+        let start = Date()
+        Task { @MainActor in
+            while true {
+                let elapsed = Date().timeIntervalSince(start)
+                progress = min(1, elapsed / duration)
+                if progress >= 1 { break }
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+        }
     }
 
     /// Call from `.onDisappear`.

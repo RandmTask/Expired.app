@@ -178,7 +178,7 @@ struct TimelineView: View {
             .task(id: isSelected) {
                 defer { hasCheckedSelectionOnce = true }
                 if isSelected {
-                    entrance.enter(reduceMotion: reduceMotion, duration: Self.timelineEntranceDuration)
+                    entrance.enter(reduceMotion: reduceMotion, duration: Self.timelineEntranceDuration, manualDrive: true)
                 } else if hasCheckedSelectionOnce {
                     entrance.leave()
                 }
