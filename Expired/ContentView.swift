@@ -129,22 +129,26 @@ struct TimelineView: View {
     /// if the user taps in within the 2s replay-threshold window.
     @State private var hasCheckedSelectionOnce = false
     /// Bumping this tells every currently-mounted `TimelineRow` to (re)play its own entrance.
-    /// Each row reacts via `.onChange(of:)`, so a row that mounts later (lazily, via scrolling,
-    /// well after this last incremented) never sees a *change* and correctly just renders at
-    /// rest instead of replaying a stale reveal.
     @State private var revealGeneration = 0
+    /// Which items have already started their reveal for the CURRENT `revealGeneration`.
+    /// Tracked here (in the stable `TimelineView`, not each row's own `@State`) because CloudKit's
+    /// frequent "remote store change" refresh passes were observed tearing down and recreating
+    /// row views mid-reveal — a row's own `@State` resets on recreation, so it would see the
+    /// still-current `revealGeneration` as "new" again and replay from scratch, mid-animation.
+    /// That produced exactly the reported symptom: rows animating at inconsistent, overlapping
+    /// times instead of a clean single pass. Keying this set by item id (stable across row
+    /// recreation, unlike row-local state) fixes that. Found 2026-08-02.
+    @State private var revealedItemIDs: Set<UUID> = []
     @State private var leftTimelineAt: Date?
     private let timelineReplayThreshold: TimeInterval = 2
 
     /// Starts (or skips) a fresh row-by-row reveal. Called when `isSelected` becomes `true`.
     private func triggerRevealIfNeeded() {
-        // TEMP DEBUG (remove once diagnosed):
-        print("🟡 triggerRevealIfNeeded — reduceMotion=\(reduceMotion) leftTimelineAt=\(String(describing: leftTimelineAt)) revealGeneration(before)=\(revealGeneration)")
-        guard !reduceMotion else { print("🟡 bailing — reduceMotion"); return }
+        guard !reduceMotion else { return }
         let awayLongEnough = leftTimelineAt.map { Date().timeIntervalSince($0) > timelineReplayThreshold } ?? true
-        guard awayLongEnough else { print("🟡 bailing — not away long enough"); return }
+        guard awayLongEnough else { return }
         revealGeneration += 1
-        print("🟡 revealGeneration bumped to \(revealGeneration)")
+        revealedItemIDs.removeAll()
     }
 
     @AppStorage("timelineViewMode") private var viewModeRaw: String = ViewMode.timeline.rawValue
@@ -257,7 +261,9 @@ struct TimelineView: View {
             LazyVStack(spacing: 0) {
                 ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, item in
                     TimelineRow(item: item, isLast: index == upcoming.count - 1,
-                                index: index, revealGeneration: revealGeneration)
+                                index: index, revealGeneration: revealGeneration,
+                                hasAlreadyPlayedThisGeneration: revealedItemIDs.contains(item.id),
+                                markPlayed: { revealedItemIDs.insert(item.id) })
                 }
             }
             .padding(.horizontal)
@@ -279,6 +285,12 @@ struct TimelineRow: View {
     /// Bumped by `TimelineView` to (re)play the whole list's reveal — see there for why this
     /// isn't driven by `.onAppear`.
     var revealGeneration: Int = 0
+    /// Whether `TimelineView`'s stable, item-id-keyed set already recorded this item as revealed
+    /// for the current `revealGeneration` — tracked there, not in this row's own `@State`,
+    /// because CloudKit refresh passes were observed recreating row views mid-reveal, which
+    /// resets row-local `@State` and caused replays mid-animation. See `TimelineView` for detail.
+    let hasAlreadyPlayedThisGeneration: Bool
+    let markPlayed: () -> Void
 
     /// Real per-row animatable state — SwiftUI natively interpolates this frame-by-frame when
     /// mutated inside `withAnimation`. (A shared driver value pushed through a per-row windowing
@@ -288,9 +300,6 @@ struct TimelineRow: View {
     /// settled (`1`) so a row that mounts after the reveal already ran (lazily, via scrolling)
     /// just renders normally instead of replaying a stale entrance.
     @State private var localProgress: Double = 1
-    /// Guards `.task(id: revealGeneration)` against replaying the same generation twice (it can
-    /// re-run for reasons other than a genuine new value, e.g. view identity churn).
-    @State private var lastPlayedGeneration = 0
 
     private static let rowStepDuration: Double = 0.22
     private static let maxStaggeredIndex = 9
@@ -338,13 +347,10 @@ struct TimelineRow: View {
         // fires once on first mount reflecting whatever the *current* value already is, so a
         // late-mounting row still catches up on a reveal it missed.
         .task(id: revealGeneration) {
-            // TEMP DEBUG (remove once diagnosed):
-            print("🟢 row[\(index)] task(revealGeneration) fired — revealGeneration=\(revealGeneration) lastPlayedGeneration=\(lastPlayedGeneration) localProgress=\(localProgress)")
-            guard revealGeneration > lastPlayedGeneration else { print("🟢 row[\(index)] bailing — not newer than last played"); return }
-            lastPlayedGeneration = revealGeneration
-            guard revealGeneration > 0 else { print("🟢 row[\(index)] bailing — generation is 0"); return }
+            guard revealGeneration > 0 else { return }
+            guard !hasAlreadyPlayedThisGeneration else { return }
+            markPlayed()
             localProgress = 0
-            print("🟢 row[\(index)] animating with delay \(Double(min(index, Self.maxStaggeredIndex)) * Self.rowStepDuration)")
             withAnimation(
                 .linear(duration: Self.rowStepDuration)
                     .delay(Double(min(index, Self.maxStaggeredIndex)) * Self.rowStepDuration)
