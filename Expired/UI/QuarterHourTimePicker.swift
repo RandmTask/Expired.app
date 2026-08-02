@@ -43,7 +43,7 @@ struct QuarterHourTimePicker: View {
     }
 }
 
-/// A pill-shaped time chip that opens a compact popover containing a `QuarterHourTimePicker`.
+/// A pill-shaped time chip that opens a compact popover containing a `CompactQuarterHourTimePicker`.
 /// Use in place of an inline wheel picker wherever the picker would otherwise dominate the row.
 struct TimeChip: View {
     @Binding var date: Date
@@ -55,10 +55,10 @@ struct TimeChip: View {
             showPopover = true
         } label: {
             Text(date.formatted(.dateTime.hour().minute()))
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(.primary.opacity(0.75))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
                 .background(Color.secondary.opacity(0.12), in: Capsule())
         }
         .buttonStyle(.plain)
@@ -71,17 +71,18 @@ struct TimeChip: View {
 }
 
 /// A shorter-height variant of `QuarterHourTimePicker` for use inside a popover, where the
-/// standard UIDatePicker wheel (~216pt tall) feels oversized. Crops the wheel to fewer visible
-/// rows — it's still fully scrollable, just shows less of the reel at once.
+/// standard UIDatePicker wheel (~216pt tall) feels oversized. On iOS the height is pinned via
+/// an Auto Layout constraint on the underlying `UIDatePicker` itself (not a SwiftUI frame/clip,
+/// which a `UIViewRepresentable` can silently ignore) — it's still fully scrollable, just shows
+/// fewer rows of the reel at once.
 struct CompactQuarterHourTimePicker: View {
     @Binding var date: Date
 
     var body: some View {
 #if os(iOS)
-        QuarterHourTimePickerRepresentable(date: $date)
+        QuarterHourTimePickerRepresentable(date: $date, compactHeight: 108)
             .fixedSize(horizontal: true, vertical: false)
             .frame(height: 108)
-            .clipped()
 #else
         QuarterHourTimePicker(date: $date)
 #endif
@@ -91,6 +92,7 @@ struct CompactQuarterHourTimePicker: View {
 #if os(iOS)
 private struct QuarterHourTimePickerRepresentable: UIViewRepresentable {
     @Binding var date: Date
+    var compactHeight: CGFloat? = nil
 
     func makeUIView(context: Context) -> UIDatePicker {
         let picker = UIDatePicker()
@@ -99,6 +101,10 @@ private struct QuarterHourTimePickerRepresentable: UIViewRepresentable {
         picker.preferredDatePickerStyle = .wheels
         picker.setContentHuggingPriority(.required, for: .horizontal)
         picker.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
+        if let compactHeight {
+            picker.clipsToBounds = true
+            picker.heightAnchor.constraint(equalToConstant: compactHeight).isActive = true
+        }
         return picker
     }
 

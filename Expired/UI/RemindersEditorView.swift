@@ -233,10 +233,10 @@ struct ReminderRuleRow: View {
                 showTimePopover = true
             } label: {
                 Text(overrideTime.formatted(.dateTime.hour().minute()))
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(timeOverrideOn ? .blue : .primary.opacity(0.75))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
                     .background(
                         (timeOverrideOn ? Color.blue : Color.secondary).opacity(0.12),
                         in: Capsule()
