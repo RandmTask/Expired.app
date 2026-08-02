@@ -50,7 +50,7 @@ struct ContentView: View {
                 HomeView()
             }
             Tab("Timeline", systemImage: "calendar", value: 1) {
-                TimelineView(isSelected: selectedTab == 1)
+                TimelineView()
             }
             Tab("Insights", systemImage: "chart.bar", value: 2) {
                 InsightsView()
@@ -114,42 +114,7 @@ struct TimelineView: View {
     }
 
     @Environment(PurchaseManager.self) private var purchaseManager
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showPaywall = false
-    /// Whether the Timeline tab is the one currently selected in `ContentView`'s `TabView`.
-    /// The reveal MUST be driven off this, not `.onAppear`/`.onDisappear` on this view's
-    /// content — iOS 26's `Tab` API eagerly creates every tab's content at launch (all of
-    /// them, regardless of which is selected), so `.onAppear` fires the moment the app
-    /// launches, well before the user ever taps this tab. `isSelected` flipping true is the
-    /// real "user is now looking at this" signal.
-    let isSelected: Bool
-    /// Guards the very first `.task(id: isSelected)` run: if the view happens to first
-    /// evaluate while `isSelected` is already `false` (the common case), we must NOT stamp
-    /// `leftTimelineAt` on that initial run — that would wrongly block the real first reveal
-    /// if the user taps in within the 2s replay-threshold window.
-    @State private var hasCheckedSelectionOnce = false
-    /// Bumping this tells every currently-mounted `TimelineRow` to (re)play its own entrance.
-    @State private var revealGeneration = 0
-    /// Which items have already started their reveal for the CURRENT `revealGeneration`.
-    /// Tracked here (in the stable `TimelineView`, not each row's own `@State`) because CloudKit's
-    /// frequent "remote store change" refresh passes were observed tearing down and recreating
-    /// row views mid-reveal — a row's own `@State` resets on recreation, so it would see the
-    /// still-current `revealGeneration` as "new" again and replay from scratch, mid-animation.
-    /// That produced exactly the reported symptom: rows animating at inconsistent, overlapping
-    /// times instead of a clean single pass. Keying this set by item id (stable across row
-    /// recreation, unlike row-local state) fixes that. Found 2026-08-02.
-    @State private var revealedItemIDs: Set<UUID> = []
-    @State private var leftTimelineAt: Date?
-    private let timelineReplayThreshold: TimeInterval = 2
-
-    /// Starts (or skips) a fresh row-by-row reveal. Called when `isSelected` becomes `true`.
-    private func triggerRevealIfNeeded() {
-        guard !reduceMotion else { return }
-        let awayLongEnough = leftTimelineAt.map { Date().timeIntervalSince($0) > timelineReplayThreshold } ?? true
-        guard awayLongEnough else { return }
-        revealGeneration += 1
-        revealedItemIDs.removeAll()
-    }
 
     @AppStorage("timelineViewMode") private var viewModeRaw: String = ViewMode.timeline.rawValue
     private var viewMode: ViewMode { ViewMode(rawValue: viewModeRaw) ?? .timeline }
@@ -190,27 +155,6 @@ struct TimelineView: View {
             .navigationTitle("Timeline")
             .largeNavigationTitle()
             .background(groupedBackground.ignoresSafeArea())
-            // `.task(id:)`, not `.onChange(of:)` — confirmed via logging that `onChange` never
-            // fired on the `isSelected` false→true transition in this Tab-API setup. `.task(id:)`
-            // gives a stronger guarantee: it runs once on the view's first evaluation AND again
-            // on every subsequent change to `id`, so it can't silently miss the transition.
-            // Attached on this always-mounted outer Group, not `classicTimelineView`'s
-            // ScrollView, since that view sits behind `if allItems.isEmpty {...} else { switch
-            // ... }` and CloudKit's initial merge can flip that branch (and tear down/recreate
-            // the ScrollView) shortly after launch.
-            .task(id: isSelected) {
-                defer { hasCheckedSelectionOnce = true }
-                if isSelected {
-                    // No delay here — reverted. A delay before `revealGeneration` bumps means
-                    // rows sit fully visible (their settled default) for that whole window,
-                    // since the tab itself becomes visible to the user immediately on tap. The
-                    // bump must happen as promptly as possible so rows reset to hidden before
-                    // the user has a chance to see them settled. Found 2026-08-02.
-                    triggerRevealIfNeeded()
-                } else if hasCheckedSelectionOnce {
-                    leftTimelineAt = Date()
-                }
-            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     // A custom Button-per-row Menu can only show ONE leading glyph per row —
@@ -265,10 +209,7 @@ struct TimelineView: View {
             // it — see `TimelineRow` for why.
             LazyVStack(spacing: 0) {
                 ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, item in
-                    TimelineRow(item: item, isLast: index == upcoming.count - 1,
-                                index: index, revealGeneration: revealGeneration,
-                                hasAlreadyPlayedThisGeneration: revealedItemIDs.contains(item.id),
-                                markPlayed: { revealedItemIDs.insert(item.id) })
+                    TimelineRow(item: item, isLast: index == upcoming.count - 1)
                 }
             }
             .padding(.horizontal)
@@ -285,39 +226,6 @@ struct TimelineRow: View {
     let item: SubscriptionItem
     /// The last row carries no trailing gap-padding — there's no next row to connect to.
     let isLast: Bool
-    /// This row's position, for the reveal's per-row delay.
-    let index: Int
-    /// Bumped by `TimelineView` to (re)play the whole list's reveal — see there for why this
-    /// isn't driven by `.onAppear`.
-    var revealGeneration: Int = 0
-    /// Whether `TimelineView`'s stable, item-id-keyed set already recorded this item as revealed
-    /// for the current `revealGeneration` — tracked there, not in this row's own `@State`,
-    /// because CloudKit refresh passes were observed recreating row views mid-reveal, which
-    /// resets row-local `@State` and caused replays mid-animation. See `TimelineView` for detail.
-    let hasAlreadyPlayedThisGeneration: Bool
-    let markPlayed: () -> Void
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// Real per-row animatable state — SwiftUI natively interpolates this frame-by-frame when
-    /// mutated inside `withAnimation`. (A shared driver value pushed through a per-row windowing
-    /// function does NOT get this: `withAnimation` only interpolates the *rendered* property
-    /// between its before/after values, so every row's window collapsed to the same 0→1 span —
-    /// "the whole list fades in at once" instead of row-by-row. Found 2026-08-02.)
-    ///
-    /// Defaults to **hidden** (`0`) — matching `InsightsEntrance.progress`'s own default, which
-    /// is why the Insights donut/charts never "populate early" during the eager tab pre-mount:
-    /// nothing is visible until something explicitly reveals it. An earlier version of this row
-    /// defaulted to settled (`1`) so a late-mounting row (e.g. scrolled into view long after a
-    /// reveal finished) wouldn't stay stuck invisible — but that meant every row was fully
-    /// visible during the pre-mount phase, then got reset to hidden right as the tab appeared,
-    /// producing a visible "it's all there, then it disappears" flash. The `.task` below now
-    /// handles the late-mount case explicitly (snapping straight to `1`, no animation) instead of
-    /// relying on the default to paper over it.
-    @State private var localProgress: Double = 0
-
-    private static let rowStepDuration: Double = 0.22
-    private static let maxStaggeredIndex = 9
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -329,19 +237,10 @@ struct TimelineRow: View {
                     .fill(dotColor.opacity(0.25))
                     .frame(width: 2)
                     .frame(maxHeight: .infinity)
-                    // Grows down from the top so it visibly draws toward the dot. Deliberately
-                    // NOT inside `.insightsEntrance` below — fading opacity *at the same time* as
-                    // the height grows makes the whole thing look like a hazy smudge spreading
-                    // rather than a crisp line being drawn. Full, constant opacity here; the
-                    // reveal is carried entirely by the scale.
-                    .scaleEffect(x: 1, y: lineProgress, anchor: .top)
                 Circle()
                     .fill(dotColor)
                     .frame(width: 10, height: 10)
                     .padding(.bottom, 4)
-                    // Same reasoning: the overshoot bounce already reads clearly as "popping
-                    // in" — it doesn't need a simultaneous opacity fade to sell the reveal.
-                    .scaleEffect(dotScale)
             }
             .frame(width: 10)
             // The gap between cards lives HERE (not as LazyVStack spacing) so the dot/line
@@ -349,66 +248,8 @@ struct TimelineRow: View {
             // of stopping at the card's edge and leaving a gap with no line drawn in it.
             SubscriptionRowView(item: item)
                 .padding(.bottom, isLast ? 0 : 12)
-                // Fade/rise/scale applies to the card only — the dot/line column reveals purely
-                // via scale (see above), so it can look "drawn" rather than "faded".
-                .insightsEntrance(localProgress)
         }
         .frame(minHeight: 60)
-        // `.task(id:)`, not `.onChange(of:)` — a row that mounts AFTER `revealGeneration`
-        // already ticked (e.g. because it was gated behind CloudKit populating `allItems`,
-        // which runs on its own async schedule, independent of when the tab was selected) would
-        // never observe the transition via `onChange` and would silently skip its entrance
-        // entirely ("first time you go in, it's all there, no animation"). `.task(id:)` also
-        // fires once on first mount reflecting whatever the *current* value already is, so a
-        // late-mounting row still catches up on a reveal it missed.
-        .task(id: revealGeneration) {
-            guard !reduceMotion else { localProgress = 1; return }
-            // No reveal has been triggered yet for this visit — during the eager tab pre-mount
-            // (while some other tab is showing) this is expected and correct: just stay hidden,
-            // exactly like Insights' donut/charts sitting at `progress == 0` until you visit that
-            // tab. Nothing to reset later, because nothing was ever shown.
-            guard revealGeneration > 0 else { return }
-            guard !hasAlreadyPlayedThisGeneration else {
-                // Mounted after this generation's reveal already ran (e.g. scrolled into view
-                // later) — show immediately, no animation; there was never anything to "undo".
-                localProgress = 1
-                return
-            }
-            markPlayed()
-            // Reset in case this row is mid-fade from an earlier, still-completing reveal (a
-            // genuine replay on revisit, not the pre-mount case above) — matches
-            // `InsightsEntrance.enter()`'s own `progress = 0` before re-animating.
-            localProgress = 0
-            // No settle delay before animating — a prior attempt added one (to dodge a suspected
-            // CloudKit-collision race on standalone cold launches), but with up to 9 staggered
-            // rows at rowStepDuration each, that pushed the LAST row's finish to ~2.4s after the
-            // tap. A blank screen for that long reads as broken, not slow — testers reasonably
-            // swiped away before row 0 ever appeared, then found it silently "already played" (no
-            // animation) on the very next visit. Starting immediately means row 0 appears within
-            // one `rowStepDuration`, which is what actually fixes the perceived-broken problem.
-            // Found 2026-08-02.
-            withAnimation(
-                .linear(duration: Self.rowStepDuration)
-                    .delay(Double(min(index, Self.maxStaggeredIndex)) * Self.rowStepDuration)
-            ) {
-                localProgress = 1
-            }
-        }
-    }
-
-    /// Line draws in over the first 60% of this row's local window...
-    private var lineProgress: Double { min(1, localProgress / 0.6) }
-    /// ...and the dot's pop-in bounce takes the remainder, landing once the line reaches it —
-    /// slight overlap (starts at 45%) so the handoff doesn't read as two disjoint steps.
-    private var dotAppearProgress: Double { max(0, min(1, (localProgress - 0.45) / 0.55)) }
-
-    /// Dot pops in with a small overshoot past 1.0 rather than the row's plain ease-out,
-    /// so the spine reads as being "drawn" rather than just fading up with everything else.
-    private var dotScale: Double {
-        let c1 = 1.70158
-        let c3 = c1 + 1
-        let x = dotAppearProgress - 1
-        return 1 + c3 * x * x * x + c1 * x * x
     }
 
     private var dotColor: Color {
