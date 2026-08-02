@@ -144,11 +144,14 @@ struct TimelineView: View {
 
     /// Starts (or skips) a fresh row-by-row reveal. Called when `isSelected` becomes `true`.
     private func triggerRevealIfNeeded() {
+        // TEMP DEBUG (remove once diagnosed):
+        print("🟠 [\(Date().timeIntervalSinceReferenceDate)] triggerRevealIfNeeded — reduceMotion=\(reduceMotion)")
         guard !reduceMotion else { return }
         let awayLongEnough = leftTimelineAt.map { Date().timeIntervalSince($0) > timelineReplayThreshold } ?? true
-        guard awayLongEnough else { return }
+        guard awayLongEnough else { print("🟠 bailing — not away long enough"); return }
         revealGeneration += 1
         revealedItemIDs.removeAll()
+        print("🟠 [\(Date().timeIntervalSinceReferenceDate)] revealGeneration bumped to \(revealGeneration)")
     }
 
     @AppStorage("timelineViewMode") private var viewModeRaw: String = ViewMode.timeline.rawValue
@@ -347,10 +350,13 @@ struct TimelineRow: View {
         // fires once on first mount reflecting whatever the *current* value already is, so a
         // late-mounting row still catches up on a reveal it missed.
         .task(id: revealGeneration) {
+            // TEMP DEBUG (remove once diagnosed):
+            print("🟢 [\(Date().timeIntervalSinceReferenceDate)] row[\(index)] fired — revealGeneration=\(revealGeneration) hasAlreadyPlayed=\(hasAlreadyPlayedThisGeneration) localProgress=\(localProgress)")
             guard revealGeneration > 0 else { return }
-            guard !hasAlreadyPlayedThisGeneration else { return }
+            guard !hasAlreadyPlayedThisGeneration else { print("🟢 row[\(index)] bailing — already played"); return }
             markPlayed()
             localProgress = 0
+            print("🟢 [\(Date().timeIntervalSinceReferenceDate)] row[\(index)] calling withAnimation, delay=\(Double(min(index, Self.maxStaggeredIndex)) * Self.rowStepDuration)")
             withAnimation(
                 .linear(duration: Self.rowStepDuration)
                     .delay(Double(min(index, Self.maxStaggeredIndex)) * Self.rowStepDuration)
