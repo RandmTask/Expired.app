@@ -59,7 +59,6 @@ struct TimeChip: View {
             date: Binding(get: { date }, set: { date = QuarterHourTimePicker.snap($0) }),
             tintColor: UIColor(tint)
         )
-        .fixedSize(horizontal: true, vertical: true)
 #else
         DatePicker(
             "",
@@ -97,6 +96,13 @@ private struct CompactStyleTimePickerRepresentable: UIViewRepresentable {
         if !Calendar.current.isDate(picker.date, equalTo: date, toGranularity: .minute) {
             picker.date = date
         }
+    }
+
+    /// `.compact`-style `UIDatePicker` doesn't reliably report a usable `intrinsicContentSize`
+    /// before it's actually in a window, so SwiftUI's default fitting pass (and `.fixedSize()`)
+    /// can collapse it to zero. Ask the UIKit view directly via its own layout system instead.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIDatePicker, context: Context) -> CGSize? {
+        uiView.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(date: $date) }
