@@ -138,10 +138,13 @@ struct TimelineView: View {
 
     /// Starts (or skips) a fresh row-by-row reveal. Called when `isSelected` becomes `true`.
     private func triggerRevealIfNeeded() {
-        guard !reduceMotion else { return }
+        // TEMP DEBUG (remove once diagnosed):
+        print("🟡 triggerRevealIfNeeded — reduceMotion=\(reduceMotion) leftTimelineAt=\(String(describing: leftTimelineAt)) revealGeneration(before)=\(revealGeneration)")
+        guard !reduceMotion else { print("🟡 bailing — reduceMotion"); return }
         let awayLongEnough = leftTimelineAt.map { Date().timeIntervalSince($0) > timelineReplayThreshold } ?? true
-        guard awayLongEnough else { return }
+        guard awayLongEnough else { print("🟡 bailing — not away long enough"); return }
         revealGeneration += 1
+        print("🟡 revealGeneration bumped to \(revealGeneration)")
     }
 
     @AppStorage("timelineViewMode") private var viewModeRaw: String = ViewMode.timeline.rawValue
@@ -335,10 +338,13 @@ struct TimelineRow: View {
         // fires once on first mount reflecting whatever the *current* value already is, so a
         // late-mounting row still catches up on a reveal it missed.
         .task(id: revealGeneration) {
-            guard revealGeneration > lastPlayedGeneration else { return }
+            // TEMP DEBUG (remove once diagnosed):
+            print("🟢 row[\(index)] task(revealGeneration) fired — revealGeneration=\(revealGeneration) lastPlayedGeneration=\(lastPlayedGeneration) localProgress=\(localProgress)")
+            guard revealGeneration > lastPlayedGeneration else { print("🟢 row[\(index)] bailing — not newer than last played"); return }
             lastPlayedGeneration = revealGeneration
-            guard revealGeneration > 0 else { return }
+            guard revealGeneration > 0 else { print("🟢 row[\(index)] bailing — generation is 0"); return }
             localProgress = 0
+            print("🟢 row[\(index)] animating with delay \(Double(min(index, Self.maxStaggeredIndex)) * Self.rowStepDuration)")
             withAnimation(
                 .linear(duration: Self.rowStepDuration)
                     .delay(Double(min(index, Self.maxStaggeredIndex)) * Self.rowStepDuration)
