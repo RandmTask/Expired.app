@@ -55,18 +55,36 @@ struct TimeChip: View {
             showPopover = true
         } label: {
             Text(date.formatted(.dateTime.hour().minute()))
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.primary.opacity(0.75))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
                 .background(Color.secondary.opacity(0.12), in: Capsule())
         }
         .buttonStyle(.plain)
         .popover(isPresented: $showPopover) {
-            QuarterHourTimePicker(date: $date)
-                .padding(16)
+            CompactQuarterHourTimePicker(date: $date)
+                .padding(12)
                 .presentationCompactAdaptation(.popover)
         }
+    }
+}
+
+/// A shorter-height variant of `QuarterHourTimePicker` for use inside a popover, where the
+/// standard UIDatePicker wheel (~216pt tall) feels oversized. Crops the wheel to fewer visible
+/// rows — it's still fully scrollable, just shows less of the reel at once.
+struct CompactQuarterHourTimePicker: View {
+    @Binding var date: Date
+
+    var body: some View {
+#if os(iOS)
+        QuarterHourTimePickerRepresentable(date: $date)
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(height: 108)
+            .clipped()
+#else
+        QuarterHourTimePicker(date: $date)
+#endif
     }
 }
 

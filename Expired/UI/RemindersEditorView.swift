@@ -233,10 +233,10 @@ struct ReminderRuleRow: View {
                 showTimePopover = true
             } label: {
                 Text(overrideTime.formatted(.dateTime.hour().minute()))
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(timeOverrideOn ? .blue : .primary.opacity(0.75))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
                     .background(
                         (timeOverrideOn ? Color.blue : Color.secondary).opacity(0.12),
                         in: Capsule()
@@ -259,8 +259,8 @@ struct ReminderRuleRow: View {
     }
 
     private var timePopoverContent: some View {
-        VStack(spacing: 12) {
-            QuarterHourTimePicker(date: $overrideTime)
+        VStack(spacing: 8) {
+            CompactQuarterHourTimePicker(date: $overrideTime)
                 .onChange(of: overrideTime) { _, _ in
                     timeOverrideOn = true
                     propagate()

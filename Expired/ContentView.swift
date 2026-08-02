@@ -2960,9 +2960,6 @@ struct SettingsView: View {
     @AppStorage("appearanceMode") private var appearanceMode = 0
     @AppStorage("notificationHour")   private var notificationHour: Int = 9
     @AppStorage("notificationMinute") private var notificationMinute: Int = 0
-    @AppStorage("quietHoursEnabled") private var quietHoursEnabled = false
-    @AppStorage("quietHoursStartMinutes") private var quietStartMinutes: Int = 22 * 60
-    @AppStorage("quietHoursEndMinutes")   private var quietEndMinutes: Int = 8 * 60
     @State private var showRestartAlert = false
     @State private var showCurrencyPicker = false
     @State private var isSyncing = false
@@ -2992,45 +2989,6 @@ struct SettingsView: View {
         ) ?? Date()
     }
 
-    private func date(fromMinutes minutes: Int) -> Date {
-        Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date()
-    }
-
-    private func minutes(from date: Date) -> Int {
-        let snapped = QuarterHourTimePicker.snap(date)
-        let c = Calendar.current.dateComponents([.hour, .minute], from: snapped)
-        return (c.hour ?? 0) * 60 + (c.minute ?? 0)
-    }
-
-    /// Binding for the quiet-hours start time. Writes through both stores + refreshes.
-    private var quietStartBinding: Binding<Date> {
-        Binding(
-            get: { date(fromMinutes: quietStartMinutes) },
-            set: { newDate in
-                quietStartMinutes = minutes(from: newDate)
-                NotificationTimeSettings.writeInt(quietStartMinutes, forKey: NotificationTimeSettings.quietStartKey)
-                Task { await NotificationManager.shared.refreshAll(context: modelContext) }
-            }
-        )
-    }
-
-    private var quietEndBinding: Binding<Date> {
-        Binding(
-            get: { date(fromMinutes: quietEndMinutes) },
-            set: { newDate in
-                quietEndMinutes = minutes(from: newDate)
-                NotificationTimeSettings.writeInt(quietEndMinutes, forKey: NotificationTimeSettings.quietEndKey)
-                Task { await NotificationManager.shared.refreshAll(context: modelContext) }
-            }
-        )
-    }
-
-    private func setQuietHoursEnabled(_ on: Bool) {
-        Haptics.fire(.selectionChanged)
-        quietHoursEnabled = on
-        NotificationTimeSettings.writeBool(on, forKey: NotificationTimeSettings.quietEnabledKey)
-        Task { await NotificationManager.shared.refreshAll(context: modelContext) }
-    }
 
     /// Writes notification time to both @AppStorage (local) and iCloud KV store (cross-device),
     /// via the shared settings accessor so every read path (including background refreshes) agrees.
@@ -3542,32 +3500,6 @@ struct SettingsView: View {
                         macSettingsLabel("Default Reminder", icon: "clock")
                         Spacer()
                         TimeChip(date: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }))
-                    }
-
-                    FormDivider()
-
-                    settingsRow {
-                        macSettingsLabel("Quiet Hours", icon: "moon.fill")
-                        Spacer()
-                        Toggle("", isOn: Binding(get: { quietHoursEnabled }, set: { setQuietHoursEnabled($0) }))
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                            .tint(.blue)
-                    }
-
-                    if quietHoursEnabled {
-                        FormDivider()
-                        settingsRow {
-                            macSettingsLabel("From", icon: "bed.double.fill")
-                            Spacer()
-                            QuarterHourTimePicker(date: quietStartBinding)
-                        }
-                        FormDivider()
-                        settingsRow {
-                            macSettingsLabel("To", icon: "sun.max.fill")
-                            Spacer()
-                            QuarterHourTimePicker(date: quietEndBinding)
-                        }
                     }
 
                     FormDivider()
@@ -4116,34 +4048,6 @@ struct SettingsView: View {
                 }
                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
 
-                HStack {
-                    rowIcon("moon.fill")
-                    Text("Quiet Hours").foregroundStyle(.primary)
-                    Spacer()
-                    Toggle("", isOn: Binding(get: { quietHoursEnabled }, set: { setQuietHoursEnabled($0) }))
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                        .tint(.blue)
-                }
-                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-
-                if quietHoursEnabled {
-                    HStack {
-                        rowIcon("bed.double.fill")
-                        Text("From").foregroundStyle(.primary)
-                        Spacer()
-                        QuarterHourTimePicker(date: quietStartBinding)
-                    }
-                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                    HStack {
-                        rowIcon("sun.max.fill")
-                        Text("To").foregroundStyle(.primary)
-                        Spacer()
-                        QuarterHourTimePicker(date: quietEndBinding)
-                    }
-                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                }
-
                 NavigationLink {
                     ScheduledNotificationsView()
                 } label: {
@@ -4155,9 +4059,7 @@ struct SettingsView: View {
             } header: {
                 sectionHeader("NOTIFICATIONS")
             } footer: {
-                Text(quietHoursEnabled
-                     ? "Non-critical reminders inside quiet hours are delivered at the window's end. Critical reminders always fire on time."
-                     : "Reminders will be delivered at this time on the scheduled day.")
+                Text("Reminders will be delivered at this time on the scheduled day.")
             }
 
             // MARK: Data
