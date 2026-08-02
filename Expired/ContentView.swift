@@ -110,21 +110,33 @@ struct TimelineView: View {
     @Environment(PurchaseManager.self) private var purchaseManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showPaywall = false
-    // Reuses `InsightsEntrance` as-is (it isn't Insights-specific) so the classic timeline
-    // gets the same staggered fade-in + "don't replay if you just glanced away" gating.
-    @State private var entrance = InsightsEntrance()
     /// Whether the Timeline tab is the one currently selected in `ContentView`'s `TabView`.
-    /// The entrance MUST be driven off this, not `.onAppear`/`.onDisappear` on this view's
+    /// The reveal MUST be driven off this, not `.onAppear`/`.onDisappear` on this view's
     /// content — iOS 26's `Tab` API eagerly creates every tab's content at launch (all of
     /// them, regardless of which is selected), so `.onAppear` fires the moment the app
-    /// launches, and the entrance plays out fully off-screen before the user ever taps this
-    /// tab. `isSelected` flipping true is the real "user is now looking at this" signal.
+    /// launches, well before the user ever taps this tab. `isSelected` flipping true is the
+    /// real "user is now looking at this" signal.
     let isSelected: Bool
     /// Guards the very first `.task(id: isSelected)` run: if the view happens to first
-    /// evaluate while `isSelected` is already `false` (the common case), we must NOT call
-    /// `entrance.leave()` on that initial run — that would stamp `leftAt` as "just now" and
-    /// wrongly block the real first entrance if the user taps in within the 2s threshold.
+    /// evaluate while `isSelected` is already `false` (the common case), we must NOT stamp
+    /// `leftTimelineAt` on that initial run — that would wrongly block the real first reveal
+    /// if the user taps in within the 2s replay-threshold window.
     @State private var hasCheckedSelectionOnce = false
+    /// Bumping this tells every currently-mounted `TimelineRow` to (re)play its own entrance.
+    /// Each row reacts via `.onChange(of:)`, so a row that mounts later (lazily, via scrolling,
+    /// well after this last incremented) never sees a *change* and correctly just renders at
+    /// rest instead of replaying a stale reveal.
+    @State private var revealGeneration = 0
+    @State private var leftTimelineAt: Date?
+    private let timelineReplayThreshold: TimeInterval = 2
+
+    /// Starts (or skips) a fresh row-by-row reveal. Called when `isSelected` becomes `true`.
+    private func triggerRevealIfNeeded() {
+        guard !reduceMotion else { return }
+        let awayLongEnough = leftTimelineAt.map { Date().timeIntervalSince($0) > timelineReplayThreshold } ?? true
+        guard awayLongEnough else { return }
+        revealGeneration += 1
+    }
 
     @AppStorage("timelineViewMode") private var viewModeRaw: String = ViewMode.timeline.rawValue
     private var viewMode: ViewMode { ViewMode(rawValue: viewModeRaw) ?? .timeline }
@@ -166,21 +178,19 @@ struct TimelineView: View {
             .largeNavigationTitle()
             .background(groupedBackground.ignoresSafeArea())
             // `.task(id:)`, not `.onChange(of:)` — confirmed via logging that `onChange` never
-            // fired on the `isSelected` false→true transition in this Tab-API setup (entrance
-            // never ran, every row stuck at `progress == 0`, i.e. permanently invisible — the
-            // black-screen bug). `.task(id:)` gives a stronger guarantee: it runs once on the
-            // view's first evaluation AND again on every subsequent change to `id`, so it can't
-            // silently miss the transition the way `onChange` did here. Attached on this
-            // always-mounted outer Group, not `classicTimelineView`'s ScrollView, since that
-            // view sits behind `if allItems.isEmpty {...} else { switch ... }` and CloudKit's
-            // initial merge can flip that branch (and tear down/recreate the ScrollView) shortly
-            // after launch.
+            // fired on the `isSelected` false→true transition in this Tab-API setup. `.task(id:)`
+            // gives a stronger guarantee: it runs once on the view's first evaluation AND again
+            // on every subsequent change to `id`, so it can't silently miss the transition.
+            // Attached on this always-mounted outer Group, not `classicTimelineView`'s
+            // ScrollView, since that view sits behind `if allItems.isEmpty {...} else { switch
+            // ... }` and CloudKit's initial merge can flip that branch (and tear down/recreate
+            // the ScrollView) shortly after launch.
             .task(id: isSelected) {
                 defer { hasCheckedSelectionOnce = true }
                 if isSelected {
-                    entrance.enter(reduceMotion: reduceMotion, duration: Self.timelineEntranceDuration, manualDrive: true)
+                    triggerRevealIfNeeded()
                 } else if hasCheckedSelectionOnce {
-                    entrance.leave()
+                    leftTimelineAt = Date()
                 }
             }
             .toolbar {
@@ -229,23 +239,16 @@ struct TimelineView: View {
 
     // MARK: - Classic timeline (original spine list)
 
-    /// Non-overlapping row slots (stride == window) so rows reveal strictly one at a time —
-    /// row `i+1` only starts once row `i`'s own window finishes — instead of the cascading
-    /// overlap `InsightsEntrance`'s default stride/window ratio produces.
-    private static let rowStride = 0.1
-    /// Longer than Insights' default 0.85s: at 10 non-overlapping slots, 0.85s would give each
-    /// row ~85ms, too fast to read as "one at a time." ~1.4s gives each row ~140ms.
-    private static let timelineEntranceDuration: TimeInterval = 1.4
-
     private var classicTimelineView: some View {
         ScrollView {
-            LazyVStack(spacing: 12) {
+            // `spacing: 0` — the visual gap between cards now lives on each row's *card*
+            // (`.padding(.bottom:)` in `TimelineRow`), not on the LazyVStack. That's what lets
+            // the dot/line column stretch through what used to be a dead gap with no line in
+            // it — see `TimelineRow` for why.
+            LazyVStack(spacing: 0) {
                 ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, item in
-                    // Clamp the index so long lists still finish inside the driver's 0→1 run.
-                    TimelineRow(item: item, isFirst: index == 0,
-                                progress: entrance.staggered(index: min(index, 9),
-                                                              stride: Self.rowStride,
-                                                              window: Self.rowStride))
+                    TimelineRow(item: item, isFirst: index == 0, isLast: index == upcoming.count - 1,
+                                index: index, revealGeneration: revealGeneration)
                 }
             }
             .padding(.horizontal)
@@ -260,13 +263,28 @@ struct TimelineView: View {
 
 struct TimelineRow: View {
     let item: SubscriptionItem
-    /// The dot now sits at the *bottom* of each row (see below), so the leading connector
-    /// line is only omitted for the first row — there's nothing above it to connect to.
+    /// The dot sits at the *bottom* of each row (see below), so the leading connector line is
+    /// only omitted for the first row — there's nothing above it to connect to.
     let isFirst: Bool
-    /// 0→1 local entrance progress for this row alone (see `TimelineView.entrance`); rows
-    /// reveal sequentially, not overlapping. Defaults to 1 (fully settled) for any caller
-    /// that doesn't drive an entrance.
-    var progress: Double = 1
+    /// The last row carries no trailing gap-padding — there's no next row to connect to.
+    let isLast: Bool
+    /// This row's position, for the reveal's per-row delay.
+    let index: Int
+    /// Bumped by `TimelineView` to (re)play the whole list's reveal — see there for why this
+    /// isn't driven by `.onAppear`.
+    var revealGeneration: Int = 0
+
+    /// Real per-row animatable state — SwiftUI natively interpolates this frame-by-frame when
+    /// mutated inside `withAnimation`. (A shared driver value pushed through a per-row windowing
+    /// function does NOT get this: `withAnimation` only interpolates the *rendered* property
+    /// between its before/after values, so every row's window collapsed to the same 0→1 span —
+    /// "the whole list fades in at once" instead of row-by-row. Found 2026-08-02.) Defaults to
+    /// settled (`1`) so a row that mounts after the reveal already ran (lazily, via scrolling)
+    /// just renders normally instead of replaying a stale entrance.
+    @State private var localProgress: Double = 1
+
+    private static let rowStepDuration: Double = 0.22
+    private static let maxStaggeredIndex = 9
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -294,17 +312,31 @@ struct TimelineRow: View {
                     .scaleEffect(dotScale)
             }
             .frame(width: 10)
+            // The gap between cards lives HERE (not as LazyVStack spacing) so the dot/line
+            // column above — which fills `maxHeight: .infinity` — stretches through it instead
+            // of stopping at the card's edge and leaving a gap with no line drawn in it.
             SubscriptionRowView(item: item)
+                .padding(.bottom, isLast ? 0 : 12)
         }
         .frame(minHeight: 60)
-        .insightsEntrance(progress)
+        .insightsEntrance(localProgress)
+        .onChange(of: revealGeneration) { oldValue, newValue in
+            guard newValue > oldValue else { return }
+            localProgress = 0
+            withAnimation(
+                .linear(duration: Self.rowStepDuration)
+                    .delay(Double(min(index, Self.maxStaggeredIndex)) * Self.rowStepDuration)
+            ) {
+                localProgress = 1
+            }
+        }
     }
 
     /// Line draws in over the first 60% of this row's local window...
-    private var lineProgress: Double { min(1, progress / 0.6) }
+    private var lineProgress: Double { min(1, localProgress / 0.6) }
     /// ...and the dot's pop-in bounce takes the remainder, landing once the line reaches it —
     /// slight overlap (starts at 45%) so the handoff doesn't read as two disjoint steps.
-    private var dotAppearProgress: Double { max(0, min(1, (progress - 0.45) / 0.55)) }
+    private var dotAppearProgress: Double { max(0, min(1, (localProgress - 0.45) / 0.55)) }
 
     /// Dot pops in with a small overshoot past 1.0 rather than the row's plain ease-out,
     /// so the spine reads as being "drawn" rather than just fading up with everything else.
