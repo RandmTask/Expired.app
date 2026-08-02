@@ -279,6 +279,9 @@ struct TimelineRow: View {
     /// settled (`1`) so a row that mounts after the reveal already ran (lazily, via scrolling)
     /// just renders normally instead of replaying a stale entrance.
     @State private var localProgress: Double = 1
+    /// Guards `.task(id: revealGeneration)` against replaying the same generation twice (it can
+    /// re-run for reasons other than a genuine new value, e.g. view identity churn).
+    @State private var lastPlayedGeneration = 0
 
     private static let rowStepDuration: Double = 0.22
     private static let maxStaggeredIndex = 9
@@ -318,8 +321,17 @@ struct TimelineRow: View {
                 .insightsEntrance(localProgress)
         }
         .frame(minHeight: 60)
-        .onChange(of: revealGeneration) { oldValue, newValue in
-            guard newValue > oldValue else { return }
+        // `.task(id:)`, not `.onChange(of:)` — a row that mounts AFTER `revealGeneration`
+        // already ticked (e.g. because it was gated behind CloudKit populating `allItems`,
+        // which runs on its own async schedule, independent of when the tab was selected) would
+        // never observe the transition via `onChange` and would silently skip its entrance
+        // entirely ("first time you go in, it's all there, no animation"). `.task(id:)` also
+        // fires once on first mount reflecting whatever the *current* value already is, so a
+        // late-mounting row still catches up on a reveal it missed.
+        .task(id: revealGeneration) {
+            guard revealGeneration > lastPlayedGeneration else { return }
+            lastPlayedGeneration = revealGeneration
+            guard revealGeneration > 0 else { return }
             localProgress = 0
             withAnimation(
                 .linear(duration: Self.rowStepDuration)
