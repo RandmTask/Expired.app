@@ -181,7 +181,6 @@ struct ReminderRuleRow: View {
     @State private var isCritical: Bool
     @State private var timeOverrideOn: Bool
     @State private var overrideTime: Date
-    @State private var showTimePopover = false
 
     init(rule: NotificationRuleDraft,
          baseDate: Date,
@@ -208,9 +207,14 @@ struct ReminderRuleRow: View {
 
     var body: some View {
         rowContent
-            .popover(isPresented: $showTimePopover) {
-                timePopoverContent
-            }
+    }
+
+    /// The cascaded default time (item override, else the global Settings reminder time) —
+    /// what "Use default time" resets back to.
+    private var defaultTime: Date {
+        let h = itemHour ?? NotificationTimeSettings.globalHour
+        let m = itemMinute ?? NotificationTimeSettings.globalMinute
+        return Calendar.current.date(bySettingHour: h, minute: m, second: 0, of: Date()) ?? Date()
     }
 
     private var rowContent: some View {
@@ -228,21 +232,26 @@ struct ReminderRuleRow: View {
                     .fixedSize()
             }
             Spacer(minLength: 0)
-            Button {
-                Haptics.fire(.selectionChanged)
-                showTimePopover = true
-            } label: {
-                Text(overrideTime.formatted(.dateTime.hour().minute()))
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(timeOverrideOn ? .blue : .primary.opacity(0.75))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(
-                        (timeOverrideOn ? Color.blue : Color.secondary).opacity(0.12),
-                        in: Capsule()
-                    )
+
+            TimeChip(date: $overrideTime, tint: timeOverrideOn ? .blue : .primary)
+                .onChange(of: overrideTime) { _, _ in
+                    timeOverrideOn = true
+                    propagate()
+                }
+
+            if timeOverrideOn {
+                Button {
+                    Haptics.fire(.light)
+                    timeOverrideOn = false
+                    overrideTime = defaultTime
+                    propagate()
+                } label: {
+                    Image(systemName: "arrow.uturn.backward.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             Button {
                 Haptics.fire(.light)
@@ -256,27 +265,6 @@ struct ReminderRuleRow: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-    }
-
-    private var timePopoverContent: some View {
-        VStack(spacing: 8) {
-            CompactQuarterHourTimePicker(date: $overrideTime)
-                .onChange(of: overrideTime) { _, _ in
-                    timeOverrideOn = true
-                    propagate()
-                }
-            if timeOverrideOn {
-                Button("Use default time", role: .destructive) {
-                    Haptics.fire(.light)
-                    timeOverrideOn = false
-                    propagate()
-                    showTimePopover = false
-                }
-                .font(.system(size: 13))
-            }
-        }
-        .padding(16)
-        .presentationCompactAdaptation(.popover)
     }
 
     private var overrideMinutes: (hour: Int, minute: Int) {

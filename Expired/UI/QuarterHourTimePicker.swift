@@ -15,8 +15,7 @@ struct QuarterHourTimePicker: View {
 
     var body: some View {
 #if os(iOS)
-        QuarterHourTimePickerRepresentable(date: $date)
-            .fixedSize()
+        TimeChip(date: $date)
 #else
         DatePicker(
             "",
@@ -43,72 +42,58 @@ struct QuarterHourTimePicker: View {
     }
 }
 
-/// A pill-shaped time chip that opens a compact popover containing a `CompactQuarterHourTimePicker`.
-/// Use in place of an inline wheel picker wherever the picker would otherwise dominate the row.
+/// A native, system-styled compact time control snapping to 15-minute intervals.
+///
+/// On iOS this wraps `UIDatePicker` with `preferredDatePickerStyle = .compact` — Apple's own
+/// "small pill button that expands into a tightly-sized overlay" time picker (the same control
+/// Reminders/Calendar use). It already renders with the standard system pill background and
+/// standard system time-text size, so no custom font/pill styling is layered on top. On macOS
+/// `.compact` isn't available, so this falls back to the existing `.field` style picker.
 struct TimeChip: View {
     @Binding var date: Date
-    @State private var showPopover = false
-
-    var body: some View {
-        Button {
-            Haptics.fire(.selectionChanged)
-            showPopover = true
-        } label: {
-            Text(date.formatted(.dateTime.hour().minute()))
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(.primary.opacity(0.75))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(Color.secondary.opacity(0.12), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .popover(isPresented: $showPopover) {
-            CompactQuarterHourTimePicker(date: $date)
-                .padding(12)
-                .presentationCompactAdaptation(.popover)
-        }
-    }
-}
-
-/// A shorter-height variant of `QuarterHourTimePicker` for use inside a popover, where the
-/// standard UIDatePicker wheel (~216pt tall) feels oversized. On iOS the height is pinned via
-/// an Auto Layout constraint on the underlying `UIDatePicker` itself (not a SwiftUI frame/clip,
-/// which a `UIViewRepresentable` can silently ignore) — it's still fully scrollable, just shows
-/// fewer rows of the reel at once.
-struct CompactQuarterHourTimePicker: View {
-    @Binding var date: Date
+    var tint: Color = .primary
 
     var body: some View {
 #if os(iOS)
-        QuarterHourTimePickerRepresentable(date: $date, compactHeight: 108)
-            .fixedSize(horizontal: true, vertical: false)
-            .frame(height: 108)
+        CompactStyleTimePickerRepresentable(
+            date: Binding(get: { date }, set: { date = QuarterHourTimePicker.snap($0) }),
+            tintColor: UIColor(tint)
+        )
+        .fixedSize()
 #else
-        QuarterHourTimePicker(date: $date)
+        DatePicker(
+            "",
+            selection: Binding(
+                get: { date },
+                set: { date = QuarterHourTimePicker.snap($0) }
+            ),
+            displayedComponents: .hourAndMinute
+        )
+        .labelsHidden()
+        .datePickerStyle(.field)
+        .tint(tint)
 #endif
     }
 }
 
 #if os(iOS)
-private struct QuarterHourTimePickerRepresentable: UIViewRepresentable {
+private struct CompactStyleTimePickerRepresentable: UIViewRepresentable {
     @Binding var date: Date
-    var compactHeight: CGFloat? = nil
+    var tintColor: UIColor
 
     func makeUIView(context: Context) -> UIDatePicker {
         let picker = UIDatePicker()
         picker.datePickerMode = .time
         picker.minuteInterval = 15
-        picker.preferredDatePickerStyle = .wheels
+        picker.preferredDatePickerStyle = .compact
+        picker.tintColor = tintColor
         picker.setContentHuggingPriority(.required, for: .horizontal)
         picker.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
-        if let compactHeight {
-            picker.clipsToBounds = true
-            picker.heightAnchor.constraint(equalToConstant: compactHeight).isActive = true
-        }
         return picker
     }
 
     func updateUIView(_ picker: UIDatePicker, context: Context) {
+        picker.tintColor = tintColor
         if !Calendar.current.isDate(picker.date, equalTo: date, toGranularity: .minute) {
             picker.date = date
         }
