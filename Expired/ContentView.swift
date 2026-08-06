@@ -50,7 +50,7 @@ struct ContentView: View {
                 HomeView()
             }
             Tab("Timeline", systemImage: "calendar", value: 1) {
-                TimelineView()
+                TimelineView(isSelected: selectedTab == 1)
             }
             Tab("Insights", systemImage: "chart.bar", value: 2) {
                 InsightsView()
@@ -114,7 +114,24 @@ struct TimelineView: View {
     }
 
     @Environment(PurchaseManager.self) private var purchaseManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showPaywall = false
+    // Reuses `InsightsEntrance` as-is (it isn't Insights-specific) so the classic timeline
+    // gets the same fade-in + "don't replay if you just glanced away" gating.
+    @State private var entrance = InsightsEntrance()
+    /// Whether the Timeline tab is the one currently selected in `ContentView`'s `TabView`.
+    /// The entrance MUST be driven off this, not `.onAppear`/`.onDisappear` on this view's
+    /// content — iOS 26's `Tab` API eagerly creates every tab's content at launch (all of
+    /// them, regardless of which is selected), so `.onAppear` fires the moment the app
+    /// launches, before the user ever taps this tab. `isSelected` flipping true is the real
+    /// "user is now looking at this" signal.
+    let isSelected: Bool
+    /// Guards the very first `.task(id: isSelected)` run: if the view happens to first
+    /// evaluate while `isSelected` is already `false` (the common case, since Timeline isn't
+    /// the default tab), we must NOT call `entrance.leave()` on that initial run — that would
+    /// stamp `leftAt` as "just now" and wrongly skip the real first entrance if the user taps
+    /// in within the 2s replay-threshold window.
+    @State private var hasCheckedSelectionOnce = false
 
     @AppStorage("timelineViewMode") private var viewModeRaw: String = ViewMode.timeline.rawValue
     private var viewMode: ViewMode { ViewMode(rawValue: viewModeRaw) ?? .timeline }
@@ -155,6 +172,22 @@ struct TimelineView: View {
             .navigationTitle("Timeline")
             .largeNavigationTitle()
             .background(groupedBackground.ignoresSafeArea())
+            // `.task(id:)`, not `.onChange(of:)` — `onChange` was found not to reliably fire on
+            // the `isSelected` false→true transition in this Tab-API setup. `.task(id:)` gives a
+            // stronger guarantee: it runs once on the view's first evaluation AND again on every
+            // subsequent change to `id`, so it can't silently miss the transition. Attached on
+            // this always-mounted outer Group, not `classicTimelineView`'s ScrollView, since that
+            // view sits behind `if allItems.isEmpty {...} else { switch ... }` and CloudKit's
+            // initial merge can flip that branch (and tear down/recreate the ScrollView) shortly
+            // after launch.
+            .task(id: isSelected) {
+                defer { hasCheckedSelectionOnce = true }
+                if isSelected {
+                    entrance.enter(reduceMotion: reduceMotion)
+                } else if hasCheckedSelectionOnce {
+                    entrance.leave()
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     // A custom Button-per-row Menu can only show ONE leading glyph per row —
@@ -209,7 +242,10 @@ struct TimelineView: View {
             // it — see `TimelineRow` for why.
             LazyVStack(spacing: 0) {
                 ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, item in
-                    TimelineRow(item: item, isLast: index == upcoming.count - 1)
+                    // Clamp the index so long lists still finish their stagger inside the
+                    // driver's 0→1 run (see `InsightsEntrance.staggered(index:)`).
+                    TimelineRow(item: item, isLast: index == upcoming.count - 1,
+                                progress: entrance.staggered(index: min(index, 10)))
                 }
             }
             .padding(.horizontal)
@@ -226,6 +262,9 @@ struct TimelineRow: View {
     let item: SubscriptionItem
     /// The last row carries no trailing gap-padding — there's no next row to connect to.
     let isLast: Bool
+    /// 0→1 entrance progress (see `TimelineView.entrance`). Defaults to 1 (fully settled, no
+    /// animation) for any caller that doesn't drive an entrance.
+    var progress: Double = 1
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -250,6 +289,7 @@ struct TimelineRow: View {
                 .padding(.bottom, isLast ? 0 : 12)
         }
         .frame(minHeight: 60)
+        .insightsEntrance(progress)
     }
 
     private var dotColor: Color {
