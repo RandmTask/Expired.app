@@ -1364,14 +1364,6 @@ struct HomeView: View {
             .fill(groupedBackground)
     }
 
-#if os(iOS)
-    private var screenWidth: CGFloat {
-        UIApplication.shared.connectedScenes
-            .compactMap { ($0 as? UIWindowScene)?.screen.bounds.width }
-            .first ?? 390
-    }
-#endif
-
     // MARK: - Row with swipe actions
 
     @ViewBuilder
@@ -1412,12 +1404,6 @@ struct HomeView: View {
                 } label: {
                     Label("Delete", systemImage: "trash")
                 }
-            } preview: {
-                SubscriptionRowView(item: item)
-#if os(iOS)
-                    .frame(width: screenWidth - 32)
-#endif
-                    .background(groupedBackground)
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 Button(role: .destructive) { deleteItem(item) } label: {
