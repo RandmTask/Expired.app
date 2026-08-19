@@ -1,5 +1,67 @@
 # Expired — Implementation Log
 
+## 2026-08-19 — Context menu fix + full Settings revamp to `_shared` standard
+
+**Context menu fix** (`Expired/UI/HomeView.swift`): the row long-press menu rendered
+detached/floating because `.contextMenu` carried a custom `preview:` closure hard-sized
+to `screenWidth - 32` — exactly the anti-pattern `_shared/context-menus.md` names and
+rejects. Deleted the `preview:` closure (bare `.contextMenu` is correct here since
+`HomeView` renders inside a `ScrollView`, not a `List`, so there's no cell-lift issue to
+route around) and the now-orphaned `screenWidth` computed property.
+
+**Settings revamp** (`Expired/ContentView.swift`'s `SettingsView`, plus three new
+files), following `_shared/settings page/settings-conventions.md` section order and
+adding two new subsections to that doc (button feedback, debug structure):
+
+- Reordered sections to the canonical order: Expired Pro (now first, Restore Purchases
+  folded in) → General (Currency + App Store Region, split out of the old "Display") →
+  Appearance (its own section) → Screenshot Import (now just the Analyzer provider
+  picker) → Notifications → Data & Backup (merged, see below) → Privacy → Support (new)
+  → version footer → gated Debug row.
+- Merged "Data" and "Backup & Sync" into one **Data & Backup** section — both were thin
+  single-purpose sections splitting one mental model for no reason.
+- Collapsed **Import Backup** + **Export Backup** into a single **Import / Export** row
+  (still PRO-gated) that opens a new `ImportExportView.swift` sheet — matches Lumina
+  Library's `ImportExportView` pattern exactly, including the unencrypted-data warning.
+- Added a minimal **Support** section (Replay Onboarding only, moved out of Debug per
+  the shared doc's "Debug is not a junk drawer for what real users need" rule).
+  Contact/Feedback/Rate/Tip Jar/Acknowledgements deliberately **not** built — no code
+  path exists yet (no mail composer, no App Store review link) and a dead row is worse
+  than an incomplete section.
+- Collapsed the entire inline Debug section pile into a single gated "Debug Menu" row
+  pushing to a new `Expired/UI/DebugMenuView.swift` (replaces the old
+  `DebugAIFailureSimulatorView.swift`, deleted). CloudKit Debug — previously a cramped
+  inline card with tiny icon-only buttons — is now its own further-pushed
+  `CloudKitDebugDetailView` with full-width labeled buttons and a scrollable activity
+  log. The AI Model-version picker moved from Screenshot Import into Debug's new "AI
+  Model Override" section (its own footer text already called it "a stopgap"); the
+  Analyzer provider picker itself stayed in Settings since it's a real Pro feature.
+  **Must be a `NavigationLink` push, not a `.sheet`** — the Mascot Gallery and CloudKit
+  Debug sub-screens are themselves `NavigationLink`s, which silently do nothing inside
+  a bare sheet's stack-less presentation.
+- Fixed the `.buttonStyle(.plain)` hit-target trap (`_shared/settings-conventions.md`'s
+  "Row height & full-row tap targets") on every custom `.plain` row that was missing
+  `.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())` —
+  previously only the label text itself was tappable on several rows (Refresh Icons,
+  Restore Purchases, the new Import/Export row).
+- Added button feedback per the new shared-doc subsection: `CopyFeedbackButton.swift`
+  (new) gives every copy action — Diagnostic Report, CloudKit Transcript — a haptic
+  plus a label flip to "Copied" for ~1.5s; the version footer's own tap-to-copy now
+  does the same via the previously-declared-but-unused `showVersionCopiedToast` state.
+  Filled in missing haptics in Debug (CloudKit Refresh/Clear, Delete All Data, Reset
+  Premium, Resync) that fired nothing before.
+- Kept Expired's own blue-for-actions preference (project `CLAUDE.md` overrides the
+  root no-blue-text rule for this app) — Refresh Icons / Import-Export / Upgrade stayed
+  blue; did not do a blind no-blue pass.
+
+**Not done:** Support section rows needing real plumbing (Contact/mail composer, Send
+Feedback, Rate, Tip Jar, Acknowledgements, Privacy Policy/Terms links) — flagged as a
+follow-up batch, see `_shared/settings page/feedback-conventions.md` for the Contact/
+Feedback split when that's picked up.
+
+**Model used:** Sonnet, inline — no subagent delegation (single cohesive file edit,
+not separable fan-out work).
+
 ## 2026-08-01 — Insights donut/forecast follow-up fixes (on-device verified)
 
 Deon's live feedback on the shipped R3b donut + forecast (on-device, not just in

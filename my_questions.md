@@ -110,3 +110,43 @@ count-up on every figure, staggered tile entrance, animated cost bars. Deferred 
 next batch: a category donut/ring with an animated sweep, tapping a segment to filter
 the By Cost list (Pro-gated). Rejected: sparklines inside the stat tiles — the tiles hold
 counts, not time series, so most would render flat and meaningless.
+
+## 2026-08-19 — The row long-press context menu looks broken (floating/detached) — can you fix that?
+
+**A:** Yes. The row's `.contextMenu` had a custom `preview:` closure sized to
+`screenWidth - 32` — exactly the anti-pattern `_shared/context-menus.md` calls out
+(a hard-coded width standing in for a platter SwiftUI already controls). Deleted the
+`preview:` closure entirely; bare `.contextMenu` now lifts the row exactly as drawn,
+which is correct since `HomeView`'s list is a `ScrollView`, not a `List` (no cell-lift
+gotcha to work around).
+
+## 2026-08-19 — Can you collapse all the debugging into one debug (gated) button?
+
+**A:** Yes. Settings now shows a single gated "Debug Menu" row (only once the hidden
+version-footer gesture reveals it), which pushes to its own `DebugMenuView` screen
+holding every developer tool as its own Section. CloudKit Debug — previously a cramped
+inline card — is now its own further-pushed sub-screen with proper full-width buttons
+and a scrollable activity log, per the "debug button can lead to more buttons" ask.
+
+## 2026-08-19 — Can you make Import/Export a single button in the Backup/Sync section that opens a sheet, like Lumina?
+
+**A:** Yes, matching Lumina Library's `ImportExportView` pattern exactly: one
+"Import / Export" row (still carrying the PRO capsule) in the merged Data & Backup
+section, opening `ImportExportView` as a sheet with separate Export/Import sub-sections
+and the existing unencrypted-data warning intact.
+
+## 2026-08-19 — Which Settings sections make sense to combine, and which need to be more concise?
+
+**A:** Combined "Data" + "Backup & Sync" into one "Data & Backup" section (both were
+thin, single-purpose sections splitting one mental model — "everything about my data"
+— for no reason). Split the old "Display" section: Currency + App Store Region became
+"General", Appearance got its own section (per the canonical section order in
+`_shared/settings page/settings-conventions.md`, which the app wasn't following before —
+Premium is now first, with Restore Purchases folded into it). Screenshot Import shrank
+to just the Analyzer provider picker — the Model-version picker moved into Debug since
+its own footer text already called it "a stopgap," a developer tool, not a user-facing
+setting. Added a minimal Support section (just Replay Onboarding, moved out of Debug —
+the shared doc is explicit that Debug isn't a junk drawer for things real users need).
+Contact/Feedback/Rate/Tip Jar/Acknowledgements were left out — no code path exists for
+any of them yet (no mail composer, no App Store review link), and shipping a dead row
+is worse than not shipping a Support row for it — flagged as a follow-up batch.

@@ -2923,12 +2923,6 @@ struct SettingsView: View {
     @AppStorage("preferredCurrency") private var preferredCurrency = SettingsView.localeCurrencyCode
     @AppStorage("appStoreRegion") private var appStoreRegion = "auto"
     @AppStorage(ScreenshotAISettings.providerKey) private var screenshotAIProviderRaw = ScreenshotAIProvider.automatic.rawValue
-    /// Live model picker state. `selectedModels` mirrors the chosen model per
-    /// provider; `availableModels` is the last fetched list for the current provider.
-    @State private var selectedModels: [String: String] = [:]
-    @State private var availableModels: [String] = []
-    @State private var isLoadingModels = false
-    @State private var modelLoadError: String?
     /// Device-local only (never synced) — persists the revealed state across
     /// navigation per `_shared/settings-conventions.md`'s "Hidden debug section".
     @AppStorage("debugSectionRevealed") private var debugSectionRevealed = false
@@ -2941,14 +2935,10 @@ struct SettingsView: View {
     @State private var isSyncing = false
     @State private var isRefreshingFavicons = false
     @State private var faviconRefreshProgress: (done: Int, total: Int) = (0, 0)
-    @State private var showExportWarning = false
     @State private var showPaywall = false
     @State private var showCustomerCenter = false
-    @State private var showingExporter = false
-    @State private var exportDocument: BackupDocument?
-    @State private var showingImporter = false
-    @State private var importResultMessage: String?
-    @State private var backupErrorMessage: String?
+    @State private var showImportExport = false
+    @State private var showReplayOnboarding = false
     @AppStorage(BackupService.autoBackupEnabledKey) private var autoBackupEnabled = true
     @AppStorage(BackupService.lastAutoBackupKey) private var lastAutoBackupAt: Double = 0
     @Query(filter: #Predicate<SubscriptionItem> { $0.isArchived }) private var archivedItems: [SubscriptionItem]
@@ -3050,84 +3040,6 @@ struct SettingsView: View {
         purchaseManager.isPremium ? screenshotAIProvider.displayName : ScreenshotAIProvider.automatic.displayName
     }
 
-    // MARK: - Live model picker
-
-    private var currentSelectedModel: String {
-        selectedModels[screenshotAIProvider.rawValue] ?? screenshotAIProvider.selectedModelID
-    }
-
-    /// Picker options: live-fetched ∪ current selection ∪ hardcoded default, so a
-    /// tag always exists for the current value even before a successful fetch.
-    private var modelPickerOptions: [String] {
-        var set = Set(availableModels)
-        set.insert(currentSelectedModel)
-        set.insert(screenshotAIProvider.defaultModelID)
-        return set.filter { !$0.isEmpty }.sorted()
-    }
-
-    private func modelLabel(_ model: String) -> String {
-        model == screenshotAIProvider.defaultModelID ? "\(model) (default)" : model
-    }
-
-    private func setSelectedModel(_ model: String) {
-        screenshotAIProvider.setSelectedModelID(model)
-        withTransaction(Transaction(animation: nil)) {
-            selectedModels[screenshotAIProvider.rawValue] = screenshotAIProvider.selectedModelID
-        }
-    }
-
-    private func loadSelectedModels() {
-        var dict: [String: String] = [:]
-        for provider in ScreenshotAIProvider.allCases where provider.requiresAPIKey {
-            dict[provider.rawValue] = provider.selectedModelID
-        }
-        selectedModels = dict
-    }
-
-    /// Fetches the live model list for the current provider via the Supabase `models`
-    /// function (server holds the key). Guards against a stale response landing after
-    /// the user has switched provider.
-    private func loadModels() {
-        availableModels = []
-        modelLoadError = nil
-        let provider = screenshotAIProvider
-        guard provider.requiresAPIKey else { return }
-        isLoadingModels = true
-        Task {
-            do {
-                let models = try await ScreenshotAIModelService.listModels(provider: provider)
-                await MainActor.run {
-                    guard screenshotAIProvider == provider else { return }
-                    availableModels = models
-                    isLoadingModels = false
-                }
-            } catch {
-                await MainActor.run {
-                    guard screenshotAIProvider == provider else { return }
-                    modelLoadError = error.localizedDescription
-                    isLoadingModels = false
-                }
-            }
-        }
-    }
-
-    /// Shared note + error shown under the model picker on both platforms.
-    @ViewBuilder
-    private var modelPickerNote: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if let modelLoadError {
-                Text(modelLoadError)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text("Models load live from the server. A server-side default is planned — this picker is a stopgap.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
     var body: some View {
         NavigationStack {
 #if os(macOS)
@@ -3139,11 +3051,6 @@ struct SettingsView: View {
         .onAppear {
             NSUbiquitousKeyValueStore.default.synchronize()
             pullNotificationTimeFromKVStore()
-            loadSelectedModels()
-            loadModels()
-        }
-        .onChange(of: screenshotAIProviderRaw) { _, _ in
-            loadModels()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSUbiquitousKeyValueStore.didChangeExternallyNotification)) { note in
             guard let keys = (note.userInfo?[NSUbiquitousKeyValueStoreChangedKeysKey] as? [String]) else { return }
@@ -3151,64 +3058,25 @@ struct SettingsView: View {
                 pullNotificationTimeFromKVStore()
             }
         }
-        .fileExporter(
-            isPresented: $showingExporter,
-            document: exportDocument,
-            contentType: .json,
-            defaultFilename: "Expired Backup"
-        ) { _ in
-            exportDocument = nil
+        .sheet(isPresented: $showImportExport) { ImportExportView() }
+        #if os(iOS)
+        .fullScreenCover(isPresented: $showReplayOnboarding) {
+            OnboardingView { showReplayOnboarding = false }
         }
-        .fileImporter(
-            isPresented: $showingImporter,
-            allowedContentTypes: [.json],
-            allowsMultipleSelection: false
-        ) { handleImport($0) }
-        .alert("Export Backup", isPresented: $showExportWarning) {
-            Button("Continue") { prepareExport() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This backup is not encrypted and includes account emails, usernames, and passwords. Only save it somewhere private.")
-        }
-        .alert("Import Complete", isPresented: Binding(
-            get: { importResultMessage != nil },
-            set: { if !$0 { importResultMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(importResultMessage ?? "")
-        }
-        .alert("Backup Error", isPresented: Binding(
-            get: { backupErrorMessage != nil },
-            set: { if !$0 { backupErrorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(backupErrorMessage ?? "")
-        }
+        #endif
         .expiredPaywallSheet(isPresented: $showPaywall)
         .expiredCustomerCenterSheet(isPresented: $showCustomerCenter)
     }
 
-    /// Pro export is gated: a free user gets the paywall instead of the export warning.
-    private func beginExport() {
+    /// Pro-gated: a free user gets the paywall instead of the Import/Export sheet.
+    private func beginImportExport() {
         guard purchaseManager.isPremium else {
             Haptics.fire(.warning)
             showPaywall = true
             return
         }
         Haptics.fire(.light)
-        showExportWarning = true
-    }
-
-    private func beginImportBackup() {
-        guard purchaseManager.isPremium else {
-            Haptics.fire(.warning)
-            showPaywall = true
-            return
-        }
-        Haptics.fire(.light)
-        showingImporter = true
+        showImportExport = true
     }
 
     private func setScreenshotAIProvider(_ provider: ScreenshotAIProvider) {
@@ -3231,39 +3099,6 @@ struct SettingsView: View {
         return "Last backup \(date.formatted(date: .abbreviated, time: .shortened))"
     }
 
-    private func prepareExport() {
-        do {
-            let data = try BackupService.export(allItems)
-            exportDocument = BackupDocument(data: data)
-            Haptics.fire(.success)
-            showingExporter = true
-        } catch {
-            Haptics.fire(.error)
-            backupErrorMessage = "Could not create backup: \(error.localizedDescription)"
-        }
-    }
-
-    private func handleImport(_ result: Result<[URL], Error>) {
-        guard let url = try? result.get().first else { return }
-        guard url.startAccessingSecurityScopedResource() else {
-            Haptics.fire(.warning)
-            backupErrorMessage = "Could not access the selected file."
-            return
-        }
-        defer { url.stopAccessingSecurityScopedResource() }
-        do {
-            let data = try Data(contentsOf: url)
-            let file = try BackupService.decode(data)
-            let counts = BackupService.merge(file, into: modelContext, existing: allItems)
-            importResultMessage = "Imported \(counts.added) new, updated \(counts.updated)."
-            Haptics.fire(.success)
-            Task { await NotificationManager.shared.refreshAll(context: modelContext) }
-        } catch {
-            Haptics.fire(.error)
-            backupErrorMessage = "Could not read backup: \(error.localizedDescription)"
-        }
-    }
-
     // MARK: - macOS Settings (card layout matching iOS form style)
 
 #if os(macOS)
@@ -3271,8 +3106,61 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
 
-                // DISPLAY
-                settingsSection(title: "Display", icon: "paintbrush") {
+                // EXPIRED PRO — always first, per _shared/settings-conventions.md
+                settingsSection(title: "Expired Pro", icon: "crown") {
+                    if purchaseManager.isPremium {
+                        settingsRow {
+                            macSettingsLabel("Subscription", icon: "crown.fill")
+                            Spacer()
+                            Text("Active").foregroundStyle(.green)
+                        }
+                        FormDivider()
+                        Button {
+                            Haptics.fire(.light)
+                            showCustomerCenter = true
+                        } label: {
+                            settingsRow {
+                                macSettingsLabel("Manage Subscription", icon: "person.crop.circle")
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Button {
+                            Haptics.fire(.light)
+                            showPaywall = true
+                        } label: {
+                            settingsRow {
+                                macSettingsLabel("Upgrade to Pro", icon: "crown.fill")
+                                    .foregroundStyle(.blue)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    FormDivider()
+                    Button {
+                        Haptics.fire(.light)
+                        showCustomerCenter = true
+                    } label: {
+                        settingsRow {
+                            macSettingsLabel("Restore Purchases", icon: "arrow.clockwise")
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // GENERAL
+                settingsSection(title: "General", icon: "gearshape") {
                     Button {
                         Haptics.fire(.light)
                         showCurrencyPicker = true
@@ -3312,11 +3200,12 @@ struct SettingsView: View {
                         .menuIndicator(.hidden)
                         .fixedSize()
                     }
+                }
 
-                    FormDivider()
-
+                // APPEARANCE
+                settingsSection(title: "Appearance", icon: "paintbrush") {
                     settingsRow {
-                        macSettingsLabel("Appearance", icon: "paintbrush")
+                        macSettingsLabel("Theme", icon: "paintbrush")
                         Spacer()
                         Menu {
                             Button {
@@ -3352,59 +3241,6 @@ struct SettingsView: View {
                     }
                 }
 
-                // EXPIRED PRO
-                settingsSection(title: "Expired Pro", icon: "crown") {
-                    if purchaseManager.isPremium {
-                        settingsRow {
-                            macSettingsLabel("Subscription", icon: "crown.fill")
-                            Spacer()
-                            Text("Active").foregroundStyle(.green)
-                        }
-                        FormDivider()
-                        Button {
-                            Haptics.fire(.light)
-                            showCustomerCenter = true
-                        } label: {
-                            settingsRow {
-                                macSettingsLabel("Manage Subscription", icon: "person.crop.circle")
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Button {
-                            Haptics.fire(.light)
-                            showPaywall = true
-                        } label: {
-                            settingsRow {
-                                macSettingsLabel("Upgrade to Pro", icon: "crown.fill")
-                                    .foregroundStyle(.blue)
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        FormDivider()
-                        Button {
-                            Haptics.fire(.light)
-                            showCustomerCenter = true
-                        } label: {
-                            settingsRow {
-                                macSettingsLabel("Restore Purchases", icon: "arrow.clockwise")
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
                 // SCREENSHOT IMPORT
                 settingsSection(title: "Screenshot Import", icon: "doc.viewfinder") {
                     settingsRow {
@@ -3426,47 +3262,6 @@ struct SettingsView: View {
                         .menuIndicator(.hidden)
                         .fixedSize()
                         .disabled(!purchaseManager.isPremium)
-                    }
-
-                    if purchaseManager.isPremium && screenshotAIProvider.requiresAPIKey {
-                        FormDivider()
-
-                        settingsRow {
-                            macSettingsLabel("Model", icon: "cpu")
-                            Spacer()
-                            if isLoadingModels {
-                                ProgressView().controlSize(.small)
-                            }
-                            Menu {
-                                ForEach(modelPickerOptions, id: \.self) { model in
-                                    Button {
-                                        Haptics.fire(.selectionChanged)
-                                        setSelectedModel(model)
-                                    } label: {
-                                        macMenuOptionTitle(modelLabel(model), isSelected: currentSelectedModel == model)
-                                    }
-                                }
-                            } label: {
-                                macMenuValueLabel(modelLabel(currentSelectedModel))
-                            }
-                            .menuStyle(.borderlessButton)
-                            .menuIndicator(.hidden)
-                            .fixedSize()
-                            Button {
-                                Haptics.fire(.light)
-                                loadModels()
-                            } label: {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(.blue)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Refresh model list")
-                        }
-
-                        settingsRow {
-                            modelPickerNote
-                        }
                     }
                 }
 
@@ -3494,8 +3289,10 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
 
-                // DATA
-                settingsSection(title: "Data", icon: "folder") {
+                // DATA & BACKUP — merged Data + Backup & Sync (2026-08-19): both were
+                // small, single-item sections and split a user's mental model of
+                // "everything about my data" across two cards for no reason.
+                settingsSection(title: "Data & Backup", icon: "icloud") {
                     NavigationLink { ArchiveView() } label: {
                         settingsRow {
                             macSettingsLabel("Archive", icon: "archivebox")
@@ -3546,25 +3343,9 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(isRefreshingFavicons)
-                }
 
-                // PRIVACY
-                settingsSection(title: "Privacy", icon: "hand.raised") {
-                    settingsRow {
-                        macSettingsLabel("Share Subscription Usage", icon: "chart.bar")
-                        Spacer()
-                        Toggle("", isOn: $shareServicePopularity)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .tint(.green)
-                            .onChange(of: shareServicePopularity) { _, _ in
-                                Haptics.fire(.selectionChanged)
-                            }
-                    }
-                }
+                    FormDivider()
 
-                // BACKUP & SYNC
-                settingsSection(title: "Backup & Sync", icon: "icloud") {
                     settingsRow {
                         macSettingsLabel("iCloud Sync", icon: "icloud")
                         Spacer()
@@ -3626,23 +3407,45 @@ struct SettingsView: View {
 
                     FormDivider()
 
-                    Button { beginExport() } label: {
+                    // Single "Import / Export" entry point (per Lumina Library
+                    // precedent) instead of two separate rows — opens a sheet with
+                    // both directions and the unencrypted-data warning.
+                    Button { beginImportExport() } label: {
                         settingsRow {
-                            macSettingsLabel("Export Backup", icon: "square.and.arrow.up")
+                            macSettingsLabel("Import / Export", icon: "arrow.up.arrow.down.circle")
                                 .foregroundStyle(.blue)
                             ProChip()
                         }
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                }
 
-                    FormDivider()
+                // PRIVACY
+                settingsSection(title: "Privacy", icon: "hand.raised") {
+                    settingsRow {
+                        macSettingsLabel("Share Subscription Usage", icon: "chart.bar")
+                        Spacer()
+                        Toggle("", isOn: $shareServicePopularity)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .tint(.green)
+                            .onChange(of: shareServicePopularity) { _, _ in
+                                Haptics.fire(.selectionChanged)
+                            }
+                    }
+                }
 
-                    Button { beginImportBackup() } label: {
+                // SUPPORT
+                settingsSection(title: "Support", icon: "questionmark.circle") {
+                    Button {
+                        Haptics.fire(.light)
+                        showReplayOnboarding = true
+                    } label: {
                         settingsRow {
-                            macSettingsLabel("Import Backup", icon: "square.and.arrow.down")
-                                .foregroundStyle(.blue)
-                            ProChip()
+                            macSettingsLabel("Replay Onboarding", icon: "sparkles.rectangle.stack")
                         }
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
@@ -3650,8 +3453,25 @@ struct SettingsView: View {
                 versionFooterRow
                     .padding(.top, 4)
 
+                // DEBUG — gated: only rendered once revealed by the hidden version-
+                // footer gesture. Everything developer-only is collapsed behind this
+                // single row, which pushes to its own screen (DebugMenuView) rather
+                // than injecting a pile of Sections here.
                 if debugSectionRevealed {
-                    DebugAIFailureSimulatorView(onHide: { debugSectionRevealed = false })
+                    NavigationLink {
+                        DebugMenuView(onHide: { debugSectionRevealed = false })
+                    } label: {
+                        settingsSection(title: "Debug", icon: "ladybug") {
+                            settingsRow {
+                                macSettingsLabel("Debug Menu", icon: "ladybug")
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 Spacer(minLength: 40)
@@ -3786,6 +3606,9 @@ struct SettingsView: View {
         return "Expired \(version) (\(build))"
     }
 
+    /// Copies the version string and gives visible confirmation (the row's own text
+    /// swaps to "Copied!" for ~1.5s) — per `_shared/settings-conventions.md`'s button
+    /// feedback rule: a copy action with no visible result reads as broken.
     private func copyVersionString() {
         #if os(iOS)
         UIPasteboard.general.string = versionBuildString
@@ -3794,15 +3617,21 @@ struct SettingsView: View {
         NSPasteboard.general.setString(versionBuildString, forType: .string)
         #endif
         Haptics.fire(.light)
+        showVersionCopiedToast = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            showVersionCopiedToast = false
+        }
     }
 
     /// Tap copies the version string (for bug reports); a 4-second long-press (iOS)
     /// reveals the hidden Debug section. Never a visible affordance — see
     /// `_shared/settings-conventions.md` "Hidden debug section".
     private var versionFooterRow: some View {
-        Text(versionBuildString)
+        Text(showVersionCopiedToast ? "Copied!" : versionBuildString)
             .font(.system(size: 12))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(showVersionCopiedToast ? .green : .secondary)
+            .animation(.easeInOut(duration: 0.15), value: showVersionCopiedToast)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
             #if os(iOS)
@@ -3826,7 +3655,66 @@ struct SettingsView: View {
     private var iosSettingsBody: some View {
         List {
 
-            // MARK: Display
+            // MARK: Expired Pro — always first, per _shared/settings-conventions.md
+            Section {
+                if purchaseManager.isPremium {
+                    HStack {
+                        rowIcon("crown.fill", color: .green)
+                        Text("Expired Pro").foregroundStyle(.primary)
+                        Spacer()
+                        Text("Active").foregroundStyle(.green)
+                    }
+                    Button {
+                        Haptics.fire(.light)
+                        showCustomerCenter = true
+                    } label: {
+                        HStack {
+                            rowIcon("person.crop.circle")
+                            Text("Manage Subscription").foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button {
+                        Haptics.fire(.light)
+                        showPaywall = true
+                    } label: {
+                        HStack {
+                            rowIcon("crown.fill", color: .blue)
+                            Text("Upgrade to Pro").foregroundStyle(.blue)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                Button {
+                    Haptics.fire(.light)
+                    showCustomerCenter = true
+                } label: {
+                    HStack {
+                        rowIcon("arrow.clockwise", color: .blue)
+                        Text("Restore Purchases").foregroundStyle(.blue)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } header: {
+                sectionHeader("EXPIRED PRO")
+            }
+
+            // MARK: General
             Section {
                 Button {
                     Haptics.fire(.light)
@@ -3842,8 +3730,10 @@ struct SettingsView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.tertiary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .foregroundStyle(.primary)
+                .buttonStyle(.plain)
 
                 HStack {
                     rowIcon("bag")
@@ -3865,10 +3755,17 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                 }
+            } header: {
+                sectionHeader("GENERAL")
+            } footer: {
+                Text("All subscription costs are converted to this currency when calculating totals. Exchange rates are approximate and updated periodically.")
+            }
 
+            // MARK: Appearance
+            Section {
                 HStack {
                     rowIcon("paintbrush")
-                    Text("Appearance").foregroundStyle(.primary)
+                    Text("Theme").foregroundStyle(.primary)
                     Spacer()
                     Menu {
                         Button {
@@ -3895,65 +3792,7 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
             } header: {
-                sectionHeader("DISPLAY")
-            } footer: {
-                Text("All subscription costs are converted to this currency when calculating totals. Exchange rates are approximate and updated periodically.")
-            }
-
-            // MARK: Expired Pro
-            Section {
-                if purchaseManager.isPremium {
-                    HStack {
-                        rowIcon("crown.fill", color: .green)
-                        Text("Expired Pro").foregroundStyle(.primary)
-                        Spacer()
-                        Text("Active").foregroundStyle(.green)
-                    }
-                    Button {
-                        Haptics.fire(.light)
-                        showCustomerCenter = true
-                    } label: {
-                        HStack {
-                            rowIcon("person.crop.circle")
-                            Text("Manage Subscription").foregroundStyle(.primary)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    Button {
-                        Haptics.fire(.light)
-                        showPaywall = true
-                    } label: {
-                        HStack {
-                            rowIcon("crown.fill", color: .blue)
-                            Text("Upgrade to Pro").foregroundStyle(.blue)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    Button {
-                        Haptics.fire(.light)
-                        showCustomerCenter = true
-                    } label: {
-                        HStack {
-                            rowIcon("arrow.clockwise", color: .blue)
-                            Text("Restore Purchases").foregroundStyle(.blue)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            } header: {
-                sectionHeader("EXPIRED PRO")
+                sectionHeader("APPEARANCE")
             }
 
             // MARK: Screenshot Import
@@ -3977,37 +3816,6 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                     .disabled(!purchaseManager.isPremium)
                 }
-
-                if purchaseManager.isPremium && screenshotAIProvider.requiresAPIKey {
-                    HStack {
-                        rowIcon("cpu")
-                        Text("Model").foregroundStyle(.primary)
-                        Spacer()
-                        if isLoadingModels { ProgressView().controlSize(.small) }
-                        Menu {
-                            ForEach(modelPickerOptions, id: \.self) { model in
-                                Button {
-                                    Haptics.fire(.selectionChanged)
-                                    setSelectedModel(model)
-                                } label: {
-                                    macMenuOptionTitle(modelLabel(model), isSelected: currentSelectedModel == model)
-                                }
-                            }
-                        } label: {
-                            macMenuValueLabel(modelLabel(currentSelectedModel))
-                        }
-                        .buttonStyle(.plain)
-                        Button {
-                            Haptics.fire(.light)
-                            loadModels()
-                        } label: {
-                            Image(systemName: "arrow.clockwise").font(.system(size: 16, weight: .semibold))
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    modelPickerNote
-                }
             } header: {
                 sectionHeader("SCREENSHOT IMPORT")
             } footer: {
@@ -4022,7 +3830,7 @@ struct SettingsView: View {
                     Spacer()
                     TimeChip(date: Binding(get: { notificationTime }, set: { saveNotificationTime($0) }))
                 }
-                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                .listRowInsets(EdgeInsets(top: 7, leading: 20, bottom: 7, trailing: 20))
 
                 NavigationLink {
                     ScheduledNotificationsView()
@@ -4038,7 +3846,9 @@ struct SettingsView: View {
                 Text("Reminders will be delivered at this time on the scheduled day.")
             }
 
-            // MARK: Data
+            // MARK: Data & Backup — merged Data + Backup & Sync (2026-08-19): both
+            // were small, single-item sections and split a user's mental model of
+            // "everything about my data" across two cards for no reason.
             Section {
                 NavigationLink { ArchiveView() } label: {
                     HStack {
@@ -4074,34 +3884,12 @@ struct SettingsView: View {
                             ProgressView().controlSize(.small)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(isRefreshingFavicons)
-            } header: {
-                sectionHeader("DATA")
-            }
 
-            // MARK: Privacy
-            Section {
-                HStack {
-                    rowIcon("chart.bar")
-                    Text("Share Subscription Usage").foregroundStyle(.primary)
-                    Spacer()
-                    Toggle("", isOn: $shareServicePopularity)
-                        .labelsHidden()
-                        .tint(.green)
-                        .onChange(of: shareServicePopularity) { _, _ in
-                            Haptics.fire(.selectionChanged)
-                        }
-                }
-            } header: {
-                sectionHeader("PRIVACY")
-            } footer: {
-                Text("When a subscription you add matches a known service (e.g. Netflix), the service name alone is sent anonymously — never your cost, dates, notes, or any identifier — to help prioritize which services Expired recognizes automatically. Off means nothing is ever sent.")
-            }
-
-            // MARK: Backup & Sync
-            Section {
                 HStack {
                     rowIcon("icloud")
                     Text("iCloud Sync").foregroundStyle(.primary)
@@ -4132,27 +3920,60 @@ struct SettingsView: View {
                         }
                 }
 
-                Button { beginExport() } label: {
+                // Single "Import / Export" entry point (per Lumina Library
+                // precedent) instead of two separate rows — opens a sheet with
+                // both directions and the unencrypted-data warning.
+                Button { beginImportExport() } label: {
                     HStack {
-                        rowIcon("square.and.arrow.up", color: .blue)
-                        Text("Export Backup").foregroundStyle(.blue)
+                        rowIcon("arrow.up.arrow.down.circle", color: .blue)
+                        Text("Import / Export").foregroundStyle(.blue)
                         ProChip()
                     }
-                }
-                .buttonStyle(.plain)
-
-                Button { beginImportBackup() } label: {
-                    HStack {
-                        rowIcon("square.and.arrow.down", color: .blue)
-                        Text("Import Backup").foregroundStyle(.blue)
-                        ProChip()
-                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             } header: {
-                sectionHeader("BACKUP & SYNC")
+                sectionHeader("DATA & BACKUP")
             } footer: {
-                Text("iCloud Sync keeps data across all your devices — restart the app after changing. Daily snapshots save automatically to iCloud Drive (skipped if nothing changed). Export writes an unencrypted JSON file (icons excluded); import merges by item, never deleting. Keep the file private.")
+                Text("iCloud Sync keeps data across all your devices — restart the app after changing. Daily snapshots save automatically to iCloud Drive (skipped if nothing changed). Import/Export writes or reads an unencrypted JSON file (icons excluded); import merges by item, never deleting. Keep the file private.")
+            }
+
+            // MARK: Privacy
+            Section {
+                HStack {
+                    rowIcon("chart.bar")
+                    Text("Share Subscription Usage").foregroundStyle(.primary)
+                    Spacer()
+                    Toggle("", isOn: $shareServicePopularity)
+                        .labelsHidden()
+                        .tint(.green)
+                        .onChange(of: shareServicePopularity) { _, _ in
+                            Haptics.fire(.selectionChanged)
+                        }
+                }
+            } header: {
+                sectionHeader("PRIVACY")
+            } footer: {
+                Text("When a subscription you add matches a known service (e.g. Netflix), the service name alone is sent anonymously — never your cost, dates, notes, or any identifier — to help prioritize which services Expired recognizes automatically. Off means nothing is ever sent.")
+            }
+
+            // MARK: Support
+            Section {
+                Button {
+                    Haptics.fire(.light)
+                    showReplayOnboarding = true
+                } label: {
+                    HStack {
+                        rowIcon("sparkles.rectangle.stack")
+                        Text("Replay Onboarding").foregroundStyle(.primary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } header: {
+                sectionHeader("SUPPORT")
             }
 
             Section {
@@ -4160,8 +3981,23 @@ struct SettingsView: View {
                     .listRowBackground(Color.clear)
             }
 
+            // MARK: Debug — gated: only rendered once revealed by the hidden
+            // version-footer gesture. Everything developer-only is collapsed
+            // behind this single row, which pushes to its own screen
+            // (DebugMenuView) rather than injecting a pile of Sections here.
             if debugSectionRevealed {
-                DebugAIFailureSimulatorView(onHide: { debugSectionRevealed = false })
+                Section {
+                    NavigationLink {
+                        DebugMenuView(onHide: { debugSectionRevealed = false })
+                    } label: {
+                        HStack {
+                            rowIcon("ladybug")
+                            Text("Debug Menu").foregroundStyle(.primary)
+                        }
+                    }
+                } header: {
+                    sectionHeader("DEBUG")
+                }
             }
         }
         .navigationTitle("Settings")
