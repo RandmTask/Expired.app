@@ -597,13 +597,6 @@ struct HomeView: View {
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
             }
 
-            if !filterTags.isEmpty {
-                activeFilterChips
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))
-            }
-
             iosListSections
 
             if allItems.isEmpty {
@@ -653,11 +646,6 @@ struct HomeView: View {
                         .padding(.horizontal)
                 }
 
-                if !filterTags.isEmpty {
-                    activeFilterChips
-                        .padding(.horizontal)
-                }
-
                 contentSections
                     .padding(.horizontal)
 
@@ -688,34 +676,6 @@ struct HomeView: View {
     /// Comma-joined names of active filter tags, for the "No {…} subscriptions" empty state.
     private var activeFilterSummary: String {
         Array(filterTags).sorted { $0.rawValue < $1.rawValue }.map(\.rawValue).joined(separator: ", ")
-    }
-
-    private var activeFilterChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Array(filterTags).sorted { $0.rawValue < $1.rawValue }, id: \.self) { tag in
-                    HStack(spacing: 6) {
-                        Image(systemName: tag.icon)
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(tag.rawValue)
-                            .font(.system(size: 13, weight: .semibold))
-                        Button {
-                            Haptics.fire(.light)
-                            filterTagsBinding.wrappedValue.remove(tag)
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.blue, in: Capsule())
-                }
-            }
-        }
     }
 
 #if os(iOS)
