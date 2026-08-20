@@ -96,17 +96,6 @@ struct MailComposerView: UIViewControllerRepresentable {
 
 enum SupportMail {
 
-    /// True when the platform can present a prefilled draft at all. On macOS this is
-    /// always true (the default mail client handles `mailto:`); on iOS it reflects
-    /// whether Mail is actually configured.
-    static var canCompose: Bool {
-        #if os(iOS)
-        return MailComposerView.canSendMail
-        #else
-        return true
-        #endif
-    }
-
     /// macOS path: `MessageUI` doesn't exist there, so hand a percent-encoded
     /// `mailto:` to the default client. Still a *prefilled* draft — the conventions'
     /// "never a bare mailto" rule is about prefill, not about the mechanism.

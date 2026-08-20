@@ -4163,7 +4163,6 @@ struct SettingsView: View {
                         Text("Acknowledgements").foregroundStyle(.primary)
                     }
                 }
-                .simultaneousGesture(TapGesture().onEnded { Haptics.fire(.light) })
             } header: {
                 sectionHeader("SUPPORT")
             } footer: {

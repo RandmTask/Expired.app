@@ -33,7 +33,11 @@ final class TipJarManager {
         let fetched = await Purchases.shared.products(SupportConfig.tipProductIDs)
         tips = fetched.sorted { $0.price < $1.price }
         isLoading = false
-        hasLoaded = true
+        // Latch only on success. An empty result is ambiguous — products not yet
+        // created *or* a transient offline/StoreKit failure — so leaving it
+        // unlatched keeps the row retryable instead of hiding the tip jar for the
+        // rest of the view's lifetime after one network blip.
+        hasLoaded = !fetched.isEmpty
     }
 
     enum TipResult {
