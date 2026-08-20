@@ -42,6 +42,7 @@ struct HomeView: View {
     @State private var pendingScreenshotDeletionIdentifiers: [String] = []
     @State private var showingDeleteImportedScreenshotPrompt = false
     @State private var showPaywall = false
+    @State private var showingSortFilterSheet = false
     @State private var undoToast: UndoToast?
     @State private var toastDismissTask: Task<Void, Never>?
 #if os(iOS)
@@ -56,54 +57,103 @@ struct HomeView: View {
         case category    = "Category"
         case name        = "Name"
         case renewalDate = "Renewal Date"
+        case dateAdded   = "Date Added"
         case price       = "Price"
     }
-    enum FilterOption: String, CaseIterable { case all = "All"; case autoRenew = "Auto-Renew"; case trials = "Trials"; case cancelled = "Cancelled"; case expired = "Expired" }
+    /// Multi-select filter tags (OR-matched — an item shows if it matches any selected tag).
+    enum FilterTag: String, CaseIterable {
+        case autoRenew = "Auto-Renew"
+        case trial     = "Trial"
+        case cancelled = "Cancelled"
+        case expired   = "Expired"
+
+        var icon: String {
+            switch self {
+            case .autoRenew: return "arrow.triangle.2.circlepath"
+            case .trial:     return "clock.badge.exclamationmark"
+            case .cancelled: return "calendar.badge.minus"
+            case .expired:   return "xmark.circle"
+            }
+        }
+    }
     /// Debug toggle: ON restores the previous stacked large-title-in-nav-bar
     /// layout (title on its own row below the +/⋯ buttons). OFF (default) is
     /// the current same-plane layout — title inline with the toolbar row.
     /// See DebugMenuView's "Experimental" section — must be removed before launch.
     @AppStorage("debugLargeTitleInNavBar") private var debugLargeTitleInNavBar = false
     @AppStorage("homeSortOrder") private var sortOrderRaw: String = SortOrder.status.rawValue
-    @AppStorage("homeFilterOption") private var filterOptionRaw: String = FilterOption.all.rawValue
+    @AppStorage("homeSortAscending") private var sortAscending: Bool = true
+    @AppStorage("homeFilterTagsRaw") private var filterTagsRaw: String = ""
     @AppStorage("homeHideExpired") private var hideExpired: Bool = false
     @AppStorage("iconDisplayStyle") private var iconStyleRaw: String = IconDisplayStyle.natural.rawValue
     private var sortOrder: SortOrder { SortOrder(rawValue: sortOrderRaw) ?? .status }
-    private var filterOption: FilterOption { FilterOption(rawValue: filterOptionRaw) ?? .all }
+    private var filterTags: Set<FilterTag> {
+        Set(filterTagsRaw.split(separator: ",").compactMap { FilterTag(rawValue: String($0)) })
+    }
+
+    private var sortOrderBinding: Binding<SortOrder> {
+        Binding(get: { sortOrder }, set: { sortOrderRaw = $0.rawValue })
+    }
+    private var filterTagsBinding: Binding<Set<FilterTag>> {
+        Binding(
+            get: { filterTags },
+            set: { filterTagsRaw = $0.map(\.rawValue).joined(separator: ",") }
+        )
+    }
 
     // MARK: - Filtered groups
 
     private var isSearching: Bool { !searchText.isEmpty }
 
     private func applySort(_ items: [SubscriptionItem]) -> [SubscriptionItem] {
+        let ascending = sortAscending
         switch sortOrder {
-        case .status:      return items.sorted { $0.nextRelevantDate < $1.nextRelevantDate }
-        case .category:    return items.sorted { ($0.categoryRaw ?? "zzz").localizedCompare($1.categoryRaw ?? "zzz") == .orderedAscending }
-        case .name:        return items.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+        case .status:
+            return items.sorted { ascending ? $0.nextRelevantDate < $1.nextRelevantDate : $0.nextRelevantDate > $1.nextRelevantDate }
+        case .category:
+            return items.sorted {
+                let result = ($0.categoryRaw ?? "zzz").localizedCompare($1.categoryRaw ?? "zzz")
+                return ascending ? result == .orderedAscending : result == .orderedDescending
+            }
+        case .name:
+            return items.sorted {
+                let result = $0.name.localizedCompare($1.name)
+                return ascending ? result == .orderedAscending : result == .orderedDescending
+            }
         case .renewalDate:
             return items.sorted { lhs, rhs in
                 let lhsExpired = { if case .expired = lhs.status { return true } else { return false } }()
                 let rhsExpired = { if case .expired = rhs.status { return true } else { return false } }()
                 if lhsExpired != rhsExpired { return !lhsExpired }
-                return lhs.nextRelevantDate < rhs.nextRelevantDate
+                return ascending ? lhs.nextRelevantDate < rhs.nextRelevantDate : lhs.nextRelevantDate > rhs.nextRelevantDate
             }
+        case .dateAdded:
+            return items.sorted { ascending ? $0.createdAt < $1.createdAt : $0.createdAt > $1.createdAt }
         case .price:
             return items.sorted {
-                ($0.monthlyCostConverted(to: preferredCurrency) ?? 0) > ($1.monthlyCostConverted(to: preferredCurrency) ?? 0)
+                let lhs = $0.monthlyCostConverted(to: preferredCurrency) ?? 0
+                let rhs = $1.monthlyCostConverted(to: preferredCurrency) ?? 0
+                return ascending ? lhs < rhs : lhs > rhs
             }
         }
     }
 
-    private func applyFilter(_ items: [SubscriptionItem]) -> [SubscriptionItem] {
-        var result: [SubscriptionItem]
-        switch filterOption {
-        case .all:        result = items
-        case .autoRenew:  result = items.filter { $0.isAutoRenew && !$0.isCancelled && !$0.isTrial }
-        case .trials:     result = items.filter { $0.isTrial }
-        case .cancelled:  result = items.filter { if case .cancelledButActive = $0.status { return true }; return false }
-        case .expired:    result = items.filter { if case .expired = $0.status { return true }; return false }
+    private func matches(_ item: SubscriptionItem, _ tag: FilterTag) -> Bool {
+        switch tag {
+        case .autoRenew: return item.isAutoRenew && !item.isCancelled && !item.isTrial
+        case .trial:     return item.isTrial
+        case .cancelled: if case .cancelledButActive = item.status { return true }; return false
+        case .expired:   if case .expired = item.status { return true }; return false
         }
-        if hideExpired && filterOption != .expired {
+    }
+
+    private func applyFilter(_ items: [SubscriptionItem]) -> [SubscriptionItem] {
+        var result = items
+        let tags = filterTags
+        if !tags.isEmpty {
+            result = result.filter { item in tags.contains { matches(item, $0) } }
+        }
+        if hideExpired && !tags.contains(.expired) {
             result = result.filter { if case .expired = $0.status { return false }; return true }
         }
         return result
@@ -172,7 +222,7 @@ struct HomeView: View {
     /// only meaningful with no active filter/search, since a filtered "empty" state is
     /// already covered by the "No {filter} subscriptions" message.
     private var isAllCaughtUp: Bool {
-        !allItems.isEmpty && !isSearching && filterOption == .all &&
+        !allItems.isEmpty && !isSearching && filterTags.isEmpty &&
         dueSoon.isEmpty && trialsEnding.isEmpty && urgentDocuments.isEmpty
     }
 
@@ -309,6 +359,14 @@ struct HomeView: View {
             }
             .sheet(item: $editingItem) { AddEditSubscriptionView(item: $0) }
             .sheet(isPresented: $showingServicePicker) { ServicePickerSheet() }
+            .sheet(isPresented: $showingSortFilterSheet) {
+                SortFilterSheet(
+                    sortOrder: sortOrderBinding,
+                    sortAscending: $sortAscending,
+                    filterTags: filterTagsBinding,
+                    hideExpired: $hideExpired
+                )
+            }
             .expiredPaywallSheet(isPresented: $showPaywall)
             .sheet(isPresented: $showingImportReview) {
                 ScreenshotImportReviewSheet(
@@ -547,7 +605,7 @@ struct HomeView: View {
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
             }
 
-            if filterOption != .all {
+            if !filterTags.isEmpty || hideExpired {
                 activeFilterChips
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
@@ -562,12 +620,12 @@ struct HomeView: View {
                     .padding(.top, 60)
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
-            } else if allSectionsEmpty && filterOption != .all {
+            } else if allSectionsEmpty && !filterTags.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "line.3.horizontal.decrease.circle")
                         .font(.system(size: 36))
                         .foregroundStyle(.secondary)
-                    Text("No \(filterOption.rawValue) subscriptions")
+                    Text("No \(activeFilterSummary) subscriptions")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -603,7 +661,7 @@ struct HomeView: View {
                         .padding(.horizontal)
                 }
 
-                if filterOption != .all || hideExpired {
+                if !filterTags.isEmpty || hideExpired {
                     activeFilterChips
                         .padding(.horizontal)
                 }
@@ -614,12 +672,12 @@ struct HomeView: View {
                 if allItems.isEmpty {
                     EmptyStateView(onAdd: { openAddSheet() }, onTapSample: { addHubPrefill = AddEditPrefill(name: "Netflix", categoryRaw: SubscriptionCategory.streaming.rawValue) }, onAddServices: { showingServicePicker = true })
                         .padding(.top, 60)
-                } else if allSectionsEmpty && filterOption != .all {
+                } else if allSectionsEmpty && !filterTags.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "line.3.horizontal.decrease.circle")
                             .font(.system(size: 36))
                             .foregroundStyle(.secondary)
-                        Text("No \(filterOption.rawValue) subscriptions")
+                        Text("No \(activeFilterSummary) subscriptions")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(.secondary)
                     }
@@ -635,25 +693,55 @@ struct HomeView: View {
 #endif
     }
 
+    /// Comma-joined names of active filter tags, for the "No {…} subscriptions" empty state.
+    private var activeFilterSummary: String {
+        Array(filterTags).sorted { $0.rawValue < $1.rawValue }.map(\.rawValue).joined(separator: ", ")
+    }
+
     private var activeFilterChips: some View {
-        HStack(spacing: 8) {
-            if filterOption != .all {
-                HStack {
-                    Label(filterOption.rawValue, systemImage: "line.3.horizontal.decrease.circle.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Button {
-                        filterOptionRaw = FilterOption.all.rawValue
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.8))
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(filterTags).sorted { $0.rawValue < $1.rawValue }, id: \.self) { tag in
+                    HStack(spacing: 6) {
+                        Image(systemName: tag.icon)
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(tag.rawValue)
+                            .font(.system(size: 13, weight: .semibold))
+                        Button {
+                            Haptics.fire(.light)
+                            filterTagsBinding.wrappedValue.remove(tag)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.blue, in: Capsule())
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.blue, in: Capsule())
+
+                if hideExpired {
+                    HStack(spacing: 6) {
+                        Text("Hiding Expired")
+                            .font(.system(size: 13, weight: .semibold))
+                        Button {
+                            Haptics.fire(.light)
+                            hideExpired = false
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.orange, in: Capsule())
+                }
             }
         }
     }
@@ -1065,51 +1153,11 @@ struct HomeView: View {
 
             Divider()
 
-            Menu {
-                ForEach(SortOrder.allCases, id: \.self) { option in
-                    Button {
-                        Haptics.fire(.selectionChanged)
-                        sortOrderRaw = option.rawValue
-                    } label: {
-                        if sortOrder == option {
-                            Label(option.rawValue, systemImage: "checkmark")
-                        } else {
-                            Text(option.rawValue)
-                        }
-                    }
-                }
+            Button {
+                Haptics.fire(.light)
+                showingSortFilterSheet = true
             } label: {
-                Label("Sort", systemImage: "arrow.up.arrow.down")
-            }
-
-            Menu {
-                ForEach(FilterOption.allCases, id: \.self) { option in
-                    Button {
-                        Haptics.fire(.selectionChanged)
-                        filterOptionRaw = option.rawValue
-                    } label: {
-                        if filterOption == option {
-                            Label(option.rawValue, systemImage: "checkmark")
-                        } else {
-                            Text(option.rawValue)
-                        }
-                    }
-                }
-
-                Divider()
-
-                Button {
-                    Haptics.fire(.selectionChanged)
-                    hideExpired.toggle()
-                } label: {
-                    if hideExpired {
-                        Text("Show Expired")
-                    } else {
-                        Label("Show Expired", systemImage: "checkmark")
-                    }
-                }
-            } label: {
-                Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+                Label("Sort & Filter", systemImage: "arrow.up.arrow.down.circle")
             }
 
             Divider()
@@ -1285,14 +1333,7 @@ struct HomeView: View {
         }
     }
 
-    private var sortSectionIcon: String {
-        switch sortOrder {
-        case .name:        return "textformat.abc"
-        case .renewalDate: return "calendar"
-        case .price:       return "dollarsign.circle"
-        default:           return "list.bullet"
-        }
-    }
+    private var sortSectionIcon: String { sortOrder.icon }
 
     // MARK: - Hero background
 

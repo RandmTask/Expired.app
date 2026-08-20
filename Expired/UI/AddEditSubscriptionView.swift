@@ -1410,18 +1410,26 @@ struct AddEditSubscriptionView: View {
         guard let match = AppCatalog.localIconMatch(for: query) else { return false }
 
         isApplyingCatalogMatch = true
-        defer { isApplyingCatalogMatch = false }
 
-        suppressNextFaviconFetch = true
-        name = match.name
-        url = match.appStoreURL
-        iconData = match.iconData
-        iconSource = .customImage
+        withTransaction(Transaction(animation: nil)) {
+            suppressNextFaviconFetch = true
+            name = match.name
+            url = match.appStoreURL
+            iconData = match.iconData
+            iconSource = .customImage
+        }
         appStoreResults = []
         appStoreTotal = 0
         appStoreLastFetchCount = 0
         appStoreSearchError = nil
         pulseSelection()
+
+        // Reset on the next run-loop turn, not via `defer` — `onChange(of: name)` fires
+        // after this function returns, so clearing the guard synchronously here would
+        // let handleNameChange re-enter against the value just set above.
+        DispatchQueue.main.async {
+            isApplyingCatalogMatch = false
+        }
         return true
     }
 
@@ -1508,21 +1516,30 @@ struct AddEditSubscriptionView: View {
 
     private func applyAppStoreResult(_ result: AppStoreSearchResult) {
         isApplyingCatalogMatch = true
-        defer { isApplyingCatalogMatch = false }
 
-        suppressNextFaviconFetch = true
-        iconSource = .customImage
+        // The App Store search sheet is still mid-dismiss-transition when this runs
+        // (called from the sheet row's Button before its own `dismiss()`), so these
+        // writes would otherwise inherit that animated transaction — the same
+        // sheet/Menu-dismissal glitch documented in this project's CLAUDE.md for
+        // AccountField. Left unguarded here it made the Name field's cursor/text
+        // editing flaky right after picking an App Store result.
+        withTransaction(Transaction(animation: nil)) {
+            suppressNextFaviconFetch = true
+            iconSource = .customImage
 
-        name = result.trackName
-        url = result.trackViewUrl
-        currency = result.currency ?? currency
+            name = result.trackName
+            url = result.trackViewUrl
+            currency = result.currency ?? currency
+        }
 
         if let art = result.artworkUrl100, let artURL = URL(string: art) {
             Task {
                 if let (data, _) = try? await URLSession.shared.data(from: artURL) {
                     await MainActor.run {
-                        iconData = data
-                        iconSource = .customImage
+                        withTransaction(Transaction(animation: nil)) {
+                            iconData = data
+                            iconSource = .customImage
+                        }
                     }
                 }
             }
@@ -1530,6 +1547,12 @@ struct AddEditSubscriptionView: View {
 
         appStoreResults = []
         pulseSelection()
+
+        // See applyLocalCatalogIconIfAvailable — reset on the next run-loop turn so
+        // the guard is still up when `onChange(of: name)` fires for the write above.
+        DispatchQueue.main.async {
+            isApplyingCatalogMatch = false
+        }
     }
 
     private func pulseSelection() {
