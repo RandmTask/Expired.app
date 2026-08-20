@@ -594,7 +594,7 @@ struct HomeView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search subscriptions")
-        .searchToolbarBehavior(.minimize)
+        .searchToolbarBehavior(debugHiddenSearch ? .automatic : .minimize)
         .animation(.spring(duration: 0.3), value: isSearching)
         .scrollEdgeEffectStyle(.soft, for: .top)
 #else

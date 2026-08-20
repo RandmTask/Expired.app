@@ -2937,6 +2937,8 @@ struct SettingsView: View {
     @State private var faviconRefreshProgress: (done: Int, total: Int) = (0, 0)
     @State private var showPaywall = false
     @State private var showCustomerCenter = false
+    @State private var isRestoringPurchases = false
+    @State private var restorePurchasesFeedback: String?
     @State private var showImportExport = false
     @State private var showReplayOnboarding = false
     #if os(iOS)
@@ -3145,6 +3147,26 @@ struct SettingsView: View {
         showImportExport = true
     }
 
+    /// Actually calls `PurchaseManager.restore()` — never opens Customer Center. Deon
+    /// flagged 2026-08-20 that routing "Restore Purchases" through `showCustomerCenter`
+    /// just showed the manage-subscription sheet and restored nothing.
+    private func performRestorePurchases() {
+        guard !isRestoringPurchases else { return }
+        Haptics.fire(.light)
+        isRestoringPurchases = true
+        restorePurchasesFeedback = nil
+        Task {
+            let restored = await purchaseManager.restore()
+            isRestoringPurchases = false
+            Haptics.fire(restored ? .success : .warning)
+            restorePurchasesFeedback = restored ? "Restored!" : "No purchases found"
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if restorePurchasesFeedback != nil {
+                restorePurchasesFeedback = nil
+            }
+        }
+    }
+
     private func setScreenshotAIProvider(_ provider: ScreenshotAIProvider) {
         guard purchaseManager.isPremium else {
             Haptics.fire(.warning)
@@ -3214,14 +3236,19 @@ struct SettingsView: View {
                     .glassEffect(in: .rect(cornerRadius: 20))
 
                     Button {
-                        Haptics.fire(.light)
-                        showCustomerCenter = true
+                        performRestorePurchases()
                     } label: {
-                        Text("Restore Purchases")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 4) {
+                            if isRestoringPurchases {
+                                ProgressView().controlSize(.mini)
+                            }
+                            Text(restorePurchasesFeedback ?? "Restore Purchases")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(restorePurchasesFeedback == "Restored!" ? .green : .secondary)
                     }
                     .buttonStyle(.plain)
+                    .disabled(isRestoringPurchases)
                     .frame(maxWidth: .infinity)
                 }
 
@@ -3824,14 +3851,19 @@ struct SettingsView: View {
                 }
             } footer: {
                 Button {
-                    Haptics.fire(.light)
-                    showCustomerCenter = true
+                    performRestorePurchases()
                 } label: {
-                    Text("Restore Purchases")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        if isRestoringPurchases {
+                            ProgressView().controlSize(.mini)
+                        }
+                        Text(restorePurchasesFeedback ?? "Restore Purchases")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(restorePurchasesFeedback == "Restored!" ? .green : .secondary)
                 }
                 .buttonStyle(.plain)
+                .disabled(isRestoringPurchases)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 2)
             }
