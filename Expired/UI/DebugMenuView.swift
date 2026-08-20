@@ -32,6 +32,10 @@ struct DebugMenuView: View {
     /// Settings' user-facing Analyzer provider picker, so switching provider there is
     /// reflected here automatically.
     @AppStorage(ScreenshotAISettings.providerKey) private var screenshotAIProviderRaw = ScreenshotAIProvider.automatic.rawValue
+
+    /// Experimental same-plane title layout on Home — see HomeView.debugSamePlaneTitle.
+    /// Must be removed before launch; row is tinted orange as a standing reminder.
+    @AppStorage("debugSamePlaneTitle") private var debugSamePlaneTitle = false
     @State private var selectedModels: [String: String] = [:]
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
@@ -52,6 +56,7 @@ struct DebugMenuView: View {
         List {
             diagnosticsSection
             testingToolsSection
+            experimentalSection
             aiModelOverrideSection
             forceFailureSection
             identityRepairSection
@@ -156,6 +161,27 @@ struct DebugMenuView: View {
             Text("Testing")
         } footer: {
             Text("Mascot Gallery shows every expression the bear can display. Pro Gates forces every Premium gate on or off without buying or refunding — real entitlement is \(purchaseManager.entitlementIsPremium ? "active" : "inactive").")
+        }
+    }
+
+    // MARK: - Experimental (temporary — must be removed before launch)
+
+    private var experimentalSection: some View {
+        Section {
+            Toggle(isOn: $debugSamePlaneTitle) {
+                Label("Same-Plane Title (Home)", systemImage: "flask.fill")
+            }
+            .tint(.orange)
+            .listRowBackground(Color.orange.opacity(0.15))
+
+            Label("Experimental — remove this toggle before launch", systemImage: "exclamationmark.triangle.fill")
+                .font(.footnote)
+                .foregroundStyle(.orange)
+                .listRowBackground(Color.orange.opacity(0.15))
+        } header: {
+            Text("Experimental")
+        } footer: {
+            Text("Puts the \"Expired\" title on the same row as the +/⋯ buttons on Home, instead of its own row below them.")
         }
     }
 

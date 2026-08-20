@@ -67,6 +67,10 @@ struct HomeView: View {
         case rowSolid        = "Solid Bar"
         case rowMaterial     = "Material Bar"
     }
+    /// Debug-only experiment: puts the "Expired" title on the same row as the
+    /// +/⋯ toolbar buttons instead of native large-title's own row below them.
+    /// See DebugMenuView's "Experimental" section — must be removed before launch.
+    @AppStorage("debugSamePlaneTitle") private var debugSamePlaneTitle = false
     @AppStorage("homeSortOrder") private var sortOrderRaw: String = SortOrder.status.rawValue
     @AppStorage("homeFilterOption") private var filterOptionRaw: String = FilterOption.all.rawValue
     @AppStorage("homeHideExpired") private var hideExpired: Bool = false
@@ -261,6 +265,7 @@ struct HomeView: View {
             .navigationTitle("Expired")
             .largeNavigationTitle()
 #if os(iOS)
+            .toolbarTitleDisplayMode(debugSamePlaneTitle ? .inlineLarge : .automatic)
             .photosPicker(isPresented: $showingPhotoImporter, selection: $importPhotoItems, maxSelectionCount: 0, matching: .images)
 #endif
             .toolbar {
