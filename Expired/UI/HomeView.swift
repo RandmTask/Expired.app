@@ -71,12 +71,6 @@ struct HomeView: View {
     /// +/⋯ toolbar buttons instead of native large-title's own row below them.
     /// See DebugMenuView's "Experimental" section — must be removed before launch.
     @AppStorage("debugSamePlaneTitle") private var debugSamePlaneTitle = false
-    /// Debug-only experiment: search field is hidden below the nav title and only
-    /// revealed by pulling down at the top of the list (Mail/Reminders-style), instead
-    /// of the minimized search icon `.searchToolbarBehavior(.minimize)` produces.
-    /// See DebugMenuView's "Experimental" section — must be removed before launch.
-    @AppStorage("debugHiddenSearch") private var debugHiddenSearch = false
-    @State private var hasSkippedPastSearchRow = false
     @AppStorage("homeSortOrder") private var sortOrderRaw: String = SortOrder.status.rawValue
     @AppStorage("homeFilterOption") private var filterOptionRaw: String = FilterOption.all.rawValue
     @AppStorage("homeHideExpired") private var hideExpired: Bool = false
@@ -231,7 +225,9 @@ struct HomeView: View {
 
                 primaryContent
 #if os(iOS)
-                .modifier(ConditionalRefreshable(isEnabled: !debugHiddenSearch))
+                .refreshable {
+                    try? await Task.sleep(for: .seconds(1))
+                }
 #endif
 
                 if let undoToast {
@@ -538,131 +534,64 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private var iosListContent: some View {
-        if !allItems.isEmpty && !isSearching {
-            HeroSummaryCard(
-                monthlyTotal: monthlyTotal,
-                yearlyTotal: yearlyTotal,
-                currency: displayCurrency,
-                activeCount: subscriptionItems.filter(\.isActiveSubscription).count
-            )
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
-        }
-
-        if isAllCaughtUp {
-            AllCaughtUpCard()
+    private var primaryContent: some View {
+#if os(iOS)
+        List {
+            if !allItems.isEmpty && !isSearching {
+                HeroSummaryCard(
+                    monthlyTotal: monthlyTotal,
+                    yearlyTotal: yearlyTotal,
+                    currency: displayCurrency,
+                    activeCount: subscriptionItems.filter(\.isActiveSubscription).count
+                )
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
-        }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
+            }
 
-        if filterOption != .all {
-            activeFilterChips
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))
-        }
+            if isAllCaughtUp {
+                AllCaughtUpCard()
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
+            }
 
-        iosListSections
+            if filterOption != .all {
+                activeFilterChips
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))
+            }
 
-        if allItems.isEmpty {
-            EmptyStateView(onAdd: { openAddSheet() }, onTapSample: { addHubPrefill = AddEditPrefill(name: "Netflix", categoryRaw: SubscriptionCategory.streaming.rawValue) }, onAddServices: { showingServicePicker = true })
+            iosListSections
+
+            if allItems.isEmpty {
+                EmptyStateView(onAdd: { openAddSheet() }, onTapSample: { addHubPrefill = AddEditPrefill(name: "Netflix", categoryRaw: SubscriptionCategory.streaming.rawValue) }, onAddServices: { showingServicePicker = true })
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 60)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            } else if allSectionsEmpty && filterOption != .all {
+                VStack(spacing: 8) {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .font(.system(size: 36))
+                        .foregroundStyle(.secondary)
+                    Text("No \(filterOption.rawValue) subscriptions")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
                 .frame(maxWidth: .infinity)
                 .padding(.top, 60)
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
-        } else if allSectionsEmpty && filterOption != .all {
-            VStack(spacing: 8) {
-                Image(systemName: "line.3.horizontal.decrease.circle")
-                    .font(.system(size: 36))
-                    .foregroundStyle(.secondary)
-                Text("No \(filterOption.rawValue) subscriptions")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 60)
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
-        }
-    }
-
-    /// Custom search field mimicking the native `.searchable()` drawer, used only by
-    /// the `debugHiddenSearch` experiment (see `pullToSearchList` below) — native
-    /// `.searchable()` on iOS 26 renders its field visible at rest regardless of
-    /// `.navigationBarDrawer` display mode or `.searchToolbarBehavior`, so a real
-    /// hidden-until-pulled reveal needs a plain list row instead.
-    private var pullToSearchRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("Search subscriptions", text: $searchText)
-                .textFieldStyle(.plain)
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
-        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-        .id("pullToSearchRow")
-    }
-
-    /// `debugHiddenSearch` variant: the search field is a plain list row, scrolled
-    /// just out of view on first appear so the list rests on the row below it — pulling
-    /// down past the top reveals it, matching Mail/Reminders. See `pullToSearchRow`.
-    private var pullToSearchList: some View {
-        ScrollViewReader { proxy in
-            List {
-                pullToSearchRow
-                Color.clear
-                    .frame(height: 0)
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets())
-                    .id("homeTop")
-
-                iosListContent
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .animation(.spring(duration: 0.3), value: isSearching)
-            .scrollEdgeEffectStyle(.soft, for: .top)
-            .onAppear {
-                guard !hasSkippedPastSearchRow else { return }
-                hasSkippedPastSearchRow = true
-                proxy.scrollTo("homeTop", anchor: .top)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var primaryContent: some View {
-#if os(iOS)
-        if debugHiddenSearch {
-            pullToSearchList
-        } else {
-            List {
-                iosListContent
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search subscriptions")
-            .searchToolbarBehavior(.minimize)
-            .animation(.spring(duration: 0.3), value: isSearching)
-            .scrollEdgeEffectStyle(.soft, for: .top)
-        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search subscriptions")
+        .searchToolbarBehavior(.minimize)
+        .animation(.spring(duration: 0.3), value: isSearching)
+        .scrollEdgeEffectStyle(.soft, for: .top)
 #else
         ScrollView {
             LazyVStack(spacing: 20) {
@@ -2828,24 +2757,3 @@ private struct SampleSubscriptionCard: View {
     HomeView()
         .modelContainer(PreviewData.container)
 }
-
-#if os(iOS)
-/// Debug-only: `.refreshable` competes with `.searchable`'s hidden/pull-to-reveal
-/// drawer for the same pull-down gesture at the top of the list. Disabling it lets
-/// the `debugHiddenSearch` A/B test isolate whether the pull-to-refresh spinner is
-/// what's forcing the search field to render always-visible instead of hidden.
-/// Remove alongside `debugHiddenSearch` once the experiment concludes.
-private struct ConditionalRefreshable: ViewModifier {
-    let isEnabled: Bool
-
-    func body(content: Content) -> some View {
-        if isEnabled {
-            content.refreshable {
-                try? await Task.sleep(for: .seconds(1))
-            }
-        } else {
-            content
-        }
-    }
-}
-#endif
