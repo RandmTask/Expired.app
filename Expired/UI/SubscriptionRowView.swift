@@ -53,8 +53,15 @@ struct SubscriptionRowView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
-        .glassEffect(in: .rect(cornerRadius: 20))
+        .glassEffect(in: cardShape)
         .contentShape(RoundedRectangle(cornerRadius: 20))
+        .contentShape(.contextMenuPreview, cardShape)
+    }
+
+    /// Bound once so the drawn card and the context-menu lift platter can never drift
+    /// apart — see `_shared/context-menus.md` rule #2 (same shape value for both).
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 20)
     }
 
     @ViewBuilder
