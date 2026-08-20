@@ -150,3 +150,12 @@ the shared doc is explicit that Debug isn't a junk drawer for things real users 
 Contact/Feedback/Rate/Tip Jar/Acknowledgements were left out — no code path exists for
 any of them yet (no mail composer, no App Store review link), and shipping a dead row
 is worse than not shipping a Support row for it — flagged as a follow-up batch.
+
+## 2026-08-20 — Where do I find the App Store ID for the "Rate the App" link?
+**A:** App Store Connect → My Apps → Expired → **App Information** (left sidebar, under
+General) → the **General Information** panel on the right → **Apple ID**. It's a ~10-digit
+number, and it only exists once you've created the app record — which Expired hasn't yet
+(it's already on the roadmap's Launch gate as "No real App Store Connect app in
+RevenueCat"). Same number appears in the App Store URL as `.../id6478123456`. Until it
+exists, `SupportConfig.appStoreID` stays empty and the "Rate Expired" row hides itself
+rather than shipping a dead link.

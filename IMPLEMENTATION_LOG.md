@@ -1,5 +1,62 @@
 # Expired — Implementation Log
 
+## 2026-08-20 — Support/About rows (Contact, Feedback, Rate, Tip Jar, Acknowledgements)
+
+Completes the follow-up flagged in the 2026-08-19 "Not done" note. The Support section
+in both `macSettingsBody` and `iosSettingsBody` now carries the full standard row set
+from `_shared/settings page/settings-conventions.md`, in its fixed order — the four new
+rows sit *above* the pre-existing Replay Onboarding, Acknowledgements below it.
+
+**New files:**
+- `Expired/Services/SupportConfig.swift` — the one place the outward-facing constants
+  live (support address, App Store ID, tip product IDs) plus the four-line device
+  context block every support email carries.
+- `Expired/UI/SupportMail.swift` — `SupportEmailDraft` (two kinds, two subjects) +
+  an iOS `MFMailComposeViewController` wrapper + a macOS `mailto:` path.
+- `Expired/Services/TipJarManager.swift`, `Expired/UI/TipJarView.swift` — tip jar.
+- `Expired/UI/AcknowledgementsView.swift` — pushed licence screen.
+
+**Judgment calls, and what they rule out:**
+
+- **Tips go through RevenueCat, not StoreKit 2 directly.** `PurchaseManager.configure`
+  uses RevenueCat's default completion mode, so RevenueCat already owns the transaction
+  queue. A parallel StoreKit 2 `purchase()`/`finish()` path would make two owners of the
+  same transactions — the rejected approach. `Purchases.shared.products(_:)` +
+  `purchase(product:)` keeps one owner and needs no second `configure` or listener.
+- **Rate and Tip Jar hide themselves rather than ship dead.** There is no ASC app record
+  yet (so no Apple ID for a review URL) and no tip products. Both rows are gated on
+  their backing config resolving — `SupportConfig.reviewURL != nil`, `!tipJar.tips
+  .isEmpty` — per the conventions' "omit the row entirely rather than shipping a dead
+  one". Three matching pre-launch items added to `ROADMAP.md`'s Launch gate.
+- **macOS needs a `mailto:` path — `MessageUI` doesn't exist there.** The conventions'
+  "never a bare `mailto:`" rule is about *prefill*, not mechanism, so a percent-encoded
+  subject+body mailto satisfies it. Encoding subtracts `&+=?#` from `.urlQueryAllowed`,
+  which otherwise leaves `&` intact and truncates the body at the first one.
+- **Device model comes from `uname()`, not `UIDevice.current.model`.** The latter returns
+  the literal string "iPhone" for every iPhone ever made — useless for triage. Deliberately
+  did *not* retrofit `DebugMenuView.buildDiagnosticReport`, which still uses the weaker
+  call: out of scope for this batch (surgical-edits rule), noted here so it isn't mistaken
+  for an oversight.
+- **A tip purchase distinguishes cancel from failure.** First pass returned a plain `Bool`,
+  which made backing out of the App Store sheet indistinguishable from a real error and
+  would have buzzed/alerted on a normal cancel. Replaced with a `TipResult` enum before
+  it shipped.
+- **Support inbox is `swiftstudio.dob@gmail.com`** (Deon's call — HomeHub's address).
+  Voxora uses `support@swiftstudios.app`; the two apps disagreed, so this was asked rather
+  than guessed. Flagged in `ROADMAP.md` as a pre-launch swap.
+- **Acknowledgements list is read, not composed.** Every entry came from
+  `Package.resolved` cross-checked against each package's own `LICENSE` file in
+  `SourcePackages/checkouts` — fabricating a plausible licence list is the real failure
+  mode here.
+
+**Not done (deliberately out of scope):** "About the developer" and Privacy Policy /
+Terms rows (items 6 and 8 of the conventions' Support set) — both need copy and a hosted
+URL that don't exist yet.
+
+**Model used:** ran inline on the live session model rather than a Sonnet subagent —
+the task named Sonnet, but the main-thread model can't downgrade itself and five new
+files plus two coordinated edits in one already-open file isn't separable fan-out work.
+
 ## 2026-08-19 — Context menu fix + full Settings revamp to `_shared` standard
 
 **Context menu fix** (`Expired/UI/HomeView.swift`): the row long-press menu rendered

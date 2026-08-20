@@ -62,3 +62,48 @@ IMPLEMENTATION_LOG.md 2026-08-19 "Settings revamp")*
    y/n
 7. The version footer's own tap-to-copy shows "Copied!" briefly instead of
    just copying silently — y/n
+
+### Settings — Support / About
+
+🔴 Support section row set and order — *(source: IMPLEMENTATION_LOG.md 2026-08-20
+"Support/About rows")*
+1. Settings → Support lists, in this order: Report a Problem, Send Feedback,
+   Replay Onboarding, Acknowledgements — y/n
+2. "Rate Expired" and "Tip Jar" are **absent** (expected — the App Store record
+   and the tip products don't exist yet; these rows hide themselves rather than
+   ship dead) — y/n
+3. Every row is tappable anywhere across its full width, not just on the text —
+   y/n
+4. The section footer reads "Bug reports and feature requests open a prefilled
+   email…" — y/n
+
+🔴 Contact / Feedback mail composer — *(source: IMPLEMENTATION_LOG.md 2026-08-20)*
+5. Tap "Report a Problem" → a mail composer opens addressed to
+   swiftstudio.dob@gmail.com, subject "Expired 1.0 — bug report" — y/n
+6. That draft's body has "What happened? / What did you expect instead?"
+   prompts, then a `---` block listing App, OS, Device, Locale — y/n
+7. The Device line shows a real model identifier (e.g. `iPhone16,2`), **not**
+   the generic word "iPhone" — y/n
+8. Tap "Send Feedback" → same composer but subject "Expired 1.0 — feedback" and
+   a "What would you like Expired to do?" prompt — y/n
+9. Cancelling the composer returns to Settings with Settings still open (both
+   sheet layers do not collapse) — y/n
+10. On macOS, "Report a Problem" opens a prefilled draft in Mail with the
+    subject AND the full body intact (nothing truncated mid-sentence) — y/n
+
+🔴 Acknowledgements — *(source: IMPLEMENTATION_LOG.md 2026-08-20)*
+11. Tap "Acknowledgements" → pushes to a screen (not a sheet) listing 8
+    packages: purchases-ios, supabase-swift, swift-asn1, swift-clocks,
+    swift-concurrency-extras, swift-crypto, swift-http-types,
+    xctest-dynamic-overlay — y/n
+12. Each row shows its licence (MIT or Apache 2.0) and tapping it opens that
+    package's GitHub page — y/n
+13. There's a second "Icons & Logos" section mentioning SF Symbols — y/n
+
+🔴 Tip Jar (only testable once the products exist in App Store Connect) —
+*(source: IMPLEMENTATION_LOG.md 2026-08-20)*
+14. With tip products live, a "Tip Jar" row appears and opens a sheet showing
+    three tips cheapest-first with localized prices — y/n
+15. Buying a tip shows a "Thank You" alert and grants nothing — Pro state is
+    unchanged before and after — y/n
+16. Cancelling the App Store sheet produces NO error alert and no haptic — y/n

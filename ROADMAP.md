@@ -27,6 +27,18 @@ are safe to build regardless of gate status.
   on).
 - 🔴 **Google Cloud (Gemini) budget alert** — blocked: the Google account has pending MFA
   enforcement, locking the whole Cloud Console including billing until 2SV is enabled.
+- 🔴 **Support inbox is a personal Gmail** — `SupportConfig.supportEmail` currently
+  reads `swiftstudio.dob@gmail.com`. Swap for a real studio address (e.g.
+  `support@swiftstudios.app`, as Voxora already uses) before submission so the Contact /
+  Send Feedback rows don't publish a personal address in a shipped app.
+- 🔴 **`SupportConfig.appStoreID` unset** — the "Rate Expired" row hides itself while it's
+  empty. Fill it from App Store Connect → My Apps → Expired → App Information → General
+  Information → **Apple ID** (an ~10-digit number) once the app record exists. Blocked by
+  the RevenueCat/ASC item above.
+- 🔴 **Tip jar products not created** — `SupportConfig.tipProductIDs` names three
+  non-consumables (`com.swiftstudio.Expired.tip.small/.medium/.large`). Create them in App
+  Store Connect and attach them to the RevenueCat app; until they resolve the Tip Jar row
+  hides itself, so this is safe to ship unfinished but the row will never appear.
 - 🔴 **`update-exchange-rates` cron schedule** — migration 0007 documents scheduling the
   function at `0 5 * * *` UTC in the dashboard; not confirmed done. Without it, currency
   conversion silently falls back to `CurrencyInfo`'s hardcoded snapshot.

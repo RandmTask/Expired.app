@@ -2939,6 +2939,13 @@ struct SettingsView: View {
     @State private var showCustomerCenter = false
     @State private var showImportExport = false
     @State private var showReplayOnboarding = false
+    #if os(iOS)
+    @State private var mailDraft: SupportEmailDraft?
+    #endif
+    @State private var mailUnavailable = false
+    @State private var showTipJar = false
+    @State private var tipJar = TipJarManager.shared
+    @Environment(\.openURL) private var openURL
     @AppStorage(BackupService.autoBackupEnabledKey) private var autoBackupEnabled = true
     @AppStorage(BackupService.lastAutoBackupKey) private var lastAutoBackupAt: Double = 0
     @Query(filter: #Predicate<SubscriptionItem> { $0.isArchived }) private var archivedItems: [SubscriptionItem]
@@ -3058,7 +3065,21 @@ struct SettingsView: View {
                 pullNotificationTimeFromKVStore()
             }
         }
+        .task { await tipJar.load() }
         .sheet(isPresented: $showImportExport) { ImportExportView() }
+        .sheet(isPresented: $showTipJar) { TipJarView() }
+        #if os(iOS)
+        .sheet(item: $mailDraft) { draft in
+            MailComposerView(draft: draft) { mailDraft = nil }
+                .ignoresSafeArea()
+        }
+        #endif
+        .alert("Couldn't Open Mail", isPresented: $mailUnavailable) {
+            Button("Copy Address") { copySupportAddress() }
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("No mail account is set up on this device. Email \(SupportConfig.supportEmail) from wherever you read mail instead.")
+        }
         #if os(iOS)
         .fullScreenCover(isPresented: $showReplayOnboarding) {
             OnboardingView { showReplayOnboarding = false }
@@ -3066,6 +3087,51 @@ struct SettingsView: View {
         #endif
         .expiredPaywallSheet(isPresented: $showPaywall)
         .expiredCustomerCenterSheet(isPresented: $showCustomerCenter)
+    }
+
+    // MARK: - Support actions
+
+    /// Opens a prefilled support draft. Contact and Feedback deliberately use two
+    /// different subjects so the inbox sorts bug reports from product input without
+    /// re-reading every message — see `_shared/settings page/feedback-conventions.md`.
+    private func composeSupportEmail(_ kind: SupportEmailDraft.Kind) {
+        Haptics.fire(.light)
+        let draft = SupportEmailDraft(kind: kind)
+        #if os(iOS)
+        if MailComposerView.canSendMail {
+            mailDraft = draft
+        } else {
+            mailUnavailable = true
+        }
+        #else
+        // macOS has no MessageUI — hand a percent-encoded mailto: to the default
+        // client. Still prefilled; only the mechanism differs.
+        if !SupportMail.openMailto(draft) { mailUnavailable = true }
+        #endif
+    }
+
+    private func copySupportAddress() {
+        #if os(iOS)
+        UIPasteboard.general.string = SupportConfig.supportEmail
+        #elseif os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(SupportConfig.supportEmail, forType: .string)
+        #endif
+        Haptics.fire(.success)
+    }
+
+    /// Only ever called when `SupportConfig.reviewURL` is non-nil — the row itself
+    /// is hidden until the App Store record exists, per the conventions' "omit the
+    /// row rather than ship a dead one" rule.
+    private func openAppStoreReview() {
+        guard let url = SupportConfig.reviewURL else { return }
+        Haptics.fire(.light)
+        openURL(url)
+    }
+
+    private func openTipJar() {
+        Haptics.fire(.light)
+        showTipJar = true
     }
 
     /// Pro-gated: a free user gets the paywall instead of the Import/Export sheet.
@@ -3436,14 +3502,75 @@ struct SettingsView: View {
                     }
                 }
 
-                // SUPPORT
+                // SUPPORT — row order fixed by
+                // `_shared/settings page/settings-conventions.md`: contact, feedback,
+                // rate, tip jar, replay onboarding, acknowledgements. Rate and Tip Jar
+                // hide themselves while their backing config doesn't exist yet.
                 settingsSection(title: "Support", icon: "questionmark.circle") {
+                    Button {
+                        composeSupportEmail(.bugReport)
+                    } label: {
+                        settingsRow {
+                            macSettingsLabel("Report a Problem", icon: "exclamationmark.bubble")
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        composeSupportEmail(.feedback)
+                    } label: {
+                        settingsRow {
+                            macSettingsLabel("Send Feedback", icon: "lightbulb")
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    if SupportConfig.reviewURL != nil {
+                        Button {
+                            openAppStoreReview()
+                        } label: {
+                            settingsRow {
+                                macSettingsLabel("Rate Expired", icon: "star")
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if !tipJar.tips.isEmpty {
+                        Button {
+                            openTipJar()
+                        } label: {
+                            settingsRow {
+                                macSettingsLabel("Tip Jar", icon: "cup.and.saucer")
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+
                     Button {
                         Haptics.fire(.light)
                         showReplayOnboarding = true
                     } label: {
                         settingsRow {
                             macSettingsLabel("Replay Onboarding", icon: "sparkles.rectangle.stack")
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
+                        AcknowledgementsView()
+                    } label: {
+                        settingsRow {
+                            macSettingsLabel("Acknowledgements", icon: "text.book.closed")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.tertiary)
                         }
                         .contentShape(Rectangle())
                     }
@@ -3958,8 +4085,63 @@ struct SettingsView: View {
                 Text("When a subscription you add matches a known service (e.g. Netflix), the service name alone is sent anonymously — never your cost, dates, notes, or any identifier — to help prioritize which services Expired recognizes automatically. Off means nothing is ever sent.")
             }
 
-            // MARK: Support
+            // MARK: Support — row order fixed by
+            // `_shared/settings page/settings-conventions.md`: contact, feedback,
+            // rate, tip jar, replay onboarding, acknowledgements. Rate and Tip Jar
+            // hide themselves while their backing config doesn't exist yet.
             Section {
+                Button {
+                    composeSupportEmail(.bugReport)
+                } label: {
+                    HStack {
+                        rowIcon("exclamationmark.bubble")
+                        Text("Report a Problem").foregroundStyle(.primary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    composeSupportEmail(.feedback)
+                } label: {
+                    HStack {
+                        rowIcon("lightbulb")
+                        Text("Send Feedback").foregroundStyle(.primary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if SupportConfig.reviewURL != nil {
+                    Button {
+                        openAppStoreReview()
+                    } label: {
+                        HStack {
+                            rowIcon("star")
+                            Text("Rate Expired").foregroundStyle(.primary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if !tipJar.tips.isEmpty {
+                    Button {
+                        openTipJar()
+                    } label: {
+                        HStack {
+                            rowIcon("cup.and.saucer")
+                            Text("Tip Jar").foregroundStyle(.primary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 Button {
                     Haptics.fire(.light)
                     showReplayOnboarding = true
@@ -3972,8 +4154,20 @@ struct SettingsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+
+                NavigationLink {
+                    AcknowledgementsView()
+                } label: {
+                    HStack {
+                        rowIcon("text.book.closed")
+                        Text("Acknowledgements").foregroundStyle(.primary)
+                    }
+                }
+                .simultaneousGesture(TapGesture().onEnded { Haptics.fire(.light) })
             } header: {
                 sectionHeader("SUPPORT")
+            } footer: {
+                Text("Bug reports and feature requests open a prefilled email including your app version, OS, and device model — nothing from your subscriptions is ever attached.")
             }
 
             Section {
