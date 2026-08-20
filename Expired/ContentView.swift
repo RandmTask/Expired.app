@@ -3172,57 +3172,57 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
 
-                // EXPIRED PRO — always first, per _shared/settings-conventions.md
-                settingsSection(title: "Expired Pro", icon: "crown") {
-                    if purchaseManager.isPremium {
-                        settingsRow {
-                            macSettingsLabel("Subscription", icon: "crown.fill")
-                            Spacer()
-                            Text("Active").foregroundStyle(.green)
-                        }
-                        FormDivider()
-                        Button {
-                            Haptics.fire(.light)
-                            showCustomerCenter = true
-                        } label: {
-                            settingsRow {
-                                macSettingsLabel("Manage Subscription", icon: "person.crop.circle")
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.tertiary)
+                // EXPIRED PRO — always first, per _shared/settings-conventions.md. No section
+                // header; "Manage Subscription" now lives behind tapping the row itself
+                // (opens Customer Center directly), per Deon 2026-08-20.
+                VStack(spacing: 8) {
+                    VStack(spacing: 0) {
+                        if purchaseManager.isPremium {
+                            Button {
+                                Haptics.fire(.light)
+                                showCustomerCenter = true
+                            } label: {
+                                settingsRow {
+                                    macSettingsLabel("Expired Pro", icon: "crown.fill")
+                                    Spacer()
+                                    Text("Active").foregroundStyle(.green)
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .contentShape(Rectangle())
                             }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Button {
-                            Haptics.fire(.light)
-                            showPaywall = true
-                        } label: {
-                            settingsRow {
-                                macSettingsLabel("Upgrade to Pro", icon: "crown.fill")
-                                    .foregroundStyle(.blue)
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.tertiary)
+                            .buttonStyle(.plain)
+                        } else {
+                            Button {
+                                Haptics.fire(.light)
+                                showPaywall = true
+                            } label: {
+                                settingsRow {
+                                    macSettingsLabel("Upgrade to Pro", icon: "crown.fill")
+                                        .foregroundStyle(.blue)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .contentShape(Rectangle())
                             }
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
-                    FormDivider()
+                    .glassEffect(in: .rect(cornerRadius: 20))
+
                     Button {
                         Haptics.fire(.light)
                         showCustomerCenter = true
                     } label: {
-                        settingsRow {
-                            macSettingsLabel("Restore Purchases", icon: "arrow.clockwise")
-                        }
-                        .contentShape(Rectangle())
+                        Text("Restore Purchases")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
                 }
 
                 // GENERAL
@@ -3782,23 +3782,20 @@ struct SettingsView: View {
     private var iosSettingsBody: some View {
         List {
 
-            // MARK: Expired Pro — always first, per _shared/settings-conventions.md
+            // MARK: Expired Pro — always first, per _shared/settings-conventions.md. No section
+            // header; "Manage Subscription" now lives behind tapping the row itself (opens
+            // Customer Center directly), per Deon 2026-08-20.
             Section {
                 if purchaseManager.isPremium {
-                    HStack {
-                        rowIcon("crown.fill", color: .green)
-                        Text("Expired Pro").foregroundStyle(.primary)
-                        Spacer()
-                        Text("Active").foregroundStyle(.green)
-                    }
                     Button {
                         Haptics.fire(.light)
                         showCustomerCenter = true
                     } label: {
                         HStack {
-                            rowIcon("person.crop.circle")
-                            Text("Manage Subscription").foregroundStyle(.primary)
+                            rowIcon("crown.fill", color: .green)
+                            Text("Expired Pro").foregroundStyle(.primary)
                             Spacer()
+                            Text("Active").foregroundStyle(.green)
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(.tertiary)
@@ -3825,20 +3822,18 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                 }
+            } footer: {
                 Button {
                     Haptics.fire(.light)
                     showCustomerCenter = true
                 } label: {
-                    HStack {
-                        rowIcon("arrow.clockwise", color: .blue)
-                        Text("Restore Purchases").foregroundStyle(.blue)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                    Text("Restore Purchases")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-            } header: {
-                sectionHeader("EXPIRED PRO")
+                .frame(maxWidth: .infinity)
+                .padding(.top, 2)
             }
 
             // MARK: General
