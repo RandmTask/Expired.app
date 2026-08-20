@@ -71,6 +71,11 @@ struct HomeView: View {
     /// +/⋯ toolbar buttons instead of native large-title's own row below them.
     /// See DebugMenuView's "Experimental" section — must be removed before launch.
     @AppStorage("debugSamePlaneTitle") private var debugSamePlaneTitle = false
+    /// Debug-only experiment: search field is hidden below the nav title and only
+    /// revealed by pulling down at the top of the list (Mail/Reminders-style), instead
+    /// of the minimized search icon `.searchToolbarBehavior(.minimize)` produces.
+    /// See DebugMenuView's "Experimental" section — must be removed before launch.
+    @AppStorage("debugHiddenSearch") private var debugHiddenSearch = false
     @AppStorage("homeSortOrder") private var sortOrderRaw: String = SortOrder.status.rawValue
     @AppStorage("homeFilterOption") private var filterOptionRaw: String = FilterOption.all.rawValue
     @AppStorage("homeHideExpired") private var hideExpired: Bool = false

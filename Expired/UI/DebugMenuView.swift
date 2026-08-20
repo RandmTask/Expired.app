@@ -36,6 +36,10 @@ struct DebugMenuView: View {
     /// Experimental same-plane title layout on Home — see HomeView.debugSamePlaneTitle.
     /// Must be removed before launch; row is tinted orange as a standing reminder.
     @AppStorage("debugSamePlaneTitle") private var debugSamePlaneTitle = false
+
+    /// Experimental hidden/pull-to-reveal search bar on Home — see HomeView.debugHiddenSearch.
+    /// Must be removed before launch; row is tinted orange as a standing reminder.
+    @AppStorage("debugHiddenSearch") private var debugHiddenSearch = false
     @State private var selectedModels: [String: String] = [:]
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
@@ -174,14 +178,20 @@ struct DebugMenuView: View {
             .tint(.orange)
             .listRowBackground(Color.orange.opacity(0.15))
 
-            Label("Experimental — remove this toggle before launch", systemImage: "exclamationmark.triangle.fill")
+            Toggle(isOn: $debugHiddenSearch) {
+                Label("Hidden Search, Pull to Reveal (Home)", systemImage: "flask.fill")
+            }
+            .tint(.orange)
+            .listRowBackground(Color.orange.opacity(0.15))
+
+            Label("Experimental — remove these toggles before launch", systemImage: "exclamationmark.triangle.fill")
                 .font(.footnote)
                 .foregroundStyle(.orange)
                 .listRowBackground(Color.orange.opacity(0.15))
         } header: {
             Text("Experimental")
         } footer: {
-            Text("Puts the \"Expired\" title on the same row as the +/⋯ buttons on Home, instead of its own row below them.")
+            Text("Same-Plane Title puts the \"Expired\" title on the same row as the +/⋯ buttons on Home, instead of its own row below them. Hidden Search removes the search field from view until you pull down at the top of the list, matching Mail/Reminders — instead of the minimized search icon.")
         }
     }
 
