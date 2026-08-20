@@ -230,9 +230,7 @@ struct HomeView: View {
 
                 primaryContent
 #if os(iOS)
-                .refreshable {
-                    try? await Task.sleep(for: .seconds(1))
-                }
+                .modifier(ConditionalRefreshable(isEnabled: !debugHiddenSearch))
 #endif
 
                 if let undoToast {
@@ -2762,3 +2760,24 @@ private struct SampleSubscriptionCard: View {
     HomeView()
         .modelContainer(PreviewData.container)
 }
+
+#if os(iOS)
+/// Debug-only: `.refreshable` competes with `.searchable`'s hidden/pull-to-reveal
+/// drawer for the same pull-down gesture at the top of the list. Disabling it lets
+/// the `debugHiddenSearch` A/B test isolate whether the pull-to-refresh spinner is
+/// what's forcing the search field to render always-visible instead of hidden.
+/// Remove alongside `debugHiddenSearch` once the experiment concludes.
+private struct ConditionalRefreshable: ViewModifier {
+    let isEnabled: Bool
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.refreshable {
+                try? await Task.sleep(for: .seconds(1))
+            }
+        } else {
+            content
+        }
+    }
+}
+#endif
