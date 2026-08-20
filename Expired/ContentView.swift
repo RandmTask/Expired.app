@@ -3208,9 +3208,6 @@ struct SettingsView: View {
                                     macSettingsLabel("Expired Pro", icon: "crown.fill")
                                     Spacer()
                                     Text("Active").foregroundStyle(.green)
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(.tertiary)
                                 }
                                 .contentShape(Rectangle())
                             }
@@ -3224,9 +3221,6 @@ struct SettingsView: View {
                                     macSettingsLabel("Upgrade to Pro", icon: "crown.fill")
                                         .foregroundStyle(.blue)
                                     Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(.tertiary)
                                 }
                                 .contentShape(Rectangle())
                             }
@@ -3821,9 +3815,6 @@ struct SettingsView: View {
                             Text("Expired Pro").foregroundStyle(.primary)
                             Spacer()
                             Text("Active").foregroundStyle(.green)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.tertiary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
@@ -3838,9 +3829,6 @@ struct SettingsView: View {
                             rowIcon("crown.fill", color: .blue)
                             Text("Upgrade to Pro").foregroundStyle(.blue)
                             Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.tertiary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())

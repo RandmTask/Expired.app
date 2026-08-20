@@ -28,6 +28,7 @@ struct HomeView: View {
     @State private var showingImportReview = false
     @State private var editingItem: SubscriptionItem?
     @State private var searchText = ""
+    @State private var isSearchActive = false
     @State private var importPhotoItems: [PhotosPickerItem] = []
     @State private var importDrafts: [ScreenshotSubscriptionDraft] = []
     @State private var importWarning: String?
@@ -58,15 +59,6 @@ struct HomeView: View {
         case price       = "Price"
     }
     enum FilterOption: String, CaseIterable { case all = "All"; case autoRenew = "Auto-Renew"; case trials = "Trials"; case cancelled = "Cancelled"; case expired = "Expired" }
-    /// Switchable section-header treatments (A/B test for the pinned-header bleed-through).
-    enum SectionHeaderStyle: String, CaseIterable {
-        case scrolling       = "Non-Sticky"
-        case pillTranslucent = "Pill (Translucent)"
-        case pillSolid       = "Pill (Solid)"
-        case pillOpaque      = "Pill (Sticky)"
-        case rowSolid        = "Solid Bar"
-        case rowMaterial     = "Material Bar"
-    }
     /// Debug toggle: ON restores the previous stacked large-title-in-nav-bar
     /// layout (title on its own row below the +/⋯ buttons). OFF (default) is
     /// the current same-plane layout — title inline with the toolbar row.
@@ -75,11 +67,9 @@ struct HomeView: View {
     @AppStorage("homeSortOrder") private var sortOrderRaw: String = SortOrder.status.rawValue
     @AppStorage("homeFilterOption") private var filterOptionRaw: String = FilterOption.all.rawValue
     @AppStorage("homeHideExpired") private var hideExpired: Bool = false
-    @AppStorage("homeSectionHeaderStyle") private var headerStyleRaw: String = SectionHeaderStyle.rowSolid.rawValue
     @AppStorage("iconDisplayStyle") private var iconStyleRaw: String = IconDisplayStyle.natural.rawValue
     private var sortOrder: SortOrder { SortOrder(rawValue: sortOrderRaw) ?? .status }
     private var filterOption: FilterOption { FilterOption(rawValue: filterOptionRaw) ?? .all }
-    private var headerStyle: SectionHeaderStyle { SectionHeaderStyle(rawValue: headerStyleRaw) ?? .rowSolid }
 
     // MARK: - Filtered groups
 
@@ -589,7 +579,7 @@ struct HomeView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search subscriptions")
+        .searchable(text: $searchText, isPresented: $isSearchActive, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search subscriptions")
         .searchToolbarBehavior(.minimize)
         .animation(.spring(duration: 0.3), value: isSearching)
         .scrollEdgeEffectStyle(.soft, for: .top)
@@ -725,72 +715,24 @@ struct HomeView: View {
         }
     }
 
-    /// Section header honoring the user-selected `SectionHeaderStyle`. Pinned plain-list
-    /// headers are transparent by default, so list rows bleed through the title — the
-    /// "Bar" styles fill the full row width with a solid/material background to fix that.
+    /// Non-sticky pill-style section header. Pinned plain-list headers are transparent
+    /// by default, so list rows bleed through the title if pinned — this style is
+    /// intentionally non-sticky to avoid that.
     @ViewBuilder
     private func iosSectionHeader(title: String, icon: String, accentColor: Color) -> some View {
         let color: Color = (accentColor == .secondary) ? .secondary : accentColor
-        let pill = HStack(spacing: 5) {
+        HStack(spacing: 5) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .bold))
             Text(title.uppercased())
                 .font(.system(size: 11, weight: .bold))
                 .tracking(0.6)
         }
-
-        switch headerStyle {
-        case .scrolling, .pillTranslucent:
-            pill
-                .foregroundStyle(color)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(color.opacity(0.12), in: Capsule())
-                .padding(.leading, 16)
-        case .pillSolid:
-            pill
-                .foregroundStyle(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(color, in: Capsule())
-                .padding(.leading, 16)
-        case .pillOpaque:
-            pill
-                .foregroundStyle(color)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(color.opacity(0.12), in: Capsule())
-                .padding(.leading, 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, 4)
-                .padding(.top, -20)
-                .background(groupedBackground)
-                .listRowInsets(EdgeInsets())
-        case .rowSolid:
-            pill
-                .foregroundStyle(color)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(color.opacity(0.12), in: Capsule())
-                .padding(.leading, 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, 4)
-                .padding(.top, -20)
-                .background(groupedBackground)
-                .listRowInsets(EdgeInsets())
-        case .rowMaterial:
-            pill
-                .foregroundStyle(color)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(color.opacity(0.12), in: Capsule())
-                .padding(.leading, 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, 4)
-                .padding(.top, -20)
-                .background(.regularMaterial)
-                .listRowInsets(EdgeInsets())
-        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(color.opacity(0.12), in: Capsule())
+        .padding(.leading, 16)
     }
 #endif
 
@@ -1117,6 +1059,15 @@ struct HomeView: View {
         Menu {
             Button {
                 Haptics.fire(.light)
+                isSearchActive = true
+            } label: {
+                Label("Search", systemImage: "magnifyingglass")
+            }
+
+            Divider()
+
+            Button {
+                Haptics.fire(.light)
                 triggerScreenshotImport()
             } label: {
                 let locked = !purchaseManager.isPremium
@@ -1177,23 +1128,6 @@ struct HomeView: View {
             Divider()
 
             Menu {
-                ForEach(SectionHeaderStyle.allCases, id: \.self) { style in
-                    Button {
-                        Haptics.fire(.selectionChanged)
-                        headerStyleRaw = style.rawValue
-                    } label: {
-                        if headerStyle == style {
-                            Label(style.rawValue, systemImage: "checkmark")
-                        } else {
-                            Text(style.rawValue)
-                        }
-                    }
-                }
-            } label: {
-                Label("Header Style", systemImage: "textformat")
-            }
-
-            Menu {
                 ForEach(IconDisplayStyle.allCases, id: \.self) { style in
                     Button {
                         Haptics.fire(.selectionChanged)
@@ -1210,6 +1144,7 @@ struct HomeView: View {
             } label: {
                 Label("Icon Style", systemImage: "photo")
             }
+            .tint(.purple)
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.system(size: 16, weight: .semibold))
@@ -1469,7 +1404,7 @@ struct HomeView: View {
             try? modelContext.save()
         }
         refreshNotifications()
-        showUndoToast(message: "Deleted \(snapshot.name)", undoTitle: "Undo Delete") {
+        showUndoToast(message: "Deleted \(snapshot.name)", undoTitle: "Undo") {
             restore(snapshot)
         }
     }
@@ -1494,7 +1429,7 @@ struct HomeView: View {
         }
         refreshNotifications()
         showUndoToast(message: "\(didCancel ? "Cancelled" : "Reinstated") \(item.name)",
-                      undoTitle: didCancel ? "Undo Cancel" : "Undo Reinstate") {
+                      undoTitle: "Undo") {
             restoreCancellation(
                 itemID: itemID,
                 isCancelled: previousCancelled,
@@ -1513,7 +1448,7 @@ struct HomeView: View {
             try? modelContext.save()
         }
         refreshNotifications()
-        showUndoToast(message: "Archived \(name)", undoTitle: "Undo Archive") {
+        showUndoToast(message: "Archived \(name)", undoTitle: "Undo") {
             restoreArchive(item)
         }
     }
@@ -1526,7 +1461,7 @@ struct HomeView: View {
             try? modelContext.save()
         }
         refreshNotifications()
-        showUndoToast(message: "Duplicated \(item.name)", undoTitle: "Undo Duplicate") {
+        showUndoToast(message: "Duplicated \(item.name)", undoTitle: "Undo") {
             deleteDuplicate(duplicate)
         }
     }
