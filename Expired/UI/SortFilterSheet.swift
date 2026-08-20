@@ -11,82 +11,54 @@ extension HomeView.SortOrder {
         case .price:       return "dollarsign.circle"
         }
     }
-
-    var ascendingLabel: String {
-        switch self {
-        case .status, .renewalDate: return "Soonest First"
-        case .category, .name:      return "A to Z"
-        case .dateAdded:             return "Oldest First"
-        case .price:                 return "Low to High"
-        }
-    }
-
-    var descendingLabel: String {
-        switch self {
-        case .status, .renewalDate: return "Latest First"
-        case .category, .name:      return "Z to A"
-        case .dateAdded:             return "Newest First"
-        case .price:                 return "High to Low"
-        }
-    }
 }
 
 /// Dedicated sort/filter sheet (replaces the old nested overflow-menu submenus).
-/// Sort is single-select with a separate ascending/descending order control; filters
-/// are multi-select tags (OR-matched), plus a standalone "Hide Expired" toggle.
+/// Sort is a single dropdown + ascending/descending stepper in one section; filters
+/// are multi-select tags (OR-matched) as large iOS-style capsule chips.
 struct SortFilterSheet: View {
     @Binding var sortOrder: HomeView.SortOrder
     @Binding var sortAscending: Bool
     @Binding var filterTags: Set<HomeView.FilterTag>
-    @Binding var hideExpired: Bool
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(HomeView.SortOrder.allCases, id: \.self) { option in
-                        Button {
-                            Haptics.fire(.selectionChanged)
-                            sortOrder = option
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: option.icon)
-                                    .font(.system(size: 15))
-                                    .frame(width: 20, alignment: .center)
-                                    .foregroundStyle(.secondary)
-                                Text(option.rawValue)
-                                    .font(.system(size: 16))
-                                    .foregroundStyle(.primary)
-                                Spacer()
-                                if sortOrder == option {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundStyle(.blue)
-                                }
-                            }
-                            .contentShape(Rectangle())
+                    Picker(selection: $sortOrder) {
+                        ForEach(HomeView.SortOrder.allCases, id: \.self) { option in
+                            Label(option.rawValue, systemImage: option.icon).tag(option)
                         }
-                        .buttonStyle(.plain)
+                    } label: {
+                        Text("Sort By")
+                    }
+                    .pickerStyle(.menu)
+                    .onChange(of: sortOrder) { _, _ in Haptics.fire(.selectionChanged) }
+
+                    Stepper {
+                        HStack(spacing: 8) {
+                            Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Text(sortAscending ? "Ascending" : "Descending")
+                                .foregroundStyle(.primary)
+                        }
+                    } onIncrement: {
+                        guard !sortAscending else { return }
+                        Haptics.fire(.selectionChanged)
+                        sortAscending = true
+                    } onDecrement: {
+                        guard sortAscending else { return }
+                        Haptics.fire(.selectionChanged)
+                        sortAscending = false
                     }
                 } header: {
-                    Text("Sort By")
+                    Text("Sort")
                 }
 
                 Section {
-                    Picker("Order", selection: $sortAscending) {
-                        Text(sortOrder.ascendingLabel).tag(true)
-                        Text(sortOrder.descendingLabel).tag(false)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .onChange(of: sortAscending) { _, _ in Haptics.fire(.selectionChanged) }
-                } header: {
-                    Text("Order")
-                }
-
-                Section {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    FlowLayout(spacing: 10) {
                         ForEach(HomeView.FilterTag.allCases, id: \.self) { tag in
                             FilterTagChip(tag: tag, isSelected: filterTags.contains(tag)) {
                                 Haptics.fire(.selectionChanged)
@@ -98,39 +70,22 @@ struct SortFilterSheet: View {
                             }
                         }
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 6)
                     .listRowBackground(Color.clear)
-
-                    Toggle(isOn: $hideExpired) {
-                        Text("Hide Expired")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.primary)
-                    }
-                    .toggleStyle(.switch)
-                    .tint(.blue)
-                    .disabled(filterTags.contains(.expired))
                 } header: {
                     Text("Filter")
-                } footer: {
-                    if !filterTags.isEmpty {
-                        Text("Showing subscriptions matching any selected filter.")
-                    }
-                }
-
-                if !filterTags.isEmpty {
-                    Section {
-                        Button(role: .destructive) {
-                            Haptics.fire(.light)
-                            filterTags.removeAll()
-                        } label: {
-                            Text("Clear Filters")
-                        }
-                    }
                 }
             }
             .navigationTitle("Sort & Filter")
             .inlineNavigationTitle()
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Reset") {
+                        Haptics.fire(.light)
+                        filterTags.removeAll()
+                    }
+                    .disabled(filterTags.isEmpty)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                         .fontWeight(.semibold)
@@ -149,23 +104,58 @@ private struct FilterTagChip: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 Image(systemName: tag.icon)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                 Text(tag.rawValue)
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer(minLength: 0)
+                    .font(.system(size: 15, weight: .semibold))
                 if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 13))
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
                 }
             }
             .foregroundStyle(isSelected ? Color.white : Color.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.blue : Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+            .background(isSelected ? Color.blue : Color.secondary.opacity(0.15), in: Capsule())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Minimal wrapping row layout for chips that size to their own content
+/// (rather than a fixed-column grid), matching the standard iOS filter-pill look.
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > width, x > 0 {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: width, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x: CGFloat = bounds.minX, y: CGFloat = bounds.minY, rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, x > bounds.minX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: .unspecified)
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }

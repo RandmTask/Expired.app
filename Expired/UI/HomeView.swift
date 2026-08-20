@@ -84,7 +84,6 @@ struct HomeView: View {
     @AppStorage("homeSortOrder") private var sortOrderRaw: String = SortOrder.status.rawValue
     @AppStorage("homeSortAscending") private var sortAscending: Bool = true
     @AppStorage("homeFilterTagsRaw") private var filterTagsRaw: String = ""
-    @AppStorage("homeHideExpired") private var hideExpired: Bool = false
     @AppStorage("iconDisplayStyle") private var iconStyleRaw: String = IconDisplayStyle.natural.rawValue
     private var sortOrder: SortOrder { SortOrder(rawValue: sortOrderRaw) ?? .status }
     private var filterTags: Set<FilterTag> {
@@ -148,15 +147,9 @@ struct HomeView: View {
     }
 
     private func applyFilter(_ items: [SubscriptionItem]) -> [SubscriptionItem] {
-        var result = items
         let tags = filterTags
-        if !tags.isEmpty {
-            result = result.filter { item in tags.contains { matches(item, $0) } }
-        }
-        if hideExpired && !tags.contains(.expired) {
-            result = result.filter { if case .expired = $0.status { return false }; return true }
-        }
-        return result
+        guard !tags.isEmpty else { return items }
+        return items.filter { item in tags.contains { matches(item, $0) } }
     }
 
     private var visibleItems: [SubscriptionItem] {
@@ -363,8 +356,7 @@ struct HomeView: View {
                 SortFilterSheet(
                     sortOrder: sortOrderBinding,
                     sortAscending: $sortAscending,
-                    filterTags: filterTagsBinding,
-                    hideExpired: $hideExpired
+                    filterTags: filterTagsBinding
                 )
             }
             .expiredPaywallSheet(isPresented: $showPaywall)
@@ -605,7 +597,7 @@ struct HomeView: View {
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
             }
 
-            if !filterTags.isEmpty || hideExpired {
+            if !filterTags.isEmpty {
                 activeFilterChips
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
@@ -661,7 +653,7 @@ struct HomeView: View {
                         .padding(.horizontal)
                 }
 
-                if !filterTags.isEmpty || hideExpired {
+                if !filterTags.isEmpty {
                     activeFilterChips
                         .padding(.horizontal)
                 }
@@ -721,26 +713,6 @@ struct HomeView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(Color.blue, in: Capsule())
-                }
-
-                if hideExpired {
-                    HStack(spacing: 6) {
-                        Text("Hiding Expired")
-                            .font(.system(size: 13, weight: .semibold))
-                        Button {
-                            Haptics.fire(.light)
-                            hideExpired = false
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.orange, in: Capsule())
                 }
             }
         }
