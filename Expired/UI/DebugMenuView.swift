@@ -78,7 +78,7 @@ struct DebugMenuView: View {
             Button("Delete Everything", role: .destructive) { resetSubscriptions() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Permanently deletes every subscription and document — including archived items — and their reminders. This syncs to iCloud and removes them from all your signed-in devices. Cannot be undone.")
+            Text("Permanently deletes every subscription and document, including archived items, and their reminders. This syncs to iCloud and removes them from all your signed-in devices. Cannot be undone.")
         }
     }
 
@@ -109,7 +109,7 @@ struct DebugMenuView: View {
         } header: {
             Text("Diagnostics")
         } footer: {
-            Text("Copies app/device/CloudKit/RevenueCat/Supabase state as text — paste it directly into a bug report.")
+            Text("Copies app/device/CloudKit/RevenueCat/Supabase state as text; paste it directly into a bug report.")
         }
     }
 
@@ -164,7 +164,7 @@ struct DebugMenuView: View {
         } header: {
             Text("Testing")
         } footer: {
-            Text("Mascot Gallery shows every expression the bear can display. Pro Gates forces every Premium gate on or off without buying or refunding — real entitlement is \(purchaseManager.entitlementIsPremium ? "active" : "inactive").")
+            Text("Mascot Gallery shows every expression the bear can display. Pro Gates forces every Premium gate on or off without buying or refunding; real entitlement is \(purchaseManager.entitlementIsPremium ? "active" : "inactive").")
         }
     }
 
@@ -191,7 +191,7 @@ struct DebugMenuView: View {
         } header: {
             Text("Experimental")
         } footer: {
-            Text("Same-Plane Title puts the \"Expired\" title on the same row as the +/⋯ buttons on Home, instead of its own row below them. Hidden Search removes the search field from view until you pull down at the top of the list, matching Mail/Reminders — instead of the minimized search icon.")
+            Text("Same-Plane Title puts the \"Expired\" title on the same row as the +/⋯ buttons on Home, instead of its own row below them. Hidden Search removes the search field from view until you pull down at the top of the list, matching Mail/Reminders, instead of the minimized search icon.")
         }
     }
 
@@ -294,14 +294,14 @@ struct DebugMenuView: View {
                         .foregroundStyle(.orange)
                 }
             } else {
-                Text("\(screenshotAIProvider.displayName) has no model override — switch provider in Settings → Screenshot Import.")
+                Text("\(screenshotAIProvider.displayName) has no model override; switch provider in Settings → Screenshot Import.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         } header: {
             Text("AI Model Override")
         } footer: {
-            Text("Models load live from the server for the provider currently selected in Settings. A server-side default is planned — this picker is a stopgap.")
+            Text("Models load live from the server for the provider currently selected in Settings. A server-side default is planned; this picker is a stopgap.")
         }
     }
 
@@ -322,7 +322,7 @@ struct DebugMenuView: View {
         } header: {
             Text("Force AI Failure")
         } footer: {
-            Text("Makes Automatic skip this provider as if it were down, without a real outage — On-Device forces the whole cascade to reach Gemini/DeepSeek.")
+            Text("Makes Automatic skip this provider as if it were down, without a real outage. On-Device forces the whole cascade to reach Gemini/DeepSeek.")
         }
     }
 
@@ -338,7 +338,7 @@ struct DebugMenuView: View {
                         supabaseUserID: SupabaseService.shared.currentUserID
                     )
                     Haptics.fire(ok ? .success : .warning)
-                    resyncResult = ok ? "Premium is now active on this session." : "Resynced, but still not Premium — the App Store account signed in may not hold the purchase."
+                    resyncResult = ok ? "Premium is now active on this session." : "Resynced, but still not Premium; the App Store account signed in may not hold the purchase."
                     isResyncing = false
                 }
             } label: {
@@ -351,7 +351,7 @@ struct DebugMenuView: View {
         } header: {
             Text("Identity Repair")
         } footer: {
-            Text("Fixes a client/server identity mismatch caused by \"Reset for Testing\" — logs RevenueCat back into the current Supabase session and restores purchases onto it. Doesn't touch subscription data.")
+            Text("Fixes a client/server identity mismatch caused by \"Reset for Testing\". Logs RevenueCat back into the current Supabase session and restores purchases onto it. Doesn't touch subscription data.")
         }
     }
 
@@ -403,7 +403,7 @@ struct DebugMenuView: View {
         } header: {
             Text("Reset Data")
         } footer: {
-            Text("Delete All Data permanently deletes every subscription/document (Netflix, insurance, etc.) — not just the Pro purchase. Reset Premium Status leaves your subscription data untouched and only logs RevenueCat out to a fresh sandbox identity, so Expired Pro shows inactive again for testing the paywall.")
+            Text("Delete All Data permanently deletes every subscription/document (Netflix, insurance, etc.), not just the Pro purchase. Reset Premium Status leaves your subscription data untouched and only logs RevenueCat out to a fresh sandbox identity, so Expired Pro shows inactive again for testing the paywall.")
         }
     }
 

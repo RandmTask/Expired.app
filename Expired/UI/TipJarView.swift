@@ -60,7 +60,7 @@ struct TipJarView: View {
                 } header: {
                     Text("Leave a Tip")
                 } footer: {
-                    Text("Tips are entirely optional and unlock nothing — every feature works exactly the same either way. They just help keep Expired maintained.")
+                    Text("Tips are entirely optional and unlock nothing; every feature works exactly the same either way. They just help keep Expired maintained.")
                 }
             }
             .navigationTitle("Tip Jar")
@@ -81,7 +81,7 @@ struct TipJarView: View {
             )) {
                 Button("You're welcome", role: .cancel) {}
             } message: {
-                Text("That genuinely helps. Nothing has changed in the app — you already had everything.")
+                Text("That genuinely helps. Nothing has changed in the app; you already had everything.")
             }
             .alert("Tip Didn't Go Through", isPresented: Binding(
                 get: { failureMessage != nil },

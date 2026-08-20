@@ -37,7 +37,7 @@ struct ImportExportView: View {
                 } header: {
                     Text("Export")
                 } footer: {
-                    Text("Writes an unencrypted JSON file with every subscription and document (icons excluded). Includes account emails, usernames, and passwords — keep it private.")
+                    Text("Writes an unencrypted JSON file with every subscription and document (icons excluded). Includes account emails, usernames, and passwords; keep it private.")
                 }
 
                 Section {

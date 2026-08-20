@@ -3604,9 +3604,6 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
 
-                versionFooterRow
-                    .padding(.top, 4)
-
                 // DEBUG — gated: only rendered once revealed by the hidden version-
                 // footer gesture. Everything developer-only is collapsed behind this
                 // single row, which pushes to its own screen (DebugMenuView) rather
@@ -3628,7 +3625,8 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
 
-                Spacer(minLength: 40)
+                versionFooterRow
+                    .padding(.top, 4)
             }
             .padding(24)
         }
@@ -3973,7 +3971,7 @@ struct SettingsView: View {
             } header: {
                 sectionHeader("SCREENSHOT IMPORT")
             } footer: {
-                Text("Automatic tries On-Device first, then falls back to Expired's secure proxy if needed. Other providers send the screenshot through the proxy directly — no key needed on your device.")
+                Text("Automatic tries On-Device first, then falls back to Expired's secure proxy if needed. Other providers send the screenshot through the proxy directly; no key needed on your device.")
             }
 
             // MARK: Notifications
@@ -4090,7 +4088,7 @@ struct SettingsView: View {
             } header: {
                 sectionHeader("DATA & BACKUP")
             } footer: {
-                Text("iCloud Sync keeps data across all your devices — restart the app after changing. Daily snapshots save automatically to iCloud Drive (skipped if nothing changed). Import/Export writes or reads an unencrypted JSON file (icons excluded); import merges by item, never deleting. Keep the file private.")
+                Text("iCloud Sync keeps data across all your devices; restart the app after changing. Daily snapshots save automatically to iCloud Drive (skipped if nothing changed). Import/Export writes or reads an unencrypted JSON file (icons excluded); import merges by item, never deleting. Keep the file private.")
             }
 
             // MARK: Privacy
@@ -4109,7 +4107,7 @@ struct SettingsView: View {
             } header: {
                 sectionHeader("PRIVACY")
             } footer: {
-                Text("When a subscription you add matches a known service (e.g. Netflix), the service name alone is sent anonymously — never your cost, dates, notes, or any identifier — to help prioritize which services Expired recognizes automatically. Off means nothing is ever sent.")
+                Text("When a subscription you add matches a known service (e.g. Netflix), the service name alone is sent anonymously (never your cost, dates, notes, or any identifier) to help prioritize which services Expired recognizes automatically. Off means nothing is ever sent.")
             }
 
             // MARK: Support — row order fixed by
@@ -4193,12 +4191,7 @@ struct SettingsView: View {
             } header: {
                 sectionHeader("SUPPORT")
             } footer: {
-                Text("Bug reports and feature requests open a prefilled email including your app version, OS, and device model — nothing from your subscriptions is ever attached.")
-            }
-
-            Section {
-                versionFooterRow
-                    .listRowBackground(Color.clear)
+                Text("Bug reports and feature requests open a prefilled email including your app version, OS, and device model; nothing from your subscriptions is ever attached.")
             }
 
             // MARK: Debug — gated: only rendered once revealed by the hidden
@@ -4218,6 +4211,11 @@ struct SettingsView: View {
                 } header: {
                     sectionHeader("DEBUG")
                 }
+            }
+
+            Section {
+                versionFooterRow
+                    .listRowBackground(Color.clear)
             }
         }
         .navigationTitle("Settings")
