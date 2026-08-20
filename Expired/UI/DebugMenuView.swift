@@ -33,9 +33,11 @@ struct DebugMenuView: View {
     /// reflected here automatically.
     @AppStorage(ScreenshotAISettings.providerKey) private var screenshotAIProviderRaw = ScreenshotAIProvider.automatic.rawValue
 
-    /// Experimental same-plane title layout on Home — see HomeView.debugSamePlaneTitle.
-    /// Must be removed before launch; row is tinted orange as a standing reminder.
-    @AppStorage("debugSamePlaneTitle") private var debugSamePlaneTitle = false
+    /// Reverts Home to the previous stacked large-title-in-nav-bar layout when
+    /// ON — see HomeView.debugLargeTitleInNavBar. Default OFF is the current
+    /// same-plane layout. Must be removed before launch; row is tinted orange
+    /// as a standing reminder.
+    @AppStorage("debugLargeTitleInNavBar") private var debugLargeTitleInNavBar = false
     @State private var selectedModels: [String: String] = [:]
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
@@ -168,8 +170,8 @@ struct DebugMenuView: View {
 
     private var experimentalSection: some View {
         Section {
-            Toggle(isOn: $debugSamePlaneTitle) {
-                Label("Same-Plane Title (Home)", systemImage: "flask.fill")
+            Toggle(isOn: $debugLargeTitleInNavBar) {
+                Label("Large Title in Nav Bar (Home)", systemImage: "flask.fill")
             }
             .tint(.orange)
             .listRowBackground(Color.orange.opacity(0.15))
@@ -181,7 +183,7 @@ struct DebugMenuView: View {
         } header: {
             Text("Experimental")
         } footer: {
-            Text("Puts the \"Expired\" title on the same row as the +/⋯ buttons on Home, instead of its own row below them.")
+            Text("Off (default) is the current layout — \"Expired\" sits on the same row as the +/⋯ buttons on Home. On restores the previous behaviour — the large title on its own row below them.")
         }
     }
 

@@ -67,10 +67,11 @@ struct HomeView: View {
         case rowSolid        = "Solid Bar"
         case rowMaterial     = "Material Bar"
     }
-    /// Debug-only experiment: puts the "Expired" title on the same row as the
-    /// +/⋯ toolbar buttons instead of native large-title's own row below them.
+    /// Debug toggle: ON restores the previous stacked large-title-in-nav-bar
+    /// layout (title on its own row below the +/⋯ buttons). OFF (default) is
+    /// the current same-plane layout — title inline with the toolbar row.
     /// See DebugMenuView's "Experimental" section — must be removed before launch.
-    @AppStorage("debugSamePlaneTitle") private var debugSamePlaneTitle = false
+    @AppStorage("debugLargeTitleInNavBar") private var debugLargeTitleInNavBar = false
     @AppStorage("homeSortOrder") private var sortOrderRaw: String = SortOrder.status.rawValue
     @AppStorage("homeFilterOption") private var filterOptionRaw: String = FilterOption.all.rawValue
     @AppStorage("homeHideExpired") private var hideExpired: Bool = false
@@ -272,8 +273,8 @@ struct HomeView: View {
             // doc example for inlineLarge never sets navigationBarTitleDisplayMode
             // alongside it, so pass `.automatic` (no preference) instead of `.large`
             // whenever inlineLarge is active, letting toolbarTitleDisplayMode govern.
-            .toolbarTitleDisplayMode(debugSamePlaneTitle ? .inlineLarge : .automatic)
-            .navigationBarTitleDisplayMode(debugSamePlaneTitle ? .automatic : .large)
+            .toolbarTitleDisplayMode(debugLargeTitleInNavBar ? .automatic : .inlineLarge)
+            .navigationBarTitleDisplayMode(debugLargeTitleInNavBar ? .large : .automatic)
             .photosPicker(isPresented: $showingPhotoImporter, selection: $importPhotoItems, maxSelectionCount: 0, matching: .images)
 #else
             .largeNavigationTitle()
