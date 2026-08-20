@@ -263,10 +263,20 @@ struct HomeView: View {
                 }
             }
             .navigationTitle("Expired")
-            .largeNavigationTitle()
 #if os(iOS)
+            // `.navigationBarTitleDisplayMode(.large)` (the older UIKit-bridging API,
+            // applied by `.largeNavigationTitle()`) and `.toolbarTitleDisplayMode(.inlineLarge)`
+            // (the newer SwiftUI-native API) both govern title layout — applying both
+            // fights over the same behavior and the older `.large` silently wins,
+            // which is why inlineLarge previously appeared to do nothing. Apple's own
+            // doc example for inlineLarge never sets navigationBarTitleDisplayMode
+            // alongside it, so pass `.automatic` (no preference) instead of `.large`
+            // whenever inlineLarge is active, letting toolbarTitleDisplayMode govern.
             .toolbarTitleDisplayMode(debugSamePlaneTitle ? .inlineLarge : .automatic)
+            .navigationBarTitleDisplayMode(debugSamePlaneTitle ? .automatic : .large)
             .photosPicker(isPresented: $showingPhotoImporter, selection: $importPhotoItems, maxSelectionCount: 0, matching: .images)
+#else
+            .largeNavigationTitle()
 #endif
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
