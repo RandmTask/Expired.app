@@ -686,30 +686,17 @@ struct HomeView: View {
     @ViewBuilder
     private func iosSection(title: String, icon: String, accentColor: Color, items: [SubscriptionItem]) -> some View {
         if !items.isEmpty {
-            if headerStyle == .scrolling {
-                Section {
-                    // Header rendered as a plain row — scrolls with content, no pinning
-                    iosSectionHeader(title: title, icon: icon, accentColor: accentColor)
+            Section {
+                // Header rendered as a plain row — scrolls with content, no pinning
+                iosSectionHeader(title: title, icon: icon, accentColor: accentColor)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 10, leading: 0, bottom: 4, trailing: 0))
+                ForEach(items) { item in
+                    itemRow(item)
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
-                        .listRowInsets(EdgeInsets(top: 10, leading: 0, bottom: 4, trailing: 0))
-                    ForEach(items) { item in
-                        itemRow(item)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
-                    }
-                }
-            } else {
-                Section {
-                    ForEach(items) { item in
-                        itemRow(item)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
-                    }
-                } header: {
-                    iosSectionHeader(title: title, icon: icon, accentColor: accentColor)
+                        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
                 }
             }
         }
