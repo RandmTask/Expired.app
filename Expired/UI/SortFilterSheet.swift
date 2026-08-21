@@ -34,6 +34,7 @@ struct SortFilterSheet: View {
                         Text("Sort By")
                     }
                     .pickerStyle(.menu)
+                    .tint(.primary)
                     .onChange(of: sortOrder) { _, _ in Haptics.fire(.selectionChanged) }
 
                     Picker(selection: $sortAscending) {

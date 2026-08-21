@@ -47,6 +47,10 @@ struct AddEditSubscriptionView: View {
     @State private var activeUntilDate = Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date()
     // Single date shown in the status row — doesn't change when chips are toggled
     @State private var statusDate = Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date()
+    /// Whether "Active Until" (Cancelled items only) has an explicit date — starts
+    /// unset every time Cancelled is freshly toggled on, so a bare cancellation
+    /// doesn't silently claim an arbitrary "1 month from now" date the user never chose.
+    @State private var activeUntilIsSet = false
 
     // Icon
     @State private var iconData: Data? = nil
@@ -985,7 +989,10 @@ struct AddEditSubscriptionView: View {
                             isOn: isCancelled
                         ) {
                             isCancelled.toggle()
-                            if isCancelled { isAutoRenew = false }
+                            if isCancelled {
+                                isAutoRenew = false
+                                activeUntilIsSet = false
+                            }
                         }
                     }
                     .padding(.horizontal, 16)
@@ -998,32 +1005,50 @@ struct AddEditSubscriptionView: View {
                             .foregroundStyle(.primary)
                             .fixedSize()
                         Spacer()
-                        DatePicker("", selection: $statusDate, displayedComponents: .date)
-                            .labelsHidden()
+                        if isCancelled && !activeUntilIsSet {
+                            Text("Not Set")
+                                .font(.system(size: 16))
+                                .foregroundStyle(.secondary)
+                        } else {
+                            DatePicker("", selection: $statusDate, displayedComponents: .date)
+                                .labelsHidden()
 #if os(macOS)
-                            .datePickerStyle(.field)
+                                .datePickerStyle(.field)
 #endif
-                        // Quick-pick + button: bump the renewal date forward
+                            if isCancelled {
+                                Button {
+                                    Haptics.fire(.light)
+                                    activeUntilIsSet = false
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 16))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.leading, 4)
+                            }
+                        }
+                        // Quick-pick + button. Cancelled with no date yet: absolute
+                        // "in N" picks (or Custom). Otherwise: relative "+N" bumps
+                        // from whatever date is already showing.
                         Menu {
-                            Button("+1 Week") {
-                                Haptics.fire(.selectionChanged)
-                                statusDate = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: statusDate) ?? statusDate
-                            }
-                            Button("+1 Month") {
-                                Haptics.fire(.selectionChanged)
-                                statusDate = Calendar.current.date(byAdding: .month, value: 1, to: statusDate) ?? statusDate
-                            }
-                            Button("+3 Months") {
-                                Haptics.fire(.selectionChanged)
-                                statusDate = Calendar.current.date(byAdding: .month, value: 3, to: statusDate) ?? statusDate
-                            }
-                            Button("+6 Months") {
-                                Haptics.fire(.selectionChanged)
-                                statusDate = Calendar.current.date(byAdding: .month, value: 6, to: statusDate) ?? statusDate
-                            }
-                            Button("+1 Year") {
-                                Haptics.fire(.selectionChanged)
-                                statusDate = Calendar.current.date(byAdding: .year, value: 1, to: statusDate) ?? statusDate
+                            if isCancelled && !activeUntilIsSet {
+                                Button("In 1 Week")   { setActiveUntil(.weekOfYear, 1) }
+                                Button("In 1 Month")  { setActiveUntil(.month, 1) }
+                                Button("In 3 Months") { setActiveUntil(.month, 3) }
+                                Button("In 6 Months") { setActiveUntil(.month, 6) }
+                                Button("In 1 Year")   { setActiveUntil(.year, 1) }
+                                Button("Custom…") {
+                                    Haptics.fire(.selectionChanged)
+                                    statusDate = Date()
+                                    activeUntilIsSet = true
+                                }
+                            } else {
+                                Button("+1 Week")   { bumpStatusDate(.weekOfYear, 1) }
+                                Button("+1 Month")  { bumpStatusDate(.month, 1) }
+                                Button("+3 Months") { bumpStatusDate(.month, 3) }
+                                Button("+6 Months") { bumpStatusDate(.month, 6) }
+                                Button("+1 Year")   { bumpStatusDate(.year, 1) }
                             }
                         } label: {
                             Image(systemName: "plus.circle.fill")
@@ -1555,6 +1580,21 @@ struct AddEditSubscriptionView: View {
         }
     }
 
+    /// Sets Active Until to an absolute point from today (used the first time, while
+    /// the field still reads "Not Set" — never relative to whatever `statusDate`
+    /// happens to be defaulted to, since there's no user-chosen date to add onto yet).
+    private func setActiveUntil(_ component: Calendar.Component, _ value: Int) {
+        Haptics.fire(.selectionChanged)
+        statusDate = Calendar.current.date(byAdding: component, value: value, to: Date()) ?? Date()
+        activeUntilIsSet = true
+    }
+
+    /// Bumps whatever date is already showing forward by the given amount.
+    private func bumpStatusDate(_ component: Calendar.Component, _ value: Int) {
+        Haptics.fire(.selectionChanged)
+        statusDate = Calendar.current.date(byAdding: component, value: value, to: statusDate) ?? statusDate
+    }
+
     private func pulseSelection() {
         withAnimation(.spring(duration: 0.25)) {
             selectionPulse = true
@@ -1617,6 +1657,7 @@ struct AddEditSubscriptionView: View {
             trialEndDate = t
         }
         if let u = item.activeUntilDate { activeUntilDate = u }
+        activeUntilIsSet = item.activeUntilDate != nil
         // statusDate: show the most relevant date for the current status
         if item.isCancelled, let u = item.activeUntilDate {
             statusDate = u
@@ -1743,7 +1784,7 @@ struct AddEditSubscriptionView: View {
             existing.isAutoRenew = isDoc ? false : isAutoRenew
             existing.isCancelled = isDoc ? false : isCancelled
             existing.trialEndDate = (!isDoc && isTrial) ? statusDate : nil
-            existing.activeUntilDate = (!isDoc && isCancelled) ? statusDate : nil
+            existing.activeUntilDate = (!isDoc && isCancelled && activeUntilIsSet) ? statusDate : nil
             existing.cost = isDoc ? nil : cost
             existing.currency = currency
             existing.billingCycle = billingCycle
@@ -1771,7 +1812,7 @@ struct AddEditSubscriptionView: View {
                 expiryDate: isDoc ? expiryDate : nil,
                 isAutoRenew: isDoc ? false : isAutoRenew,
                 isCancelled: isDoc ? false : isCancelled,
-                activeUntilDate: (!isDoc && isCancelled) ? statusDate : nil,
+                activeUntilDate: (!isDoc && isCancelled && activeUntilIsSet) ? statusDate : nil,
                 personName: trimmedPersonName,
                 paymentMethod: trimmedPayment,
                 emailUsed: trimmedEmail,
@@ -2653,11 +2694,14 @@ struct CurrencyPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("customCurrencies") private var customCurrenciesData: Data = Data()
+    @AppStorage("recentCurrencyCodes") private var recentCurrencyCodesData: Data = Data()
     // Use @State for the list so mutations immediately re-render the List
     @State private var customList: [String] = []
     @State private var searchText = ""
     @State private var showAddCustom = false
     @State private var newCurrencyCode = ""
+
+    private static let maxRecents = 5
 
     private var allEntries: [CurrencyInfo.Entry] {
         let custom: [CurrencyInfo.Entry] = customList.map { code in
@@ -2674,55 +2718,88 @@ struct CurrencyPickerSheet: View {
         }
     }
 
+    private var recentCodes: [String] {
+        (try? JSONDecoder().decode([String].self, from: recentCurrencyCodesData)) ?? []
+    }
+
+    private var recentEntries: [CurrencyInfo.Entry] {
+        let byCode = Dictionary(uniqueKeysWithValues: allEntries.map { ($0.code, $0) })
+        return recentCodes.compactMap { byCode[$0] }
+    }
+
+    private var nonRecentEntries: [CurrencyInfo.Entry] {
+        let recentSet = Set(recentCodes)
+        return allEntries.filter { !recentSet.contains($0.code) }
+    }
+
     private func persistCustomList() {
         customCurrenciesData = (try? JSONEncoder().encode(customList)) ?? Data()
+    }
+
+    private func recordRecent(_ code: String) {
+        var codes = recentCodes.filter { $0 != code }
+        codes.insert(code, at: 0)
+        recentCurrencyCodesData = (try? JSONEncoder().encode(Array(codes.prefix(Self.maxRecents)))) ?? Data()
+    }
+
+    @ViewBuilder
+    private func currencyRow(_ entry: CurrencyInfo.Entry) -> some View {
+        Button {
+            Haptics.fire(.selectionChanged)
+            recordRecent(entry.code)
+            withTransaction(Transaction(animation: nil)) {
+                selectedCode = entry.code
+            }
+            dismiss()
+        } label: {
+            HStack {
+                Text(entry.symbol)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .frame(width: 40, alignment: .leading)
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.code)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Text(entry.name)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if entry.code == selectedCode {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.blue)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .swipeActions(edge: .trailing) {
+            if customList.contains(entry.code) {
+                Button(role: .destructive) {
+                    Haptics.fire(.light)
+                    customList.removeAll { $0 == entry.code }
+                    persistCustomList()
+                    if selectedCode == entry.code { selectedCode = "AUD" }
+                } label: {
+                    Label("Remove", systemImage: "trash")
+                }
+            }
+        }
     }
 
     var body: some View {
         NavigationStack {
             List {
-                ForEach(filtered, id: \.code) { entry in
-                    Button {
-                        Haptics.fire(.selectionChanged)
-                        withTransaction(Transaction(animation: nil)) {
-                            selectedCode = entry.code
-                        }
-                        dismiss()
-                    } label: {
-                        HStack {
-                            Text(entry.symbol)
-                                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                .frame(width: 40, alignment: .leading)
-                                .foregroundStyle(.secondary)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(entry.code)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(.primary)
-                                Text(entry.name)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if entry.code == selectedCode {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 13, weight: .bold))
-                                    .foregroundStyle(.blue)
-                            }
-                        }
-                        .contentShape(Rectangle())
+                if searchText.isEmpty && !recentEntries.isEmpty {
+                    Section("Recent") {
+                        ForEach(recentEntries, id: \.code) { entry in currencyRow(entry) }
                     }
-                    .swipeActions(edge: .trailing) {
-                        if customList.contains(entry.code) {
-                            Button(role: .destructive) {
-                                Haptics.fire(.light)
-                                customList.removeAll { $0 == entry.code }
-                                persistCustomList()
-                                if selectedCode == entry.code { selectedCode = "AUD" }
-                            } label: {
-                                Label("Remove", systemImage: "trash")
-                            }
-                        }
+                    Section("All Currencies") {
+                        ForEach(nonRecentEntries, id: \.code) { entry in currencyRow(entry) }
                     }
+                } else {
+                    ForEach(filtered, id: \.code) { entry in currencyRow(entry) }
                 }
             }
             .searchable(text: $searchText, prompt: "Search currencies")

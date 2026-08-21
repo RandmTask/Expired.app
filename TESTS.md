@@ -149,3 +149,56 @@ submenus — *(source: IMPLEMENTATION_LOG.md 2026-08-20 "Sort & Filter sheet")*
     immediately every time — y/n
 31. Retype a different name after deleting → no visual glitch/flicker in the
     field — y/n
+
+### Sort — visual
+
+🔴 "Sort By" dropdown value renders in normal grey/primary text, not blue —
+*(source: IMPLEMENTATION_LOG.md 2026-08-21)*
+32. Open Sort & Filter → the current sort field name (e.g. "Renewal Date")
+    shows in grey, same as any other row value, not blue — y/n
+
+### Filter — Type facet (Subscriptions / Documents)
+
+🔴 New "Type" filter section — *(source: IMPLEMENTATION_LOG.md 2026-08-21)*
+33. Sort & Filter → a 4th section "Type" appears with Subscriptions and
+    Documents buttons — y/n
+34. Selecting only "Documents" hides all subscription sections on Home,
+    shows only the Documents sections — y/n
+35. Selecting only "Subscriptions" hides the Documents sections — y/n
+36. Selecting both (or neither) shows both — same as today's default — y/n
+37. Selecting a Type tag together with a Status/Renewal/Plan tag (e.g.
+    Documents + Trial) does NOT wipe out the Documents section — Type is
+    independent of those facets — y/n
+
+### Add/Edit — Active Until (Cancelled items)
+
+🔴 Active Until supports a "Not Set" state with quick-pick and clear —
+*(source: IMPLEMENTATION_LOG.md 2026-08-21)*
+38. Toggle "Cancelled" on a fresh item → Active Until shows "Not Set" (no
+    date picker yet) — y/n
+39. Tap + while "Not Set" → menu shows "In 1 Week / In 1 Month / In 3 Months
+    / In 6 Months / In 1 Year / Custom…" (absolute, not "+" prefixed) — y/n
+40. Picking "In 1 Month" sets Active Until to exactly one month from today —
+    y/n
+41. Tap + again (now that a date is set) → menu instead shows "+1 Week / +1
+    Month / +3 Months / +6 Months / +1 Year" — picking one adds onto the
+    existing date rather than resetting from today — y/n
+42. A clear (✕) button appears next to the date once set — tapping it
+    returns the row to "Not Set" — y/n
+43. Saving while still "Not Set" is allowed — item saves as Cancelled with no
+    Active Until date (shows as Expired until a date is set) — y/n
+44. Editing an existing cancelled item that already has an Active Until date
+    opens showing that date (not "Not Set") — y/n
+
+### Add/Edit — Currency picker recents
+
+🔴 Recently-used currencies pinned above the full list — *(source:
+IMPLEMENTATION_LOG.md 2026-08-21)*
+45. Pick a currency you haven't used before → open the currency picker again
+    → a "Recent" section at the top shows it — y/n
+46. Pick 6 different currencies over several edits → only the 5 most recent
+    appear in "Recent" (oldest drops off) — y/n
+47. Currencies shown in "Recent" don't also appear duplicated under "All
+    Currencies" below — y/n
+48. Typing in the currency search box hides the Recent/All split and just
+    shows flat filtered results — y/n

@@ -1295,9 +1295,7 @@ struct HomeView: View {
     }
 
     /// Flat single-section view for name/renewal date/price sorts
-    private var flatSortedSubscriptions: [SubscriptionItem] {
-        applySort(applyFilter(visibleItems.filter { $0.itemType == .subscription }))
-    }
+    private var flatSortedSubscriptions: [SubscriptionItem] { visibleSubscriptions }
 
     @ViewBuilder
     private var flatSections: some View {
