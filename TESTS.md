@@ -118,23 +118,34 @@ submenus — *(source: IMPLEMENTATION_LOG.md 2026-08-20 "Sort & Filter sheet")*
 19. "Order" is a segmented Ascending/Descending control; flipping it reverses
     whichever sort field is active (dates soonest/latest, name A-Z/Z-A, price
     low/high) — y/n
-20. Filter section shows 4 equal-size buttons in a 2x2 grid (Auto-Renew,
-    Trial, Cancelled, Expired); tapping multiple selects all of them (OR
-    match — Home shows items matching ANY selected tag) — y/n
-21. "Reset" (top-left) is disabled with no filters selected, and clears all
-    filters when tapped — y/n
-22. No filter-chip row appears on the Home list itself — filters are only
+20. Filter is grouped into 3 headed sections — Status (Trial, Cancelled,
+    Expired), Renewal (Auto-Renew, Manual Renewal), Plan (Lifetime, Free) —
+    each a 2-column grid of equal-size buttons — y/n
+21. Selecting two tags in the SAME section is OR (e.g. Trial + Cancelled
+    shows items that are either) — y/n
+22. Selecting tags in DIFFERENT sections is AND (e.g. Auto-Renew + Free shows
+    only items that are both auto-renewing AND free) — y/n
+23. "Free" matches items with $0 cost (not Trials — those only show under the
+    Trial tag) — y/n
+24. "Lifetime" matches one-time-purchase items (billing cycle "One-time") —
+    y/n
+25. "Reset" (top-left) is disabled with no filters selected, and clears all
+    filters (across all 3 sections) when tapped — y/n
+26. No filter-chip row appears on the Home list itself — filters are only
     visible/editable inside the sheet — y/n
-23. macOS: Toggle/segmented controls render natively (switch, not checkbox;
+27. A small blue dot appears on the ⋯ toolbar icon itself whenever any filter
+    tag is active, and disappears when cleared — y/n
+28. The ⋯ menu no longer has divider lines between rows — y/n
+29. macOS: Toggle/segmented controls render natively (switch, not checkbox;
     no double chevron chrome on the dropdown) — y/n
 
 ### Add/Edit — App Store search
 
 🔴 Name field stays editable after picking an App Store search result —
 *(source: IMPLEMENTATION_LOG.md 2026-08-20 "App Store title glitch fix")*
-24. Add Subscription → type a name (3+ chars) → "Search App Store" → pick a
+30. Add Subscription → type a name (3+ chars) → "Search App Store" → pick a
     result → back on the main Add page, tap into the Name field and delete
     several characters in a row without needing to type first → deletes work
     immediately every time — y/n
-25. Retype a different name after deleting → no visual glitch/flicker in the
+31. Retype a different name after deleting → no visual glitch/flicker in the
     field — y/n

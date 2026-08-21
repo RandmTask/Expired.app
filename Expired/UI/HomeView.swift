@@ -61,18 +61,40 @@ struct HomeView: View {
         case price       = "Price"
     }
     /// Multi-select filter tags (OR-matched — an item shows if it matches any selected tag).
+    /// Grouped into facets — OR within a section (e.g. Trial or Cancelled), AND
+    /// across sections (e.g. (Trial or Cancelled) and Auto-Renew and Free).
     enum FilterTag: String, CaseIterable {
-        case autoRenew = "Auto-Renew"
-        case trial     = "Trial"
-        case cancelled = "Cancelled"
-        case expired   = "Expired"
+        case trial          = "Trial"
+        case cancelled      = "Cancelled"
+        case expired        = "Expired"
+        case autoRenew      = "Auto-Renew"
+        case manualRenewal  = "Manual Renewal"
+        case lifetime       = "Lifetime"
+        case free           = "Free"
+
+        enum Section: String, CaseIterable {
+            case status  = "Status"
+            case renewal = "Renewal"
+            case plan    = "Plan"
+        }
+
+        var section: Section {
+            switch self {
+            case .trial, .cancelled, .expired: return .status
+            case .autoRenew, .manualRenewal:   return .renewal
+            case .lifetime, .free:             return .plan
+            }
+        }
 
         var icon: String {
             switch self {
-            case .autoRenew: return "arrow.triangle.2.circlepath"
-            case .trial:     return "clock.badge.exclamationmark"
-            case .cancelled: return "calendar.badge.minus"
-            case .expired:   return "xmark.circle"
+            case .trial:         return "clock.badge.exclamationmark"
+            case .cancelled:     return "calendar.badge.minus"
+            case .expired:       return "xmark.circle"
+            case .autoRenew:     return "arrow.triangle.2.circlepath"
+            case .manualRenewal: return "hand.tap"
+            case .lifetime:      return "infinity"
+            case .free:          return "gift"
             }
         }
     }
@@ -139,17 +161,26 @@ struct HomeView: View {
 
     private func matches(_ item: SubscriptionItem, _ tag: FilterTag) -> Bool {
         switch tag {
-        case .autoRenew: return item.isAutoRenew && !item.isCancelled && !item.isTrial
-        case .trial:     return item.isTrial
-        case .cancelled: if case .cancelledButActive = item.status { return true }; return false
-        case .expired:   if case .expired = item.status { return true }; return false
+        case .trial:         return item.isTrial
+        case .cancelled:     if case .cancelledButActive = item.status { return true }; return false
+        case .expired:       if case .expired = item.status { return true }; return false
+        case .autoRenew:     return item.isAutoRenew
+        case .manualRenewal: return !item.isAutoRenew
+        case .lifetime:      return item.billingCycle == .oneOff
+        case .free:          return item.cost == 0
         }
     }
 
     private func applyFilter(_ items: [SubscriptionItem]) -> [SubscriptionItem] {
         let tags = filterTags
         guard !tags.isEmpty else { return items }
-        return items.filter { item in tags.contains { matches(item, $0) } }
+        // OR within a section (facet), AND across sections — e.g.
+        // (Trial or Cancelled) and Auto-Renew and Free. A section with no
+        // selected tags imposes no constraint.
+        let bySection = Dictionary(grouping: tags, by: \.section)
+        return items.filter { item in
+            bySection.values.allSatisfy { sectionTags in sectionTags.contains { matches(item, $0) } }
+        }
     }
 
     private var visibleItems: [SubscriptionItem] {
@@ -1071,8 +1102,6 @@ struct HomeView: View {
                 Label("Search", systemImage: "magnifyingglass")
             }
 
-            Divider()
-
             Button {
                 Haptics.fire(.light)
                 triggerScreenshotImport()
@@ -1083,16 +1112,12 @@ struct HomeView: View {
             }
             .disabled(isAnalyzingScreenshot)
 
-            Divider()
-
             Button {
                 Haptics.fire(.light)
                 showingSortFilterSheet = true
             } label: {
                 Label("Sort & Filter", systemImage: "arrow.up.arrow.down.circle")
             }
-
-            Divider()
 
             Menu {
                 ForEach(IconDisplayStyle.allCases, id: \.self) { style in
@@ -1115,6 +1140,14 @@ struct HomeView: View {
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.system(size: 16, weight: .semibold))
+                .overlay(alignment: .topTrailing) {
+                    if !filterTags.isEmpty {
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 8, height: 8)
+                            .offset(x: 2, y: -2)
+                    }
+                }
         }
 #if os(macOS)
         .menuIndicator(.hidden)

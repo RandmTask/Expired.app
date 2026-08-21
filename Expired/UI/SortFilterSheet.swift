@@ -49,23 +49,14 @@ struct SortFilterSheet: View {
                     Text("Sort")
                 }
 
-                Section {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                        ForEach(HomeView.FilterTag.allCases, id: \.self) { tag in
-                            FilterTagChip(tag: tag, isSelected: filterTags.contains(tag)) {
-                                Haptics.fire(.selectionChanged)
-                                if filterTags.contains(tag) {
-                                    filterTags.remove(tag)
-                                } else {
-                                    filterTags.insert(tag)
-                                }
-                            }
-                        }
+                ForEach(HomeView.FilterTag.Section.allCases, id: \.self) { section in
+                    Section {
+                        FilterTagGrid(tags: HomeView.FilterTag.allCases.filter { $0.section == section }, filterTags: $filterTags)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            .listRowBackground(Color.clear)
+                    } header: {
+                        Text(section.rawValue)
                     }
-                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                    .listRowBackground(Color.clear)
-                } header: {
-                    Text("Filter")
                 }
             }
             .navigationTitle("Sort & Filter")
@@ -86,6 +77,26 @@ struct SortFilterSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+}
+
+private struct FilterTagGrid: View {
+    let tags: [HomeView.FilterTag]
+    @Binding var filterTags: Set<HomeView.FilterTag>
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            ForEach(tags, id: \.self) { tag in
+                FilterTagChip(tag: tag, isSelected: filterTags.contains(tag)) {
+                    Haptics.fire(.selectionChanged)
+                    if filterTags.contains(tag) {
+                        filterTags.remove(tag)
+                    } else {
+                        filterTags.insert(tag)
+                    }
+                }
+            }
+        }
     }
 }
 
