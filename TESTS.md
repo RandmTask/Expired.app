@@ -107,3 +107,34 @@ IMPLEMENTATION_LOG.md 2026-08-19 "Settings revamp")*
 15. Buying a tip shows a "Thank You" alert and grants nothing — Pro state is
     unchanged before and after — y/n
 16. Cancelling the App Store sheet produces NO error alert and no haptic — y/n
+
+### Home — Sort & Filter sheet
+
+🔴 Dedicated Sort & Filter sheet replaces the old nested overflow-menu
+submenus — *(source: IMPLEMENTATION_LOG.md 2026-08-20 "Sort & Filter sheet")*
+17. Overflow menu (⋯) → "Sort & Filter" opens a sheet (not a nested menu) — y/n
+18. "Sort By" is a dropdown; selecting "Date Added" sorts/groups Home by date
+    added — y/n
+19. "Order" is a segmented Ascending/Descending control; flipping it reverses
+    whichever sort field is active (dates soonest/latest, name A-Z/Z-A, price
+    low/high) — y/n
+20. Filter section shows 4 equal-size buttons in a 2x2 grid (Auto-Renew,
+    Trial, Cancelled, Expired); tapping multiple selects all of them (OR
+    match — Home shows items matching ANY selected tag) — y/n
+21. "Reset" (top-left) is disabled with no filters selected, and clears all
+    filters when tapped — y/n
+22. No filter-chip row appears on the Home list itself — filters are only
+    visible/editable inside the sheet — y/n
+23. macOS: Toggle/segmented controls render natively (switch, not checkbox;
+    no double chevron chrome on the dropdown) — y/n
+
+### Add/Edit — App Store search
+
+🔴 Name field stays editable after picking an App Store search result —
+*(source: IMPLEMENTATION_LOG.md 2026-08-20 "App Store title glitch fix")*
+24. Add Subscription → type a name (3+ chars) → "Search App Store" → pick a
+    result → back on the main Add page, tap into the Name field and delete
+    several characters in a row without needing to type first → deletes work
+    immediately every time — y/n
+25. Retype a different name after deleting → no visual glitch/flicker in the
+    field — y/n
