@@ -45,19 +45,16 @@ extension View {
         }
     }
 
-    /// Presents RevenueCat's Customer Center (manage/cancel, restore, refunds) on iOS.
-    /// Customer Center is iOS-only, so macOS gets a lightweight Restore + guidance sheet.
-    @ViewBuilder
-    func expiredCustomerCenterSheet(isPresented: Binding<Bool>) -> some View {
-#if os(iOS)
+    /// Presents a small custom "Expired Pro Details" sheet — status, renewal date,
+    /// a link to Apple's native subscription management, and Restore Purchases.
+    /// Replaces RevenueCat's full-screen Customer Center, whose title/sections come
+    /// from the RevenueCat dashboard and aren't renameable/trimmable from app code.
+    /// (Deon, 2026-08-21: wanted a small sheet titled "Expired Pro Details", no
+    /// Manage Subscription/Change Plans/Account Details sections.)
+    func expiredProDetailsSheet(isPresented: Binding<Bool>) -> some View {
         sheet(isPresented: isPresented) {
-            CustomerCenterView()
+            ExpiredProDetailsSheet()
         }
-#else
-        sheet(isPresented: isPresented) {
-            MacManageSubscriptionSheet()
-        }
-#endif
     }
 }
 
@@ -134,41 +131,103 @@ private struct PaywallUnavailableView: View {
     }
 }
 
-#if os(macOS)
-/// macOS fallback for RevenueCat's iOS-only Customer Center: restore purchases plus
-/// a pointer to where subscriptions are actually managed on the platform.
-private struct MacManageSubscriptionSheet: View {
+/// Small custom sheet replacing RevenueCat's Customer Center. Shows the Pro entitlement's
+/// status and renewal date, a direct link to Apple's subscription management page, and
+/// Restore Purchases — nothing else. Only reachable from the "Expired Pro" row when a
+/// subscription is already active; "Upgrade to Pro" still opens the full paywall.
+private struct ExpiredProDetailsSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    @Environment(PurchaseManager.self) private var purchaseManager
     @State private var isRestoring = false
+    @State private var restoreFeedback: String?
+
+    private var renewalDateText: String? {
+        guard let date = purchaseManager.entitlementExpirationDate else { return nil }
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
 
     var body: some View {
-        VStack(spacing: 18) {
-            Text("Manage Subscription")
-                .font(.headline)
-            Text("Manage or cancel Expired Pro in System Settings › Apple Account › Subscriptions, or from the App Store on your iPhone or iPad.")
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Button {
-                isRestoring = true
-                Task {
-                    let restored = await PurchaseManager.shared.restore()
-                    Haptics.fire(restored ? .success : .warning)
-                    isRestoring = false
+        NavigationStack {
+            VStack(spacing: 20) {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("Status").foregroundStyle(.secondary)
+                        Spacer()
+                        Text("Active").foregroundStyle(.green)
+                    }
+                    .padding(.vertical, 12)
+                    if let renewalDateText {
+                        FormDivider()
+                        HStack {
+                            Text("Renews").foregroundStyle(.secondary)
+                            Spacer()
+                            Text(renewalDateText)
+                        }
+                        .padding(.vertical, 12)
+                    }
                 }
-            } label: {
-                if isRestoring {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text("Restore Purchases")
+                .padding(.horizontal, 16)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+
+                Button {
+                    openURL(URL(string: "https://apps.apple.com/account/subscriptions")!)
+                } label: {
+                    Text("Manage in App Store")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .buttonStyle(.plain)
+
+                Spacer(minLength: 0)
+
+                Button {
+                    performRestore()
+                } label: {
+                    HStack(spacing: 4) {
+                        if isRestoring {
+                            ProgressView().controlSize(.mini)
+                        }
+                        Text(restoreFeedback ?? "Restore Purchases")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(restoreFeedback == "Restored!" ? .green : .secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(isRestoring)
+            }
+            .padding(20)
+            .navigationTitle("Expired Pro Details")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
                 }
             }
-            Button("Done") { dismiss() }
-                .keyboardShortcut(.defaultAction)
         }
-        .padding(28)
-        .frame(minWidth: 360)
+        #if os(iOS)
+        .presentationDetents([.height(320)])
+        .presentationDragIndicator(.visible)
+        #else
+        .frame(width: 340, height: 300)
+        #endif
+    }
+
+    private func performRestore() {
+        guard !isRestoring else { return }
+        Haptics.fire(.light)
+        isRestoring = true
+        restoreFeedback = nil
+        Task {
+            let restored = await purchaseManager.restore()
+            isRestoring = false
+            Haptics.fire(restored ? .success : .warning)
+            restoreFeedback = restored ? "Restored!" : "No purchases found"
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if restoreFeedback != nil {
+                restoreFeedback = nil
+            }
+        }
     }
 }
-#endif

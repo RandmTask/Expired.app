@@ -71,18 +71,22 @@ struct HomeView: View {
         case manualRenewal  = "Manual Renewal"
         case lifetime       = "Lifetime"
         case free           = "Free"
+        case subscriptions  = "Subscriptions"
+        case documents      = "Documents"
 
         enum Section: String, CaseIterable {
             case status  = "Status"
             case renewal = "Renewal"
             case plan    = "Plan"
+            case type    = "Type"
         }
 
         var section: Section {
             switch self {
-            case .trial, .cancelled, .expired: return .status
-            case .autoRenew, .manualRenewal:   return .renewal
-            case .lifetime, .free:             return .plan
+            case .trial, .cancelled, .expired:   return .status
+            case .autoRenew, .manualRenewal:     return .renewal
+            case .lifetime, .free:               return .plan
+            case .subscriptions, .documents:     return .type
             }
         }
 
@@ -95,6 +99,8 @@ struct HomeView: View {
             case .manualRenewal: return "hand.tap"
             case .lifetime:      return "infinity"
             case .free:          return "gift"
+            case .subscriptions: return "creditcard"
+            case .documents:     return "doc.text"
             }
         }
     }
@@ -168,11 +174,18 @@ struct HomeView: View {
         case .manualRenewal: return !item.isAutoRenew
         case .lifetime:      return item.billingCycle == .oneOff
         case .free:          return item.cost == 0
+        case .subscriptions: return item.itemType == .subscription
+        case .documents:     return item.itemType == .document
         }
     }
 
+    /// Status/Renewal/Plan only — Type is applied separately (it gates whether the
+    /// Subscriptions/Documents sections render at all, see `showSubscriptionsSection`/
+    /// `showDocumentsSection`), never mixed into the same AND chain as those facets.
+    /// Otherwise picking e.g. "Trial" would also wipe out every document, since a
+    /// document can never match a subscription-only concept like Trial.
     private func applyFilter(_ items: [SubscriptionItem]) -> [SubscriptionItem] {
-        let tags = filterTags
+        let tags = filterTags.filter { $0.section != .type }
         guard !tags.isEmpty else { return items }
         // OR within a section (facet), AND across sections — e.g.
         // (Trial or Cancelled) and Auto-Renew and Free. A section with no
@@ -182,6 +195,10 @@ struct HomeView: View {
             bySection.values.allSatisfy { sectionTags in sectionTags.contains { matches(item, $0) } }
         }
     }
+
+    private var typeFilterTags: Set<FilterTag> { filterTags.filter { $0.section == .type } }
+    private var showSubscriptionsSection: Bool { typeFilterTags.isEmpty || typeFilterTags.contains(.subscriptions) }
+    private var showDocumentsSection: Bool { typeFilterTags.isEmpty || typeFilterTags.contains(.documents) }
 
     private var visibleItems: [SubscriptionItem] {
         guard isSearching else { return allItems }
@@ -193,11 +210,13 @@ struct HomeView: View {
     }
 
     private var visibleSubscriptions: [SubscriptionItem] {
-        applySort(applyFilter(visibleItems.filter { $0.itemType == .subscription }))
+        guard showSubscriptionsSection else { return [] }
+        return applySort(applyFilter(visibleItems.filter { $0.itemType == .subscription }))
     }
 
     private var visibleDocuments: [SubscriptionItem] {
-        visibleItems.filter { $0.itemType == .document }
+        guard showDocumentsSection else { return [] }
+        return visibleItems.filter { $0.itemType == .document }
             .sorted { $0.nextRelevantDate < $1.nextRelevantDate }
     }
 
@@ -1230,6 +1249,7 @@ struct HomeView: View {
     }
 
     private var categoryGroups: [CategoryGroup] {
+        guard showSubscriptionsSection else { return [] }
         let filtered = applyFilter(visibleItems.filter { $0.itemType == .subscription })
         // Use user-defined order for built-in categories
         let builtInKeys = BuiltInCategoryStore.orderedRawValues()

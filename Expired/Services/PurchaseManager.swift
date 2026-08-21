@@ -41,6 +41,9 @@ final class PurchaseManager: NSObject, PurchasesDelegate {
 
     /// The unfiltered entitlement state, before any debug override.
     private(set) var entitlementIsPremium = false
+    /// Renewal/expiration date of the active Pro entitlement, if any. `nil` for a
+    /// non-consumable (lifetime) purchase, which RevenueCat reports with no expiration.
+    private(set) var entitlementExpirationDate: Date?
     private(set) var offerings: Offerings?
     private(set) var isConfigured = false
 
@@ -158,7 +161,9 @@ final class PurchaseManager: NSObject, PurchasesDelegate {
     }
 
     private func apply(_ info: CustomerInfo) {
-        entitlementIsPremium = info.entitlements[BackendConfig.proEntitlementID]?.isActive == true
+        let entitlement = info.entitlements[BackendConfig.proEntitlementID]
+        entitlementIsPremium = entitlement?.isActive == true
+        entitlementExpirationDate = entitlement?.expirationDate
     }
 
     // MARK: PurchasesDelegate

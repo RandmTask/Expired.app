@@ -2936,7 +2936,7 @@ struct SettingsView: View {
     @State private var isRefreshingFavicons = false
     @State private var faviconRefreshProgress: (done: Int, total: Int) = (0, 0)
     @State private var showPaywall = false
-    @State private var showCustomerCenter = false
+    @State private var showProDetails = false
     @State private var isRestoringPurchases = false
     @State private var restorePurchasesFeedback: String?
     @State private var showImportExport = false
@@ -3088,7 +3088,7 @@ struct SettingsView: View {
         }
         #endif
         .expiredPaywallSheet(isPresented: $showPaywall)
-        .expiredCustomerCenterSheet(isPresented: $showCustomerCenter)
+        .expiredProDetailsSheet(isPresented: $showProDetails)
     }
 
     // MARK: - Support actions
@@ -3147,9 +3147,9 @@ struct SettingsView: View {
         showImportExport = true
     }
 
-    /// Actually calls `PurchaseManager.restore()` — never opens Customer Center. Deon
-    /// flagged 2026-08-20 that routing "Restore Purchases" through `showCustomerCenter`
-    /// just showed the manage-subscription sheet and restored nothing.
+    /// Actually calls `PurchaseManager.restore()` — never opens the Pro Details sheet. Deon
+    /// flagged 2026-08-20 that routing "Restore Purchases" through that sheet just showed
+    /// the manage-subscription screen and restored nothing.
     private func performRestorePurchases() {
         guard !isRestoringPurchases else { return }
         Haptics.fire(.light)
@@ -3195,14 +3195,14 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 24) {
 
                 // EXPIRED PRO — always first, per _shared/settings-conventions.md. No section
-                // header; "Manage Subscription" now lives behind tapping the row itself
-                // (opens Customer Center directly), per Deon 2026-08-20.
+                // header; tapping the row opens the small custom "Expired Pro Details"
+                // sheet, per Deon 2026-08-21.
                 VStack(spacing: 8) {
                     VStack(spacing: 0) {
                         if purchaseManager.isPremium {
                             Button {
                                 Haptics.fire(.light)
-                                showCustomerCenter = true
+                                showProDetails = true
                             } label: {
                                 settingsRow {
                                     macSettingsLabel("Expired Pro", icon: "crown.fill")
@@ -3802,13 +3802,13 @@ struct SettingsView: View {
         List {
 
             // MARK: Expired Pro — always first, per _shared/settings-conventions.md. No section
-            // header; "Manage Subscription" now lives behind tapping the row itself (opens
-            // Customer Center directly), per Deon 2026-08-20.
+            // header; tapping the row opens the small custom "Expired Pro Details" sheet,
+            // per Deon 2026-08-21.
             Section {
                 if purchaseManager.isPremium {
                     Button {
                         Haptics.fire(.light)
-                        showCustomerCenter = true
+                        showProDetails = true
                     } label: {
                         HStack {
                             rowIcon("crown.fill", color: .green)
